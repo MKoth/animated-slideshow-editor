@@ -5,6 +5,7 @@ import json
 import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -28,6 +29,10 @@ from app.ai.schemas import (
     AiChatRequest,
     AiConversationCreate,
     AiConversationRename,
+    AiNarrationCreate,
+    AiNarrationPartFail,
+    AiNarrationPartReady,
+    AiNarrationVoicePatch,
     AiPlanCreate,
     AiPlanUpdate,
     AiProposalApprove,
@@ -1433,6 +1438,491 @@ def reject_ai_reconciliation(request: Request, reconciliation_id: str) -> dict[s
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="reconciliation not found") from exc
     return _reconciliation_to_out(request, reconciliation_id)
+
+
+# -- narrations (Stage C) ------------------------------------------------------
+
+
+def _narration_to_out(request: Request, narration_id: str) -> dict[str, object]:
+    import json as _json
+
+    from app.ai.narrations import slide_duration_for_parts
+
+    library = _library(request)
+    try:
+        row = library.get_narration(narration_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    try:
+        parts: object = _json.loads(row.parts_json or "[]")
+    except (ValueError, TypeError):
+        parts = []
+    part_list = [dict(p) for p in parts] if isinstance(parts, list) else []
+    revisions = [
+        {
+            "id": rev.id,
+            "sourceRequest": rev.source_request,
+            "created": _iso(rev.created_at),
+        }
+        for rev in library.list_narration_revisions(narration_id)
+    ]
+    return {
+        "id": row.id,
+        "projectId": row.project_id,
+        "reconciliationId": row.reconciliation_id,
+        "scenarioId": row.scenario_id,
+        "conversationId": row.conversation_id,
+        "title": row.title,
+        "status": row.status,
+        "defaultVoicePromptId": row.default_voice_prompt_id,
+        "secondsPerCharacter": row.seconds_per_character,
+        "parts": part_list,
+        "slideDuration": slide_duration_for_parts(part_list),
+        "revisions": revisions,
+        "created": _iso(row.created_at),
+        "modified": _iso(row.updated_at),
+    }
+
+
+def _require_voice_prompt(request: Request, prompt_id: str) -> None:
+    prompt_library = getattr(request.app.state, "voice_prompt_library", None)
+    if prompt_library is None:
+        raise HTTPException(status_code=500, detail="voice prompt library is not configured")
+    try:
+        prompt_library.get(prompt_id)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"voice prompt {prompt_id} not found") from exc
+
+
+@router.post("/ai/narrations", status_code=201)
+def post_ai_narration(request: Request, body: AiNarrationCreate) -> dict[str, object]:
+    from app.ai.narrations import DEFAULT_SECONDS_PER_CHARACTER, verbatim_parts_from_steps
+
+    library = _library(request)
+    try:
+        conversation = library.get_conversation(body.conversationId)
+    except AiConversationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    if conversation.project_id != body.projectId:
+        raise HTTPException(status_code=422, detail="conversation does not belong to this project")
+    if body.defaultVoicePromptId and body.defaultVoicePromptId.strip():
+        _require_voice_prompt(request, body.defaultVoicePromptId.strip())
+    try:
+        reconciliation = library.get_reconciliation(body.reconciliationId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="reconciliation not found") from exc
+    if reconciliation.status != "accepted":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"reconciliation {body.reconciliationId} is {reconciliation.status} — "
+                "accept it before Prompter work (Stage C reads only the accepted version)"
+            ),
+        )
+    if reconciliation.project_id != body.projectId:
+        raise HTTPException(
+            status_code=422, detail="reconciliation does not belong to this project"
+        )
+    try:
+        canonical = library.scenario_canonical_json(reconciliation.scenario_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="scenario not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    steps = canonical.get("steps", [])
+    step_list = [dict(s) for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
+    spc = body.secondsPerCharacter or DEFAULT_SECONDS_PER_CHARACTER
+    try:
+        parts = verbatim_parts_from_steps(step_list, spc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        row = library.create_narration(
+            project_id=body.projectId,
+            reconciliation_id=body.reconciliationId,
+            conversation_id=body.conversationId,
+            title=reconciliation.title,
+            parts=[dict(p) for p in parts],
+            seconds_per_character=spc,
+            default_voice_prompt_id=(
+                body.defaultVoicePromptId.strip() if body.defaultVoicePromptId else None
+            ),
+            source_request=f"fill prompter from reconciliation {body.reconciliationId}",
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="reconciliation not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    library.append_message(
+        body.conversationId,
+        "assistant",
+        f"Filled {len(parts)} PrompterParts verbatim from the accepted scenario "
+        f"(pre-TTS estimate {spc} s/char). Run the queued voice batch, embed each WAV, "
+        "then propose through the canonical pipeline — the project is untouched. "
+        "Rerecord stays manual in the existing TTS/record modals.",
+    )
+    return _narration_to_out(request, row.id)
+
+
+@router.get("/ai/narrations")
+def list_ai_narrations(
+    request: Request, projectId: str = "", reconciliationId: str | None = None
+) -> list[dict[str, object]]:
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    library = _library(request)
+    out: list[dict[str, object]] = []
+    for row in library.list_narrations(projectId, reconciliationId or None):
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.parts_json or "[]")
+            count = len(loaded) if isinstance(loaded, list) else 0
+        except (ValueError, TypeError):
+            count = 0
+        out.append(
+            {
+                "id": row.id,
+                "projectId": row.project_id,
+                "reconciliationId": row.reconciliation_id,
+                "conversationId": row.conversation_id,
+                "title": row.title,
+                "status": row.status,
+                "partCount": count,
+                "modified": _iso(row.updated_at),
+            }
+        )
+    return out
+
+
+@router.get("/ai/narrations/{narration_id}")
+def get_ai_narration(request: Request, narration_id: str) -> dict[str, object]:
+    return _narration_to_out(request, narration_id)
+
+
+@router.get("/ai/narrations/{narration_id}/canonical")
+def get_ai_narration_canonical(request: Request, narration_id: str) -> dict[str, object]:
+    """Stage D/E handoff: accepted timings + audio bindings only."""
+    library = _library(request)
+    try:
+        return library.narration_canonical_json(narration_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.patch("/ai/narrations/{narration_id}")
+def patch_ai_narration(
+    request: Request, narration_id: str, body: AiNarrationVoicePatch
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.get_narration(narration_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    fields_set = body.model_fields_set
+    default_id: str | None = None
+    update_default = "defaultVoicePromptId" in fields_set
+    if update_default and body.defaultVoicePromptId and body.defaultVoicePromptId.strip():
+        default_id = body.defaultVoicePromptId.strip()
+        _require_voice_prompt(request, default_id)
+    if body.partVoices:
+        for override in body.partVoices.values():
+            if override and override.strip():
+                _require_voice_prompt(request, override.strip())
+    try:
+        library.set_narration_voices(
+            narration_id,
+            default_voice_prompt_id=default_id,
+            update_default=update_default,
+            part_voices=dict(body.partVoices) if body.partVoices else None,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _narration_to_out(request, narration_id)
+
+
+def _resolve_narration_tts_call(
+    request: Request, narration: dict[str, object], part: dict[str, object]
+) -> tuple[str | None, str | None, str | None, dict[str, Any] | None, str, str]:
+    """Voice merge for one part: per-part override wins over the reusable default.
+
+    Same prompt-merge semantics as POST /api/tts/generate (prompt fields fill
+    what the record leaves unset); returns
+    (language, voice, instruction, params, provider, model_id).
+    """
+    from app.tts.registry import DEFAULT_MODEL_ID, DEFAULT_PROVIDER
+
+    settings = getattr(request.app.state, "settings", None)
+    global_provider = (
+        getattr(settings, "tts_provider", DEFAULT_PROVIDER) if settings else DEFAULT_PROVIDER
+    )
+    global_model = (
+        getattr(settings, "tts_model_id", DEFAULT_MODEL_ID) if settings else DEFAULT_MODEL_ID
+    )
+    prompt_library = getattr(request.app.state, "voice_prompt_library", None)
+    prompt_id = part.get("voicePromptId") or narration.get("defaultVoicePromptId")
+    language: str | None = None
+    voice: str | None = None
+    instruction: str | None = None
+    params: dict[str, Any] | None = None
+    provider: str | None = None
+    model_id: str | None = None
+    if prompt_id and prompt_library is not None:
+        try:
+            prompt = prompt_library.get(str(prompt_id))
+        except Exception as exc:
+            raise LookupError(f"voice prompt {prompt_id} not found") from exc
+        language = prompt.language
+        voice = prompt.voice
+        instruction = prompt.instruction
+        params = dict(prompt.params) if isinstance(prompt.params, dict) else None
+        provider = getattr(prompt, "provider", None)
+        model_id = getattr(prompt, "model_id", None)
+        if not provider and isinstance(prompt.params, dict):
+            maybe = prompt.params.get("provider")
+            if isinstance(maybe, str) and maybe.strip():
+                provider = maybe.strip().lower()
+        if not model_id and isinstance(prompt.params, dict):
+            maybe_model = prompt.params.get("modelId") or prompt.params.get("model_id")
+            if isinstance(maybe_model, str) and maybe_model.strip():
+                model_id = maybe_model.strip()
+    return (
+        language,
+        voice,
+        instruction,
+        params,
+        (
+            provider.strip().lower()
+            if isinstance(provider, str) and provider.strip()
+            else global_provider
+        ),
+        (model_id.strip() if isinstance(model_id, str) and model_id.strip() else global_model),
+    )
+
+
+@router.post("/ai/narrations/{narration_id}/generate")
+async def post_ai_narration_generate(request: Request, narration_id: str) -> dict[str, object]:
+    """Queued server-side TTS batch: one serialized generate per pending part.
+
+    Runs through the existing TTS inference lock (never parallel-bursts) with
+    one reusable Voice Prompt by default (overridable per part). Returns the
+    WAV payloads for the client to embed first — proposals later reference
+    asset ids only. Progress is reported through the Conversation (the
+    existing chat transport); no new TTS/Prompter endpoints are added.
+    """
+    import asyncio
+    import base64 as _base64
+
+    from app.ai.narrations import wav_duration
+    from app.api.tts import _tts_lock
+
+    library = _library(request)
+    try:
+        row = library.get_narration(narration_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    import json as _json
+
+    try:
+        loaded: object = _json.loads(row.parts_json or "[]")
+        parts = [dict(p) for p in loaded] if isinstance(loaded, list) else []
+    except (ValueError, TypeError):
+        parts = []
+    narration_view = _narration_to_out(request, narration_id)
+    todo = [p for p in parts if p.get("status") != "ready"]
+    if not todo:
+        return {"narration": narration_view, "results": []}
+
+    try:
+        from app.tts.engine import get_tts_engine
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"TTS engine is not available: {exc}") from exc
+
+    results: list[dict[str, object]] = []
+    adopted: dict[str, float] = {}
+
+    def _ok_result(step_id: str, wav_bytes: bytes, duration: float) -> dict[str, object]:
+        adopted[step_id] = duration
+        return {
+            "stepId": step_id,
+            "ok": True,
+            "audioDuration": duration,
+            "mimeType": "audio/wav",
+            "wavData": _base64.b64encode(wav_bytes).decode("ascii"),
+        }
+
+    # Batch progress travels over the existing chat transport: a start note
+    # when the queued run begins, per-part outcome in the finish note.
+    library.append_message(
+        row.conversation_id,
+        "assistant",
+        f"Voice batch started for {len(todo)} part(s) through the queued voice — "
+        "one reusable prompt by default, per-part overrides where set.",
+    )
+    async with _tts_lock:
+        await asyncio.sleep(0.01)
+        for part in todo:
+            step_id = str(part.get("stepId", ""))
+            spoken = str(part.get("spokenLine", ""))
+            if not spoken:
+                library.report_narration_part_failed(
+                    narration_id, step_id=step_id, error="empty spoken line"
+                )
+                results.append({"stepId": step_id, "ok": False, "error": "empty spoken line"})
+                continue
+            try:
+                language, voice, instruction, params, provider, model_id = (
+                    _resolve_narration_tts_call(request, narration_view, part)
+                )
+                engine = get_tts_engine(provider=provider, model_id=model_id)
+                try:
+                    request.app.state.tts_engine = engine
+                except Exception:
+                    pass
+                wav_bytes: bytes = await asyncio.to_thread(
+                    engine.generate, spoken, language, voice, instruction, params
+                )
+                duration = wav_duration(wav_bytes)
+                if duration is None or duration <= 0:
+                    raise RuntimeError("generated WAV has no measurable duration")
+                results.append(_ok_result(step_id, wav_bytes, duration))
+            except LookupError as exc:
+                library.report_narration_part_failed(narration_id, step_id=step_id, error=str(exc))
+                results.append({"stepId": step_id, "ok": False, "error": str(exc)})
+            except HTTPException as exc:
+                detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+                library.report_narration_part_failed(narration_id, step_id=step_id, error=detail)
+                results.append({"stepId": step_id, "ok": False, "error": detail})
+            except Exception as exc:
+                from app.tts.engine import (
+                    MlxNotAvailableError,
+                    TtsInferenceError,
+                    TtsModelLoadError,
+                )
+
+                if isinstance(exc, MlxNotAvailableError):
+                    try:
+                        from app.tts.engine import SineTtsEngine
+
+                        fallback = SineTtsEngine()
+                        wav_bytes = fallback.generate(spoken, None, None, None, None)
+                        duration = wav_duration(wav_bytes)
+                        if duration is None or duration <= 0:
+                            raise RuntimeError("fallback WAV has no measurable duration")
+                        results.append(_ok_result(step_id, wav_bytes, duration))
+                        continue
+                    except Exception as fallback_exc:
+                        message = str(fallback_exc)
+                elif isinstance(exc, (TtsModelLoadError, TtsInferenceError)):
+                    message = str(exc)
+                else:
+                    message = f"TTS generation failed: {exc}"
+                library.report_narration_part_failed(narration_id, step_id=step_id, error=message)
+                results.append({"stepId": step_id, "ok": False, "error": message})
+    if adopted:
+        library.record_narration_durations(narration_id, adopted)
+    failed = [res for res in results if not res.get("ok")]
+    if failed:
+        summary = (
+            f"Voice batch finished with {len(failed)} failed part(s): "
+            + "; ".join(f"{r.get('stepId')}: {r.get('error')}" for r in failed)
+            + " — failed parts are marked stale; retry each part, then accept."
+        )
+    else:
+        summary = (
+            f"Voice batch finished: {len(results)} part(s) generated through the queued "
+            "voice. Embed each WAV first, report the asset ids, then propose through "
+            "the canonical pipeline — audio timing is adopted, never stretched."
+        )
+    library.append_message(row.conversation_id, "assistant", summary)
+    return {"narration": _narration_to_out(request, narration_id), "results": results}
+
+
+@router.post("/ai/narrations/{narration_id}/parts/{step_id}/ready")
+def post_ai_narration_part_ready(
+    request: Request, narration_id: str, step_id: str, body: AiNarrationPartReady
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.get_narration(narration_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    try:
+        library.report_narration_part_ready(
+            narration_id,
+            step_id=step_id,
+            asset_id=body.assetId,
+            audio_duration=body.audioDuration,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _narration_to_out(request, narration_id)
+
+
+@router.post("/ai/narrations/{narration_id}/parts/{step_id}/fail")
+def post_ai_narration_part_fail(
+    request: Request, narration_id: str, step_id: str, body: AiNarrationPartFail
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.report_narration_part_failed(narration_id, step_id=step_id, error=body.error)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _narration_to_out(request, narration_id)
+
+
+@router.post("/ai/narrations/{narration_id}/parts/{step_id}/retry")
+def post_ai_narration_part_retry(
+    request: Request, narration_id: str, step_id: str
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.retry_narration_part(narration_id, step_id=step_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _narration_to_out(request, narration_id)
+
+
+@router.post("/ai/narrations/{narration_id}/accept")
+def accept_ai_narration(request: Request, narration_id: str) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.set_narration_status(narration_id, "accepted")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    out = _narration_to_out(request, narration_id)
+    library.append_message(
+        str(out["conversationId"]),
+        "assistant",
+        "Narration accepted — PrompterPart timings and voice bindings are now the "
+        "timing source for calibration and board scripts. Rerecord stays manual "
+        "in the existing TTS/record modals.",
+    )
+    return out
+
+
+@router.post("/ai/narrations/{narration_id}/reject")
+def reject_ai_narration(request: Request, narration_id: str) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.set_narration_status(narration_id, "rejected")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _narration_to_out(request, narration_id)
 
 
 # -- edit proposals ------------------------------------------------------

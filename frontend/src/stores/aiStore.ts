@@ -5,6 +5,9 @@ import {
   AiApi,
   type AiConversationSummary,
   type AiMessage,
+  type AiNarration,
+  type AiNarrationGenerateResult,
+  type AiNarrationSummary,
   type AiPlan,
   type AiPlanPatch,
   type AiPlanSummary,
@@ -53,6 +56,11 @@ interface AiState {
   activeReconciliationId: string | null
   reconciliationBusy: boolean
   reconciliationError: { code: string; message: string } | null
+  narrations: AiNarrationSummary[]
+  narrationById: Record<string, AiNarration>
+  activeNarrationId: string | null
+  narrationBusy: boolean
+  narrationError: { code: string; message: string } | null
   proposals: AiProposal[]
   proposalById: Record<string, AiProposal>
   activeProposalId: string | null
@@ -129,6 +137,31 @@ interface AiState {
   acceptReconciliation: (id: string) => Promise<void>
   rejectReconciliation: (id: string) => Promise<void>
 
+  setActiveNarration: (id: string | null) => void
+  loadNarrations: (projectId: string, reconciliationId?: string) => Promise<void>
+  createNarration: (
+    projectId: string,
+    reconciliationId: string,
+    conversationId: string,
+    input?: { defaultVoicePromptId?: string; secondsPerCharacter?: number },
+  ) => Promise<AiNarration | null>
+  loadNarration: (id: string) => Promise<void>
+  updateNarrationVoices: (
+    id: string,
+    patch: { defaultVoicePromptId?: string | null; partVoices?: Record<string, string | null> },
+  ) => Promise<void>
+  generateNarration: (id: string) => Promise<AiNarrationGenerateResult[] | null>
+  markNarrationPartReady: (
+    id: string,
+    stepId: string,
+    assetId: string,
+    audioDuration: number,
+  ) => Promise<void>
+  markNarrationPartFailed: (id: string, stepId: string, error: string) => Promise<void>
+  retryNarrationPart: (id: string, stepId: string) => Promise<void>
+  acceptNarration: (id: string) => Promise<void>
+  rejectNarration: (id: string) => Promise<void>
+
   setActiveProposal: (id: string | null) => void
   loadProposals: (projectId: string) => Promise<void>
   createProposal: (input: AiProposalCreateInput) => Promise<AiProposal | null>
@@ -193,6 +226,11 @@ export const useAiStore = create<AiState>()(
       activeReconciliationId: null,
       reconciliationBusy: false,
       reconciliationError: null,
+      narrations: [],
+      narrationById: {},
+      activeNarrationId: null,
+      narrationBusy: false,
+      narrationError: null,
       proposals: [],
       proposalById: {},
       activeProposalId: null,
@@ -858,6 +896,223 @@ export const useAiStore = create<AiState>()(
         }
       },
 
+      setActiveNarration: (id) => set({ activeNarrationId: id }),
+
+      loadNarrations: async (projectId, reconciliationId) => {
+        try {
+          const narrations = await get().api.listNarrations(projectId, reconciliationId)
+          set((state) => ({
+            narrations,
+            activeNarrationId:
+              state.activeNarrationId && narrations.some((n) => n.id === state.activeNarrationId)
+                ? state.activeNarrationId
+                : (narrations[0]?.id ?? null),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      createNarration: async (projectId, reconciliationId, conversationId, input) => {
+        if (get().narrationBusy) return null
+        set({ narrationBusy: true, narrationError: null })
+        try {
+          const narration = await get().api.createNarration({
+            projectId,
+            reconciliationId,
+            conversationId,
+            ...(input?.defaultVoicePromptId
+              ? { defaultVoicePromptId: input.defaultVoicePromptId }
+              : {}),
+            ...(input?.secondsPerCharacter
+              ? { secondsPerCharacter: input.secondsPerCharacter }
+              : {}),
+          })
+          set((state) => ({
+            narrationById: { ...state.narrationById, [narration.id]: narration },
+            narrations: [
+              {
+                id: narration.id,
+                projectId: narration.projectId,
+                reconciliationId: narration.reconciliationId,
+                conversationId: narration.conversationId,
+                title: narration.title,
+                status: narration.status,
+                partCount: narration.parts.length,
+                modified: narration.modified,
+              },
+              ...state.narrations.filter((n) => n.id !== narration.id),
+            ],
+            activeNarrationId: narration.id,
+          }))
+          try {
+            const messages = await get().api.listMessages(conversationId)
+            set((state) => ({
+              messagesById: { ...state.messagesById, [conversationId]: messages },
+            }))
+          } catch {
+            // Narration itself succeeded; message refresh is best-effort.
+          }
+          return narration
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return null
+          }
+          set({
+            narrationError: {
+              code: 'narration_create_failed',
+              message: error instanceof Error ? error.message : 'Prompter fill failed — retry.',
+            },
+          })
+          return null
+        } finally {
+          set({ narrationBusy: false })
+        }
+      },
+
+      loadNarration: async (id) => {
+        try {
+          const narration = await get().api.getNarration(id)
+          set((state) => ({ narrationById: { ...state.narrationById, [id]: narration } }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      updateNarrationVoices: async (id, patch) => {
+        try {
+          const narration = await get().api.updateNarrationVoices(id, patch)
+          set((state) => ({
+            narrationById: { ...state.narrationById, [id]: narration },
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return
+          }
+          set({
+            narrationError: {
+              code: 'narration_voice_failed',
+              message: error instanceof Error ? error.message : 'Voice update failed.',
+            },
+          })
+        }
+      },
+
+      generateNarration: async (id) => {
+        if (get().narrationBusy) return null
+        set({ narrationBusy: true, narrationError: null })
+        try {
+          const { narration, results } = await get().api.generateNarration(id)
+          set((state) => ({
+            narrationById: { ...state.narrationById, [id]: narration },
+            narrations: state.narrations.map((n) =>
+              n.id === id ? { ...n, status: narration.status, modified: narration.modified } : n,
+            ),
+          }))
+          try {
+            const messages = await get().api.listMessages(narration.conversationId)
+            set((state) => ({
+              messagesById: { ...state.messagesById, [narration.conversationId]: messages },
+            }))
+          } catch {
+            // Batch itself succeeded; message refresh is best-effort.
+          }
+          return results
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return null
+          }
+          set({
+            narrationError: {
+              code: 'narration_generate_failed',
+              message: error instanceof Error ? error.message : 'Voice batch failed — retry.',
+            },
+          })
+          return null
+        } finally {
+          set({ narrationBusy: false })
+        }
+      },
+
+      markNarrationPartReady: async (id, stepId, assetId, audioDuration) => {
+        try {
+          const narration = await get().api.markNarrationPartReady(id, stepId, {
+            assetId,
+            audioDuration,
+          })
+          set((state) => ({ narrationById: { ...state.narrationById, [id]: narration } }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      markNarrationPartFailed: async (id, stepId, error) => {
+        try {
+          const narration = await get().api.markNarrationPartFailed(id, stepId, error)
+          set((state) => ({ narrationById: { ...state.narrationById, [id]: narration } }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      retryNarrationPart: async (id, stepId) => {
+        try {
+          const narration = await get().api.retryNarrationPart(id, stepId)
+          set((state) => ({ narrationById: { ...state.narrationById, [id]: narration } }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      acceptNarration: async (id) => {
+        try {
+          const narration = await get().api.acceptNarration(id)
+          set((state) => ({
+            narrationById: { ...state.narrationById, [id]: narration },
+            narrations: state.narrations.map((n) =>
+              n.id === id ? { ...n, status: narration.status, modified: narration.modified } : n,
+            ),
+          }))
+          try {
+            const messages = await get().api.listMessages(narration.conversationId)
+            set((state) => ({
+              messagesById: { ...state.messagesById, [narration.conversationId]: messages },
+            }))
+          } catch {
+            // Accept itself succeeded; message refresh is best-effort.
+          }
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return
+          }
+          set({
+            narrationError: {
+              code: 'narration_accept_blocked',
+              message:
+                error instanceof Error ? error.message : 'Accept blocked — resolve stale parts.',
+            },
+          })
+        }
+      },
+
+      rejectNarration: async (id) => {
+        try {
+          const narration = await get().api.rejectNarration(id)
+          set((state) => ({
+            narrationById: { ...state.narrationById, [id]: narration },
+            narrations: state.narrations.map((n) =>
+              n.id === id ? { ...n, status: narration.status, modified: narration.modified } : n,
+            ),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
       setActiveProposal: (id) => set({ activeProposalId: id }),
 
       loadProposals: async (projectId) => {
@@ -992,6 +1247,7 @@ export const useAiStore = create<AiState>()(
         scenarioRequest: state.scenarioRequest,
         activeReconciliationId: state.activeReconciliationId,
         activeProposalId: state.activeProposalId,
+        activeNarrationId: state.activeNarrationId,
       }),
     },
   ),

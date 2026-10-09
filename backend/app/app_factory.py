@@ -6,6 +6,8 @@ from app.ai.library import AiLibrary
 from app.ai.model import (  # noqa: F401
     AiConversationRow,
     AiMessageRow,
+    AiNarrationRevisionRow,
+    AiNarrationRow,
     AiPlanRevisionRow,
     AiPlanRow,
     AiProposalExecutionRow,

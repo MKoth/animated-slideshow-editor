@@ -1,5 +1,6 @@
 import type { Command, CommandSystem } from '../engine/commands'
 import { TransactionCommand } from '../engine/commands/transactionCommand'
+import { AiCommitTtsCommand } from '../engine/commands/aiCommitTtsCommand'
 import { CreateSlideCommand } from '../engine/commands/createSlideCommand'
 import { CreatePrompterPartCommand } from '../engine/commands/createPrompterPartCommand'
 import { UpdatePrompterPartCommand } from '../engine/commands/updatePrompterPartCommand'
@@ -12,8 +13,9 @@ import type { EnginePublic } from '../engine'
 /**
  * Canonical AI Edit Proposal allowlist (issue #422). Server schema validation
  * runs first; the client dry-run validate() against the live engine runs
- * second, in order. Stage C/D/E/merge placeholders carry typed params here;
- * the stages land the real commands in their own tickets.
+ * second, in order. Stage D/E/merge placeholders carry typed params here;
+ * AiCommitTts landed as a real Stage C command (#425) — the remaining stages
+ * land their real commands in their own tickets.
  */
 export const AI_COMMAND_ALLOWLIST: readonly string[] = [
   'CreateSlide',
@@ -311,6 +313,16 @@ export function buildCommandFromJson(json: AiCommandJson): Command<unknown> {
       return new SetSlideAnimationScriptCommand({
         slideId: asString(params.slideId, 'slideId', ctype),
         source: params.source as string,
+      })
+    case 'AiCommitTts':
+      // Stage C real command (issue #425): binds an already-embedded voice
+      // asset, adopts the audio duration, shifts downstream gap-free at rate 1.
+      return new AiCommitTtsCommand({
+        slideId: asString(params.slideId, 'slideId', ctype),
+        partId: asString(params.partId, 'partId', ctype),
+        assetId: asString(params.assetId, 'assetId', ctype),
+        timelineStart: asNumber(params.timelineStart, 'timelineStart', ctype),
+        sourceEnd: asNumber(params.sourceEnd, 'sourceEnd', ctype),
       })
     default:
       if (isPlaceholder(ctype)) {

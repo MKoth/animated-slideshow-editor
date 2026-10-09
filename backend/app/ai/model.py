@@ -208,3 +208,47 @@ class AiReconciliationRevisionRow(Base):
     source_request: Mapped[str] = mapped_column(Text, nullable=False, default="")
     snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiNarrationRow(Base):
+    """Stage C narration: verbatim Prompter fill + queued TTS batch state.
+
+    Own versioned record with an explicit accept gate; Stages D/E read only
+    the accepted version. Per-part TTS status lives here as record state
+    (pending/ready/failed + stale flag) — the persisted PrompterPart status
+    in the project stays stale|-absent only. Never part of the .lesson file.
+    """
+
+    __tablename__ = "ai_narrations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    reconciliation_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    scenario_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    default_voice_prompt_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, default=None
+    )
+    seconds_per_character: Mapped[float] = mapped_column(nullable=False, default=0.2)
+    parts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiNarrationRevisionRow(Base):
+    """One narration fill of an accepted reconciliation version."""
+
+    __tablename__ = "ai_narration_revisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    narration_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("ai_narrations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_request: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

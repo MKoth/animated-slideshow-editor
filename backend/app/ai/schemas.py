@@ -182,3 +182,25 @@ class AiReconciliationBriefPatch(BaseModel):
 class AiReconciliationUpdate(BaseModel):
     title: str | None = None
     briefs: list[AiReconciliationBriefPatch] | None = None
+
+
+class AiNarrationCreate(BaseModel):
+    projectId: str = Field(min_length=1)
+    reconciliationId: str = Field(min_length=1)
+    conversationId: str = Field(min_length=1)
+    defaultVoicePromptId: str | None = None
+    secondsPerCharacter: float | None = Field(default=None, gt=0)
+
+
+class AiNarrationVoicePatch(BaseModel):
+    defaultVoicePromptId: str | None = None
+    partVoices: dict[str, str | None] | None = None
+
+
+class AiNarrationPartReady(BaseModel):
+    assetId: str = Field(min_length=1)
+    audioDuration: float = Field(gt=0)
+
+
+class AiNarrationPartFail(BaseModel):
+    error: str = Field(default="TTS generation failed")

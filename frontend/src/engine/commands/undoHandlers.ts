@@ -2027,6 +2027,71 @@ export function applyUndo(
       }
       return
     }
+    case 'AiCommitTts': {
+      // Stage C commit (issue #425): undo restores timing + binding + clips.
+      // The embedded WAV stays (it was embedded before the proposal ran).
+      const slideId = params.slideId as string
+      const partId = params.partId as string
+      const clipId = inv.clipId as string
+      const oldDuration = inv.oldDuration as number | undefined
+      const oldStartTime = inv.oldStartTime as number | undefined
+      const oldEndTime = inv.oldEndTime as number | undefined
+      const shiftedParts = inv.shiftedParts as
+        readonly { id: string; oldStartTime: number; oldEndTime: number }[] | undefined
+      const shiftedClips = inv.shiftedClips as
+        readonly { id: string; oldTimelineStart: number }[] | undefined
+      const deletedOldClip = inv.deletedOldClip as
+        { clip: import('../audioClip').AudioClip; index: number } | undefined
+      const slide = engine.getSlide(slideId)
+      if (oldDuration !== undefined && oldStartTime !== undefined && oldEndTime !== undefined) {
+        const part = slide.prompter?.parts.find((p) => p.id === partId)
+        if (part) {
+          part.duration = oldDuration
+          part.startTime = oldStartTime
+          part.endTime = oldEndTime
+        }
+        if (shiftedParts) {
+          for (const sp of shiftedParts) {
+            const p = slide.prompter?.parts.find((x) => x.id === sp.id)
+            if (p) {
+              p.startTime = sp.oldStartTime
+              p.endTime = sp.oldEndTime
+            }
+          }
+        }
+        if (shiftedClips) {
+          for (const sc of shiftedClips) {
+            const clip = slide.audio.clips.find((c) => c.id === sc.id)
+            if (clip) clip.timelineStart = sc.oldTimelineStart
+          }
+        }
+      }
+      const oldAudioClipId = inv.oldAudioClipId as string | undefined
+      const oldAudioAssetId = inv.oldAudioAssetId as string | undefined
+      const oldStatus = inv.oldStatus as string | undefined
+      const part = slide.prompter?.parts.find((p) => p.id === partId)
+      if (part) {
+        if (oldAudioClipId)
+          (part as unknown as { audioClipId?: string }).audioClipId = oldAudioClipId
+        else delete (part as unknown as { audioClipId?: string }).audioClipId
+        if (oldAudioAssetId)
+          (part as unknown as { audioAssetId?: string }).audioAssetId = oldAudioAssetId
+        else delete (part as unknown as { audioAssetId?: string }).audioAssetId
+        if (oldStatus)
+          (part as unknown as { status?: string }).status =
+            oldStatus as import('../prompter').PrompterPartStatus
+        else delete (part as unknown as { status?: string }).status
+      }
+      try {
+        engine.deleteAudioClip(slideId, clipId)
+      } catch {
+        void 0
+      }
+      if (deletedOldClip) {
+        slide.audio.clips.splice(deletedOldClip.index, 0, deletedOldClip.clip)
+      }
+      return
+    }
     case 'CreateTable': {
       const tableNodeId = inv.tableNodeId as string
       try {
@@ -4024,6 +4089,39 @@ export function applyRedo(
           shiftDownstream: fit.shiftDownstream,
         })
       }
+      return
+    }
+    case 'AiCommitTts': {
+      // Stage C commit redo: the WAV stays embedded; recreate the voice clip
+      // at rate 1, rebind the part, and re-adopt the audio duration.
+      const inv = _inverse as unknown as { clipId?: string } | null
+      const clipId = inv?.clipId as string | undefined
+      engine.createAudioClip(params.slideId as string, {
+        ...(clipId ? { id: clipId } : {}),
+        assetId: params.assetId as string,
+        trackId: 'voice',
+        timelineStart: params.timelineStart as number,
+        sourceStart: 0,
+        sourceEnd: params.sourceEnd as number,
+        playbackRate: 1,
+      })
+      const newClipId =
+        clipId ??
+        engine
+          .getSlide(params.slideId as string)
+          .audio.clips.find((c) => c.assetId === params.assetId)?.id
+      if (newClipId) {
+        engine.setPrompterPartAudio(
+          params.slideId as string,
+          params.partId as string,
+          newClipId,
+          params.assetId as string,
+        )
+      }
+      engine.updatePrompterPart(params.slideId as string, params.partId as string, {
+        duration: params.sourceEnd as number,
+        shiftDownstream: true,
+      })
       return
     }
     case 'CreateTable': {

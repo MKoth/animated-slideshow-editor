@@ -330,6 +330,68 @@ export type AiProposalStatus =
   | 'executed'
   | 'execution_failed'
 
+export type AiNarrationStatus = 'draft' | 'accepted' | 'rejected'
+export type AiNarrationPartStatus = 'pending' | 'ready' | 'failed'
+
+export interface AiNarrationPart {
+  stepId: string
+  order: number
+  partTag: 'middle'
+  spokenLine: string
+  estimatedDuration: number
+  audioDuration: number | null
+  assetId: string | null
+  status: AiNarrationPartStatus
+  stale: boolean
+  voicePromptId: string | null
+  error: string | null
+  timelineStart: number
+  timelineEnd: number
+}
+
+export interface AiNarrationRevision {
+  id: string
+  sourceRequest: string
+  created: string
+}
+
+export interface AiNarration {
+  id: string
+  projectId: string
+  reconciliationId: string
+  scenarioId: string
+  conversationId: string
+  title: string
+  status: AiNarrationStatus
+  defaultVoicePromptId: string | null
+  secondsPerCharacter: number
+  parts: AiNarrationPart[]
+  slideDuration: number
+  revisions: AiNarrationRevision[]
+  created: string
+  modified: string
+}
+
+export interface AiNarrationSummary {
+  id: string
+  projectId: string
+  reconciliationId: string
+  conversationId: string
+  title: string
+  status: AiNarrationStatus
+  partCount: number
+  modified: string
+}
+
+export interface AiNarrationGenerateResult {
+  stepId: string
+  ok: boolean
+  audioDuration?: number
+  mimeType?: string
+  wavData?: string
+  error?: string
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AiProposalCommand = { type: string } & Record<string, any>
 
@@ -617,5 +679,93 @@ export class AiApi {
       `/api/ai/proposals/${encodeURIComponent(id)}/execute`,
       JSON.stringify(input),
     )
+  }
+
+  async createNarration(input: {
+    projectId: string
+    reconciliationId: string
+    conversationId: string
+    defaultVoicePromptId?: string
+    secondsPerCharacter?: number
+  }): Promise<AiNarration> {
+    return this.client.post<AiNarration>('/api/ai/narrations', JSON.stringify(input))
+  }
+
+  async listNarrations(
+    projectId: string,
+    reconciliationId?: string,
+  ): Promise<AiNarrationSummary[]> {
+    const params = new URLSearchParams({ projectId })
+    if (reconciliationId) params.set('reconciliationId', reconciliationId)
+    return this.client.get<AiNarrationSummary[]>(`/api/ai/narrations?${params.toString()}`)
+  }
+
+  async getNarration(id: string): Promise<AiNarration> {
+    return this.client.get<AiNarration>(`/api/ai/narrations/${encodeURIComponent(id)}`)
+  }
+
+  async getNarrationCanonical(id: string): Promise<{
+    id: string
+    projectId: string
+    reconciliationId: string
+    scenarioId: string
+    conversationId: string
+    status: AiNarrationStatus
+    defaultVoicePromptId: string | null
+    secondsPerCharacter: number
+    parts: AiNarrationPart[]
+    slideDuration: number
+  }> {
+    return this.client.get(`/api/ai/narrations/${encodeURIComponent(id)}/canonical`)
+  }
+
+  async updateNarrationVoices(
+    id: string,
+    patch: { defaultVoicePromptId?: string | null; partVoices?: Record<string, string | null> },
+  ): Promise<AiNarration> {
+    return this.client.patch<AiNarration>(
+      `/api/ai/narrations/${encodeURIComponent(id)}`,
+      JSON.stringify(patch),
+    )
+  }
+
+  async generateNarration(id: string): Promise<{
+    narration: AiNarration
+    results: AiNarrationGenerateResult[]
+  }> {
+    return this.client.post(`/api/ai/narrations/${encodeURIComponent(id)}/generate`, '')
+  }
+
+  async markNarrationPartReady(
+    id: string,
+    stepId: string,
+    input: { assetId: string; audioDuration: number },
+  ): Promise<AiNarration> {
+    return this.client.post<AiNarration>(
+      `/api/ai/narrations/${encodeURIComponent(id)}/parts/${encodeURIComponent(stepId)}/ready`,
+      JSON.stringify(input),
+    )
+  }
+
+  async markNarrationPartFailed(id: string, stepId: string, error: string): Promise<AiNarration> {
+    return this.client.post<AiNarration>(
+      `/api/ai/narrations/${encodeURIComponent(id)}/parts/${encodeURIComponent(stepId)}/fail`,
+      JSON.stringify({ error }),
+    )
+  }
+
+  async retryNarrationPart(id: string, stepId: string): Promise<AiNarration> {
+    return this.client.post<AiNarration>(
+      `/api/ai/narrations/${encodeURIComponent(id)}/parts/${encodeURIComponent(stepId)}/retry`,
+      '',
+    )
+  }
+
+  async acceptNarration(id: string): Promise<AiNarration> {
+    return this.client.post<AiNarration>(`/api/ai/narrations/${encodeURIComponent(id)}/accept`, '')
+  }
+
+  async rejectNarration(id: string): Promise<AiNarration> {
+    return this.client.post<AiNarration>(`/api/ai/narrations/${encodeURIComponent(id)}/reject`, '')
   }
 }

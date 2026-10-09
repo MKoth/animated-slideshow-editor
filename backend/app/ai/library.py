@@ -9,6 +9,8 @@ from app.ai.crypto import decrypt_key, encrypt_key, mask_key
 from app.ai.model import (
     AiConversationRow,
     AiMessageRow,
+    AiNarrationRevisionRow,
+    AiNarrationRow,
     AiPlanRevisionRow,
     AiPlanRow,
     AiProposalExecutionRow,
@@ -270,6 +272,20 @@ class AiLibrary:
                 )
                 session.execute(
                     delete(AiReconciliationRow).where(AiReconciliationRow.project_id == project_id)
+                )
+            narration_ids = list(
+                session.scalars(
+                    select(AiNarrationRow.id).where(AiNarrationRow.project_id == project_id)
+                )
+            )
+            if narration_ids:
+                session.execute(
+                    delete(AiNarrationRevisionRow).where(
+                        AiNarrationRevisionRow.narration_id.in_(narration_ids)
+                    )
+                )
+                session.execute(
+                    delete(AiNarrationRow).where(AiNarrationRow.project_id == project_id)
                 )
             session.commit()
 
@@ -1112,6 +1128,321 @@ class AiLibrary:
             "verdicts": verdicts if isinstance(verdicts, list) else [],
             "briefs": briefs if isinstance(briefs, list) else [],
             "decisions": decisions if isinstance(decisions, dict) else {},
+        }
+
+    # -- narrations (Stage C) ------------------------------------------------
+
+    def list_narrations(
+        self, project_id: str, reconciliation_id: str | None = None
+    ) -> list[AiNarrationRow]:
+        statement = select(AiNarrationRow).where(AiNarrationRow.project_id == project_id)
+        if reconciliation_id:
+            statement = statement.where(AiNarrationRow.reconciliation_id == reconciliation_id)
+        statement = statement.order_by(AiNarrationRow.updated_at.desc(), AiNarrationRow.id)
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def get_narration(self, narration_id: str) -> AiNarrationRow:
+        with self._database.session() as session:
+            row = session.get(AiNarrationRow, narration_id)
+        if row is None:
+            raise KeyError(narration_id)
+        return row
+
+    def list_narration_revisions(self, narration_id: str) -> list[AiNarrationRevisionRow]:
+        self.get_narration(narration_id)
+        statement = (
+            select(AiNarrationRevisionRow)
+            .where(AiNarrationRevisionRow.narration_id == narration_id)
+            .order_by(AiNarrationRevisionRow.created_at.asc(), AiNarrationRevisionRow.id)
+        )
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def create_narration(
+        self,
+        *,
+        project_id: str,
+        reconciliation_id: str,
+        conversation_id: str,
+        title: str,
+        parts: list[dict[str, object]],
+        seconds_per_character: float,
+        default_voice_prompt_id: str | None,
+        source_request: str,
+    ) -> AiNarrationRow:
+        import json as _json
+
+        from app.ai.narrations import layout_parts
+
+        if seconds_per_character <= 0:
+            raise ValueError("secondsPerCharacter must be > 0")
+        now = _now()
+        narration_id = str(uuid4())
+        with self._database.session() as session:
+            conv = session.get(AiConversationRow, conversation_id)
+            if conv is None:
+                raise AiConversationNotFoundError(conversation_id)
+            reconciliation = session.get(AiReconciliationRow, reconciliation_id)
+            if reconciliation is None:
+                raise KeyError(reconciliation_id)
+            if reconciliation.status != "accepted":
+                raise ValueError(
+                    f"reconciliation {reconciliation_id} is {reconciliation.status} — "
+                    "accept it before Prompter work (Stage C reads only the accepted version)"
+                )
+            if reconciliation.project_id != project_id:
+                raise ValueError("reconciliation does not belong to this project")
+            scenario = session.get(AiScenarioRow, reconciliation.scenario_id)
+            scenario_id = reconciliation.scenario_id if scenario is not None else ""
+            laid_out = layout_parts([dict(p) for p in parts])
+            row = AiNarrationRow(
+                id=narration_id,
+                project_id=project_id,
+                reconciliation_id=reconciliation_id,
+                scenario_id=scenario_id,
+                conversation_id=conversation_id,
+                title=(title or reconciliation.title or "")[:255],
+                status="draft",
+                default_voice_prompt_id=default_voice_prompt_id,
+                seconds_per_character=seconds_per_character,
+                parts_json=_json.dumps(laid_out),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.add(
+                AiNarrationRevisionRow(
+                    id=str(uuid4()),
+                    narration_id=narration_id,
+                    source_request=source_request,
+                    snapshot_json=_json.dumps(
+                        {
+                            "reconciliationId": reconciliation_id,
+                            "parts": laid_out,
+                        }
+                    ),
+                    created_at=now,
+                )
+            )
+            session.commit()
+        return self.get_narration(narration_id)
+
+    def _load_narration_parts(self, row: AiNarrationRow) -> list[dict[str, object]]:
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.parts_json or "[]")
+        except (ValueError, TypeError):
+            return []
+        return [dict(p) for p in loaded] if isinstance(loaded, list) else []
+
+    def _store_narration_parts(
+        self, narration_id: str, parts: list[dict[str, object]], *, reopen: bool = True
+    ) -> AiNarrationRow:
+        import json as _json
+
+        from app.ai.narrations import layout_parts
+
+        with self._database.session() as session:
+            row = session.get(AiNarrationRow, narration_id)
+            if row is None:
+                raise KeyError(narration_id)
+            row.parts_json = _json.dumps(layout_parts([dict(p) for p in parts]))
+            if reopen:
+                row.status = "draft"
+            row.updated_at = _now()
+            session.commit()
+        return self.get_narration(narration_id)
+
+    def set_narration_voices(
+        self,
+        narration_id: str,
+        *,
+        default_voice_prompt_id: str | None = None,
+        update_default: bool = False,
+        part_voices: dict[str, str | None] | None = None,
+    ) -> AiNarrationRow:
+        row = self.get_narration(narration_id)
+        parts = self._load_narration_parts(row)
+        known_steps = {str(p.get("stepId", "")) for p in parts}
+        if part_voices:
+            for step_id in part_voices:
+                if step_id not in known_steps:
+                    raise ValueError(f"unknown narration step id: {step_id}")
+        old_default = row.default_voice_prompt_id
+        if update_default:
+            new_default: str | None = (
+                default_voice_prompt_id.strip()
+                if isinstance(default_voice_prompt_id, str) and default_voice_prompt_id.strip()
+                else None
+            )
+        else:
+            new_default = old_default
+        default_changed = update_default and (new_default or None) != (old_default or None)
+        for part in parts:
+            step_id = str(part.get("stepId", ""))
+            override_changed = False
+            if part_voices and step_id in part_voices:
+                override = part_voices[step_id]
+                normalized = (
+                    override.strip() if isinstance(override, str) and override.strip() else None
+                )
+                if normalized != part.get("voicePromptId"):
+                    override_changed = True
+                part["voicePromptId"] = normalized
+            # A voice change invalidates already-generated audio: the embedded
+            # take used the old voice, so the part must regenerate before the
+            # gate can pass (stale-blocking at build + accept).
+            uses_default = part.get("voicePromptId") is None
+            if (override_changed or (default_changed and uses_default)) and part.get("status") in (
+                "ready",
+                "failed",
+            ):
+                part["status"] = "pending"
+                part["stale"] = False
+                part["error"] = None
+        with self._database.session() as session:
+            stored = session.get(AiNarrationRow, narration_id)
+            if stored is None:
+                raise KeyError(narration_id)
+            if update_default:
+                stored.default_voice_prompt_id = (
+                    default_voice_prompt_id.strip()
+                    if isinstance(default_voice_prompt_id, str) and default_voice_prompt_id.strip()
+                    else None
+                )
+            import json as _json
+
+            from app.ai.narrations import layout_parts
+
+            stored.parts_json = _json.dumps(layout_parts(parts))
+            stored.status = "draft"
+            stored.updated_at = _now()
+            session.commit()
+        return self.get_narration(narration_id)
+
+    def record_narration_durations(
+        self, narration_id: str, audio_durations: dict[str, float]
+    ) -> AiNarrationRow:
+        """Post-TTS adopt: store measured durations and shift downstream gap-free."""
+        from app.ai.narrations import adopt_tts_durations
+
+        row = self.get_narration(narration_id)
+        parts = self._load_narration_parts(row)
+        adopted = adopt_tts_durations(parts, audio_durations)
+        return self._store_narration_parts(narration_id, adopted)
+
+    def report_narration_part_ready(
+        self, narration_id: str, *, step_id: str, asset_id: str, audio_duration: float
+    ) -> AiNarrationRow:
+        clean_asset = asset_id.strip()
+        if not clean_asset:
+            raise ValueError(
+                "assetId must be a non-empty string — embed the WAV first, "
+                "then reference the asset id (never inline base64)"
+            )
+        if not isinstance(audio_duration, (int, float)) or float(audio_duration) <= 0:
+            raise ValueError("audioDuration must be > 0")
+        row = self.get_narration(narration_id)
+        parts = self._load_narration_parts(row)
+        matched = False
+        for part in parts:
+            if str(part.get("stepId", "")) == step_id:
+                part["assetId"] = clean_asset
+                part["audioDuration"] = float(audio_duration)
+                part["status"] = "ready"
+                part["stale"] = False
+                part["error"] = None
+                matched = True
+        if not matched:
+            raise ValueError(f"unknown narration step id: {step_id}")
+        return self._store_narration_parts(narration_id, parts)
+
+    def report_narration_part_failed(
+        self, narration_id: str, *, step_id: str, error: str
+    ) -> AiNarrationRow:
+        row = self.get_narration(narration_id)
+        parts = self._load_narration_parts(row)
+        matched = False
+        for part in parts:
+            if str(part.get("stepId", "")) == step_id:
+                part["status"] = "failed"
+                part["stale"] = True
+                part["error"] = error.strip() or "TTS generation failed"
+                matched = True
+        if not matched:
+            raise ValueError(f"unknown narration step id: {step_id}")
+        return self._store_narration_parts(narration_id, parts)
+
+    def retry_narration_part(self, narration_id: str, *, step_id: str) -> AiNarrationRow:
+        row = self.get_narration(narration_id)
+        parts = self._load_narration_parts(row)
+        matched = False
+        for part in parts:
+            if str(part.get("stepId", "")) == step_id:
+                part["status"] = "pending"
+                part["stale"] = False
+                part["error"] = None
+                matched = True
+        if not matched:
+            raise ValueError(f"unknown narration step id: {step_id}")
+        return self._store_narration_parts(narration_id, parts)
+
+    def set_narration_status(self, narration_id: str, status: str) -> AiNarrationRow:
+        from app.ai.narrations import narration_accept_blockers
+
+        if status not in ("draft", "accepted", "rejected"):
+            raise ValueError("status must be draft, accepted, or rejected")
+        row = self.get_narration(narration_id)
+        if status == "accepted":
+            blockers = narration_accept_blockers(self._load_narration_parts(row))
+            if blockers:
+                raise ValueError("narration is not ready to accept — " + "; ".join(blockers))
+        with self._database.session() as session:
+            stored = session.get(AiNarrationRow, narration_id)
+            if stored is None:
+                raise KeyError(narration_id)
+            stored.status = status
+            stored.updated_at = _now()
+            session.commit()
+        return self.get_narration(narration_id)
+
+    def require_accepted_narration(self, narration_id: str) -> AiNarrationRow:
+        """Stage D/E gate: calibration and board work wait on accepted narration."""
+        row = self.get_narration(narration_id)
+        if row.status != "accepted":
+            raise ValueError(
+                f"narration {narration_id} is {row.status} — "
+                "accept it before calibration/board work (Stages D/E read only "
+                "the accepted version)"
+            )
+        return row
+
+    def narration_canonical_json(self, narration_id: str) -> dict[str, object]:
+        """Accepted PrompterPart timings + audio bindings for the Stage D/E handoff."""
+        import json as _json
+
+        row = self.require_accepted_narration(narration_id)
+        try:
+            parts: object = _json.loads(row.parts_json or "[]")
+        except (ValueError, TypeError):
+            parts = []
+        return {
+            "id": row.id,
+            "projectId": row.project_id,
+            "reconciliationId": row.reconciliation_id,
+            "scenarioId": row.scenario_id,
+            "conversationId": row.conversation_id,
+            "status": row.status,
+            "defaultVoicePromptId": row.default_voice_prompt_id,
+            "secondsPerCharacter": row.seconds_per_character,
+            "parts": parts if isinstance(parts, list) else [],
+            "slideDuration": sum(
+                float(p.get("audioDuration") or p.get("estimatedDuration") or 0.0)
+                for p in (parts if isinstance(parts, list) else [])
+                if isinstance(p, dict)
+            ),
         }
 
     # -- edit proposals --------------------------------------------------
