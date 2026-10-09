@@ -7,6 +7,8 @@ from sqlalchemy import delete, func, select
 
 from app.ai.crypto import decrypt_key, encrypt_key, mask_key
 from app.ai.model import (
+    AiCalibrationRevisionRow,
+    AiCalibrationRow,
     AiConversationRow,
     AiMessageRow,
     AiNarrationRevisionRow,
@@ -286,6 +288,20 @@ class AiLibrary:
                 )
                 session.execute(
                     delete(AiNarrationRow).where(AiNarrationRow.project_id == project_id)
+                )
+            calibration_ids = list(
+                session.scalars(
+                    select(AiCalibrationRow.id).where(AiCalibrationRow.project_id == project_id)
+                )
+            )
+            if calibration_ids:
+                session.execute(
+                    delete(AiCalibrationRevisionRow).where(
+                        AiCalibrationRevisionRow.calibration_id.in_(calibration_ids)
+                    )
+                )
+                session.execute(
+                    delete(AiCalibrationRow).where(AiCalibrationRow.project_id == project_id)
                 )
             session.commit()
 
@@ -1443,6 +1459,311 @@ class AiLibrary:
                 for p in (parts if isinstance(parts, list) else [])
                 if isinstance(p, dict)
             ),
+        }
+
+    # -- calibrations (Stage D) ----------------------------------------------
+
+    def list_calibrations(
+        self, project_id: str, narration_id: str | None = None
+    ) -> list[AiCalibrationRow]:
+        statement = select(AiCalibrationRow).where(AiCalibrationRow.project_id == project_id)
+        if narration_id:
+            statement = statement.where(AiCalibrationRow.narration_id == narration_id)
+        statement = statement.order_by(AiCalibrationRow.updated_at.desc(), AiCalibrationRow.id)
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def get_calibration(self, calibration_id: str) -> AiCalibrationRow:
+        with self._database.session() as session:
+            row = session.get(AiCalibrationRow, calibration_id)
+        if row is None:
+            raise KeyError(calibration_id)
+        return row
+
+    def list_calibration_revisions(self, calibration_id: str) -> list[AiCalibrationRevisionRow]:
+        self.get_calibration(calibration_id)
+        statement = (
+            select(AiCalibrationRevisionRow)
+            .where(AiCalibrationRevisionRow.calibration_id == calibration_id)
+            .order_by(AiCalibrationRevisionRow.created_at.asc(), AiCalibrationRevisionRow.id)
+        )
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def _load_calibration_timings(self, row: AiCalibrationRow) -> list[dict[str, object]]:
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.timings_json or "[]")
+        except (ValueError, TypeError):
+            return []
+        return [dict(t) for t in loaded] if isinstance(loaded, list) else []
+
+    def _load_calibration_checks(self, row: AiCalibrationRow) -> dict[str, object]:
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.checks_json or "{}")
+        except (ValueError, TypeError):
+            return {}
+        return dict(loaded) if isinstance(loaded, dict) else {}
+
+    def _store_calibration_timings(
+        self, calibration_id: str, timings: list[dict[str, object]], *, reopen: bool = True
+    ) -> AiCalibrationRow:
+        import json as _json
+
+        with self._database.session() as session:
+            row = session.get(AiCalibrationRow, calibration_id)
+            if row is None:
+                raise KeyError(calibration_id)
+            row.timings_json = _json.dumps(timings)
+            if reopen:
+                row.status = "draft"
+            row.updated_at = _now()
+            session.commit()
+        return self.get_calibration(calibration_id)
+
+    def create_calibration(
+        self,
+        *,
+        project_id: str,
+        narration_id: str,
+        conversation_id: str,
+        title: str,
+        intro_ref: str,
+        outro_ref: str,
+        phoneme_map: dict[str, str] | None,
+        checks: dict[str, object],
+        timings: list[dict[str, object]],
+        source_request: str,
+    ) -> AiCalibrationRow:
+        import json as _json
+
+        from app.ai.calibrations import INTRO_OUTRO_TAGS
+
+        now = _now()
+        calibration_id = str(uuid4())
+        with self._database.session() as session:
+            conv = session.get(AiConversationRow, conversation_id)
+            if conv is None:
+                raise AiConversationNotFoundError(conversation_id)
+            narration = session.get(AiNarrationRow, narration_id)
+            if narration is None:
+                raise KeyError(narration_id)
+            if narration.status != "accepted":
+                raise ValueError(
+                    f"narration {narration_id} is {narration.status} — "
+                    "accept it before calibration/board work (Stages D/E read only "
+                    "the accepted version)"
+                )
+            if narration.project_id != project_id:
+                raise ValueError("narration does not belong to this project")
+            scenario = session.get(AiScenarioRow, narration.scenario_id)
+            scenario_id = narration.scenario_id if scenario is not None else ""
+            for timing in timings:
+                tag = str(timing.get("partTag", ""))
+                if tag not in INTRO_OUTRO_TAGS:
+                    raise ValueError(
+                        f"part {timing.get('stepId', '?')}: mouth and camera stay on "
+                        "intro/outro cat nodes (blackboard middle excluded)"
+                    )
+            if not timings:
+                raise ValueError("no intro/outro steps with spoken lines — nothing to calibrate")
+            row = AiCalibrationRow(
+                id=calibration_id,
+                project_id=project_id,
+                narration_id=narration_id,
+                scenario_id=scenario_id,
+                conversation_id=conversation_id,
+                title=(title or narration.title or "")[:255],
+                status="draft",
+                intro_ref=(intro_ref or "")[:255],
+                outro_ref=(outro_ref or "")[:255],
+                phoneme_map_json=_json.dumps(dict(phoneme_map or {})),
+                checks_json=_json.dumps(checks),
+                timings_json=_json.dumps(timings),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.add(
+                AiCalibrationRevisionRow(
+                    id=str(uuid4()),
+                    calibration_id=calibration_id,
+                    source_request=source_request,
+                    snapshot_json=_json.dumps(
+                        {
+                            "narrationId": narration_id,
+                            "checks": checks,
+                            "timings": timings,
+                        }
+                    ),
+                    created_at=now,
+                )
+            )
+            session.commit()
+        return self.get_calibration(calibration_id)
+
+    def _load_calibration_phoneme_map(self, row: AiCalibrationRow) -> dict[str, str]:
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.phoneme_map_json or "{}")
+        except (ValueError, TypeError):
+            return {}
+        if not isinstance(loaded, dict):
+            return {}
+        return {str(k): str(v) for k, v in loaded.items() if isinstance(v, str) and v.strip()}
+
+    def _mouth_shapes_for_row(self, row: AiCalibrationRow) -> list[str]:
+        checks = self._load_calibration_checks(row)
+        face = checks.get("faceRig", {})
+        if not isinstance(face, dict):
+            return []
+        shapes = face.get("mouthShapes", [])
+        return (
+            [s for s in shapes if isinstance(s, str) and s.strip()]
+            if isinstance(shapes, list)
+            else []
+        )
+
+    def record_calibration_words(
+        self, calibration_id: str, *, step_id: str, words: list[dict[str, object]]
+    ) -> AiCalibrationRow:
+        from app.ai.calibrations import OPEN_SHAPE, map_words_to_shapes, validate_aligner_words
+
+        _ = OPEN_SHAPE
+        row = self.get_calibration(calibration_id)
+        timings = self._load_calibration_timings(row)
+        phoneme_map = self._load_calibration_phoneme_map(row)
+        mouth_shapes = self._mouth_shapes_for_row(row)
+        matched = False
+        for timing in timings:
+            if str(timing.get("stepId", "")) == step_id:
+                spoken = str(timing.get("spokenLine", ""))
+                duration = timing.get("audioDuration")
+                duration_f = float(duration) if isinstance(duration, (int, float)) else 0.0
+                errors = validate_aligner_words(spoken, duration_f, words)
+                if errors:
+                    raise ValueError("; ".join(errors))
+                # Enrich with phoneme/shape so missing rig shapes block the gate
+                # (soft-warn-and-skip wired into calibration_accept_blockers).
+                enriched = map_words_to_shapes([dict(w) for w in words], phoneme_map)
+                missing: list[str] = []
+                for entry in enriched:
+                    shape = entry.get("shape")
+                    if not isinstance(shape, str) or not shape.strip():
+                        label = f"phoneme {entry.get('phoneme')} (word {entry.get('word')!r})"
+                        if label not in missing:
+                            missing.append(label)
+                    elif shape not in mouth_shapes:
+                        if shape not in missing:
+                            missing.append(shape)
+                timing["words"] = enriched
+                timing["fallback"] = False
+                timing["envelope"] = []
+                timing["missingShapes"] = missing
+                matched = True
+        if not matched:
+            raise ValueError(f"unknown calibration step id: {step_id}")
+        return self._store_calibration_timings(calibration_id, timings)
+
+    def record_calibration_fallback(
+        self,
+        calibration_id: str,
+        *,
+        step_id: str,
+        peaks: list[int],
+        audio_duration: float | None = None,
+    ) -> AiCalibrationRow:
+        from app.ai.calibrations import OPEN_SHAPE, envelope_coefficients
+
+        row = self.get_calibration(calibration_id)
+        timings = self._load_calibration_timings(row)
+        mouth_shapes = self._mouth_shapes_for_row(row)
+        matched = False
+        for timing in timings:
+            if str(timing.get("stepId", "")) == step_id:
+                duration = audio_duration
+                if duration is None:
+                    stored = timing.get("audioDuration")
+                    duration = float(stored) if isinstance(stored, (int, float)) else 0.0
+                envelope = envelope_coefficients(peaks, float(duration))
+                timing["audioDuration"] = float(duration)
+                timing["words"] = []
+                timing["fallback"] = True
+                timing["envelope"] = envelope
+                timing["missingShapes"] = [] if OPEN_SHAPE in mouth_shapes else [OPEN_SHAPE]
+                matched = True
+        if not matched:
+            raise ValueError(f"unknown calibration step id: {step_id}")
+        return self._store_calibration_timings(calibration_id, timings)
+
+    def set_calibration_status(self, calibration_id: str, status: str) -> AiCalibrationRow:
+        from app.ai.calibrations import calibration_accept_blockers
+
+        if status not in ("draft", "accepted", "rejected"):
+            raise ValueError("status must be draft, accepted, or rejected")
+        row = self.get_calibration(calibration_id)
+        if status == "accepted":
+            blockers = calibration_accept_blockers(
+                {
+                    "checks": self._load_calibration_checks(row),
+                    "timings": self._load_calibration_timings(row),
+                }
+            )
+            if blockers:
+                raise ValueError("calibration is not ready to accept — " + "; ".join(blockers))
+        with self._database.session() as session:
+            stored = session.get(AiCalibrationRow, calibration_id)
+            if stored is None:
+                raise KeyError(calibration_id)
+            stored.status = status
+            stored.updated_at = _now()
+            session.commit()
+        return self.get_calibration(calibration_id)
+
+    def require_accepted_calibration(self, calibration_id: str) -> AiCalibrationRow:
+        """Merge gate: assembly reads only the accepted calibration version."""
+        row = self.get_calibration(calibration_id)
+        if row.status != "accepted":
+            raise ValueError(
+                f"calibration {calibration_id} is {row.status} — "
+                "accept it before the merge (assembly reads only the accepted version)"
+            )
+        return row
+
+    def calibration_canonical_json(self, calibration_id: str) -> dict[str, object]:
+        """Rig-readiness refs + per-part word-timing map + camera keys for the merge."""
+        import json as _json
+
+        row = self.require_accepted_calibration(calibration_id)
+        try:
+            checks: object = _json.loads(row.checks_json or "{}")
+        except (ValueError, TypeError):
+            checks = {}
+        try:
+            timings: object = _json.loads(row.timings_json or "[]")
+        except (ValueError, TypeError):
+            timings = []
+        try:
+            phoneme_map: object = _json.loads(row.phoneme_map_json or "{}")
+        except (ValueError, TypeError):
+            phoneme_map = {}
+        return {
+            "id": row.id,
+            "projectId": row.project_id,
+            "narrationId": row.narration_id,
+            "scenarioId": row.scenario_id,
+            "conversationId": row.conversation_id,
+            "status": row.status,
+            "title": row.title,
+            "introRef": row.intro_ref,
+            "outroRef": row.outro_ref,
+            "phonemeMap": phoneme_map if isinstance(phoneme_map, dict) else {},
+            "checks": checks if isinstance(checks, dict) else {},
+            "timings": timings if isinstance(timings, list) else [],
         }
 
     # -- edit proposals --------------------------------------------------

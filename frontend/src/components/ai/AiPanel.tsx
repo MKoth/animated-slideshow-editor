@@ -8,6 +8,7 @@ import { useSelectionStore } from '../../stores/selectionStore'
 import { useBackendStore } from '../../stores/backendStore'
 import { AiPlanView } from './AiPlanView'
 import { AiProposalView } from './AiProposalView'
+import { AiCalibrationView } from './AiCalibrationView'
 import { AiNarrationView } from './AiNarrationView'
 import { AiReconciliationView } from './AiReconciliationView'
 import { AiScenarioView } from './AiScenarioView'
@@ -56,6 +57,7 @@ export function AiPanel() {
   )
   const activeScenarioId = useAiStore((s) => s.activeScenarioId)
   const activeReconciliationId = useAiStore((s) => s.activeReconciliationId)
+  const activeNarrationId = useAiStore((s) => s.activeNarrationId)
   const selectionKey = selection.join(',')
   const assetKey = assetNames.join(',')
   const audioKey = audioNames.join(',')
@@ -118,6 +120,12 @@ export function AiPanel() {
           <AiNarrationView
             projectId={projectId}
             reconciliationId={activeReconciliationId}
+            conversationId={activeId}
+            disabled
+          />
+          <AiCalibrationView
+            projectId={projectId}
+            narrationId={activeNarrationId}
             conversationId={activeId}
             disabled
           />
@@ -294,6 +302,13 @@ export function AiPanel() {
           <AiNarrationView
             projectId={projectId}
             reconciliationId={activeReconciliationId}
+            conversationId={activeId}
+            disabled={unavailable}
+          />
+
+          <AiCalibrationView
+            projectId={projectId}
+            narrationId={activeNarrationId}
             conversationId={activeId}
             disabled={unavailable}
           />

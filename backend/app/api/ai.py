@@ -26,6 +26,9 @@ from app.ai.plans import (
 )
 from app.ai.prompting import ChatMessage, compose_messages, context_to_text, estimate_tokens
 from app.ai.schemas import (
+    AiCalibrationAlign,
+    AiCalibrationCreate,
+    AiCalibrationFallback,
     AiChatRequest,
     AiConversationCreate,
     AiConversationRename,
@@ -1923,6 +1926,347 @@ def reject_ai_narration(request: Request, narration_id: str) -> dict[str, object
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _narration_to_out(request, narration_id)
+
+
+# -- calibrations (Stage D) --------------------------------------------------
+
+
+def _calibration_to_out(request: Request, calibration_id: str) -> dict[str, object]:
+    import json as _json
+
+    from app.ai.calibrations import calibration_accept_blockers
+
+    library = _library(request)
+    try:
+        row = library.get_calibration(calibration_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="calibration not found") from exc
+    try:
+        checks: object = _json.loads(row.checks_json or "{}")
+    except (ValueError, TypeError):
+        checks = {}
+    try:
+        timings: object = _json.loads(row.timings_json or "[]")
+    except (ValueError, TypeError):
+        timings = []
+    try:
+        phoneme_map: object = _json.loads(row.phoneme_map_json or "{}")
+    except (ValueError, TypeError):
+        phoneme_map = {}
+    revisions = [
+        {
+            "id": rev.id,
+            "sourceRequest": rev.source_request,
+            "created": _iso(rev.created_at),
+        }
+        for rev in library.list_calibration_revisions(calibration_id)
+    ]
+    timing_list = [dict(t) for t in timings] if isinstance(timings, list) else []
+    checks_dict = dict(checks) if isinstance(checks, dict) else {}
+    blockers = calibration_accept_blockers({"checks": checks_dict, "timings": timing_list})
+    fallback_count = len([t for t in timing_list if isinstance(t, dict) and t.get("fallback")])
+    return {
+        "id": row.id,
+        "projectId": row.project_id,
+        "narrationId": row.narration_id,
+        "scenarioId": row.scenario_id,
+        "conversationId": row.conversation_id,
+        "title": row.title,
+        "status": row.status,
+        "introRef": row.intro_ref,
+        "outroRef": row.outro_ref,
+        "phonemeMap": phoneme_map if isinstance(phoneme_map, dict) else {},
+        "checks": checks_dict,
+        "timings": timing_list,
+        "blockers": blockers,
+        "fallbackCount": fallback_count,
+        "revisions": revisions,
+        "created": _iso(row.created_at),
+        "modified": _iso(row.updated_at),
+    }
+
+
+@router.post("/ai/calibrations", status_code=201)
+def post_ai_calibration(request: Request, body: AiCalibrationCreate) -> dict[str, object]:
+    from app.ai.calibrations import (
+        intro_outro_steps_from_scenario,
+        measure_wav,
+        verify_camera_framing,
+        verify_face_rig,
+        verify_voice_reuse,
+    )
+
+    library = _library(request)
+    try:
+        conversation = library.get_conversation(body.conversationId)
+    except AiConversationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    if conversation.project_id != body.projectId:
+        raise HTTPException(status_code=422, detail="conversation does not belong to this project")
+    try:
+        narration = library.get_narration(body.narrationId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    if narration.status != "accepted":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"narration {body.narrationId} is {narration.status} — "
+                "accept it before calibration/board work (Stages D/E read only "
+                "the accepted version)"
+            ),
+        )
+    if narration.project_id != body.projectId:
+        raise HTTPException(status_code=422, detail="narration does not belong to this project")
+    try:
+        canonical = library.scenario_canonical_json(narration.scenario_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="scenario not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    steps = canonical.get("steps", [])
+    step_list = [dict(s) for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
+    try:
+        base_timings = intro_outro_steps_from_scenario(step_list)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # Pregen measurement input: [{stepId, wavData?/audioDuration?, level?}].
+    # Verify-only: measure durations/levels where WAV bytes are supplied,
+    # otherwise adopt the supplied durations. Without either, record a flat
+    # clearly-unmeasured estimate (measured False) so the record stays
+    # creatable without shipping real pregen projects — never char-proportional
+    # mouth timing (mouth uses aligner words or the envelope fallback only).
+    # Never rewrites audio.
+    import base64 as _base64
+
+    pregen_in = list(body.pregen or [])
+    pregen_measured: list[dict[str, object]] = []
+    for timing in base_timings:
+        step_id = str(timing["stepId"])
+        supplied = next(
+            (p for p in pregen_in if isinstance(p, dict) and str(p.get("stepId")) == step_id),
+            None,
+        )
+        duration: float | None = None
+        level: float | None = None
+        measured = False
+        if supplied is not None:
+            raw_duration = supplied.get("audioDuration")
+            if isinstance(raw_duration, (int, float)) and float(raw_duration) > 0:
+                duration = float(raw_duration)
+                measured = True
+            raw_level = supplied.get("level")
+            if isinstance(raw_level, (int, float)):
+                level = float(raw_level)
+            wav_data = supplied.get("wavData")
+            if isinstance(wav_data, str) and wav_data.strip():
+                try:
+                    wav_bytes = _base64.b64decode(wav_data)
+                except Exception:
+                    wav_bytes = b""
+                measured_duration, measured_level = measure_wav(wav_bytes)
+                if measured_duration is not None:
+                    duration = measured_duration
+                    measured = True
+                if measured_level is not None:
+                    level = measured_level
+        if duration is None:
+            duration = 2.0
+        timing["audioDuration"] = duration
+        timing["level"] = level if level is not None else 0.5
+        timing["measured"] = measured
+        pregen_measured.append(
+            {
+                "stepId": step_id,
+                "audioDuration": timing["audioDuration"],
+                "level": timing["level"],
+            }
+        )
+
+    phoneme_map = dict(body.phonemeMap or {})
+    voice_check = verify_voice_reuse(
+        narration.default_voice_prompt_id, body.voicePromptId, pregen_measured
+    )
+    face_check = verify_face_rig(body.mouthShapes, body.morphBinding)
+    camera_keys_in = [dict(k) for k in (body.cameraKeys or [])]
+    camera_check = verify_camera_framing(
+        body.cameraCount if body.cameraCount is not None else 1,
+        camera_keys_in,
+    )
+    # Persist the reviewed keys so the merge handoff carries them.
+    camera_check["keys"] = camera_keys_in
+    checks: dict[str, object] = {
+        "voice": voice_check,
+        "faceRig": face_check,
+        "camera": camera_check,
+    }
+    try:
+        row = library.create_calibration(
+            project_id=body.projectId,
+            narration_id=body.narrationId,
+            conversation_id=body.conversationId,
+            title=narration.title,
+            intro_ref=body.introRef or "",
+            outro_ref=body.outroRef or "",
+            phoneme_map=phoneme_map,
+            checks=checks,
+            timings=[dict(t) for t in base_timings],
+            source_request=f"calibrate narration {body.narrationId}",
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    library.append_message(
+        body.conversationId,
+        "assistant",
+        f"Calibrated {len(base_timings)} intro/outro parts verify-only "
+        "(voice reuse + face-rig readiness + camera framing). Mouth timing waits "
+        "on forced-alignment words with a marked envelope fallback — the rig, "
+        "audio, and bindings are untouched. Accept feeds the merge.",
+    )
+    return _calibration_to_out(request, row.id)
+
+
+@router.get("/ai/calibrations")
+def list_ai_calibrations(
+    request: Request, projectId: str = "", narrationId: str | None = None
+) -> list[dict[str, object]]:
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    library = _library(request)
+    out: list[dict[str, object]] = []
+    for row in library.list_calibrations(projectId, narrationId or None):
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.timings_json or "[]")
+            count = len(loaded) if isinstance(loaded, list) else 0
+        except (ValueError, TypeError):
+            count = 0
+        out.append(
+            {
+                "id": row.id,
+                "projectId": row.project_id,
+                "narrationId": row.narration_id,
+                "conversationId": row.conversation_id,
+                "title": row.title,
+                "status": row.status,
+                "partCount": count,
+                "modified": _iso(row.updated_at),
+            }
+        )
+    return out
+
+
+@router.get("/ai/calibrations/{calibration_id}")
+def get_ai_calibration(request: Request, calibration_id: str) -> dict[str, object]:
+    return _calibration_to_out(request, calibration_id)
+
+
+@router.get("/ai/calibrations/{calibration_id}/canonical")
+def get_ai_calibration_canonical(request: Request, calibration_id: str) -> dict[str, object]:
+    """Merge handoff: rig-readiness refs + word-timing map + camera keys, accepted only."""
+    library = _library(request)
+    try:
+        return library.calibration_canonical_json(calibration_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="calibration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/ai/calibrations/{calibration_id}/parts/{step_id}/align")
+def post_ai_calibration_align(
+    request: Request, calibration_id: str, step_id: str, body: AiCalibrationAlign
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.get_calibration(calibration_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="calibration not found") from exc
+    try:
+        library.record_calibration_words(
+            calibration_id,
+            step_id=step_id,
+            words=[
+                {
+                    "word": w.word,
+                    "start": w.start,
+                    "end": w.end,
+                    **({"phoneme": w.phoneme} if w.phoneme else {}),
+                }
+                for w in body.words
+            ],
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="calibration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _calibration_to_out(request, calibration_id)
+
+
+@router.post("/ai/calibrations/{calibration_id}/parts/{step_id}/fallback")
+def post_ai_calibration_fallback(
+    request: Request, calibration_id: str, step_id: str, body: AiCalibrationFallback
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.get_calibration(calibration_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="calibration not found") from exc
+    try:
+        library.record_calibration_fallback(
+            calibration_id,
+            step_id=step_id,
+            peaks=list(body.peaks),
+            audio_duration=body.audioDuration,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="calibration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    out = _calibration_to_out(request, calibration_id)
+    library.append_message(
+        str(out["conversationId"]),
+        "assistant",
+        f"Part {step_id}: forced alignment unavailable — envelope fallback recorded, "
+        "driving the single Open coefficient (clearly marked, still accept-ready).",
+    )
+    return out
+
+
+@router.post("/ai/calibrations/{calibration_id}/accept")
+def accept_ai_calibration(request: Request, calibration_id: str) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.set_calibration_status(calibration_id, "accepted")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="calibration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    out = _calibration_to_out(request, calibration_id)
+    library.append_message(
+        str(out["conversationId"]),
+        "assistant",
+        "Calibration accepted — verify-only triple check green, mouth timing mapped "
+        "through the rig-local phoneme map (fallback marked where used). "
+        "Hands the timing map to the merge.",
+    )
+    return out
+
+
+@router.post("/ai/calibrations/{calibration_id}/reject")
+def reject_ai_calibration(request: Request, calibration_id: str) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.set_calibration_status(calibration_id, "rejected")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="calibration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _calibration_to_out(request, calibration_id)
 
 
 # -- edit proposals ------------------------------------------------------

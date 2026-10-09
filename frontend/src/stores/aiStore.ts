@@ -3,6 +3,8 @@ import { persist } from 'zustand/middleware'
 import { apiClient } from '../api'
 import {
   AiApi,
+  type AiCalibration,
+  type AiCalibrationSummary,
   type AiConversationSummary,
   type AiMessage,
   type AiNarration,
@@ -61,6 +63,11 @@ interface AiState {
   activeNarrationId: string | null
   narrationBusy: boolean
   narrationError: { code: string; message: string } | null
+  calibrations: AiCalibrationSummary[]
+  calibrationById: Record<string, AiCalibration>
+  activeCalibrationId: string | null
+  calibrationBusy: boolean
+  calibrationError: { code: string; message: string } | null
   proposals: AiProposal[]
   proposalById: Record<string, AiProposal>
   activeProposalId: string | null
@@ -162,6 +169,23 @@ interface AiState {
   acceptNarration: (id: string) => Promise<void>
   rejectNarration: (id: string) => Promise<void>
 
+  setActiveCalibration: (id: string | null) => void
+  loadCalibrations: (projectId: string, narrationId?: string) => Promise<void>
+  createCalibration: (
+    projectId: string,
+    narrationId: string,
+    conversationId: string,
+    input?: {
+      mouthShapes?: string[]
+      morphBinding?: { fromShape?: string | null; toShape?: string | null } | null
+      phonemeMap?: Record<string, string>
+    },
+  ) => Promise<AiCalibration | null>
+  loadCalibration: (id: string) => Promise<void>
+  fallbackCalibrationPart: (id: string, stepId: string, peaks: number[]) => Promise<void>
+  acceptCalibration: (id: string) => Promise<void>
+  rejectCalibration: (id: string) => Promise<void>
+
   setActiveProposal: (id: string | null) => void
   loadProposals: (projectId: string) => Promise<void>
   createProposal: (input: AiProposalCreateInput) => Promise<AiProposal | null>
@@ -231,6 +255,11 @@ export const useAiStore = create<AiState>()(
       activeNarrationId: null,
       narrationBusy: false,
       narrationError: null,
+      calibrations: [],
+      calibrationById: {},
+      activeCalibrationId: null,
+      calibrationBusy: false,
+      calibrationError: null,
       proposals: [],
       proposalById: {},
       activeProposalId: null,
@@ -1113,6 +1142,147 @@ export const useAiStore = create<AiState>()(
         }
       },
 
+      setActiveCalibration: (id) => set({ activeCalibrationId: id }),
+
+      loadCalibrations: async (projectId, narrationId) => {
+        try {
+          const calibrations = await get().api.listCalibrations(projectId, narrationId)
+          set((state) => ({
+            calibrations,
+            activeCalibrationId:
+              state.activeCalibrationId &&
+              calibrations.some((c) => c.id === state.activeCalibrationId)
+                ? state.activeCalibrationId
+                : (calibrations[0]?.id ?? null),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      createCalibration: async (projectId, narrationId, conversationId, input) => {
+        if (get().calibrationBusy) return null
+        set({ calibrationBusy: true, calibrationError: null })
+        try {
+          const calibration = await get().api.createCalibration({
+            projectId,
+            narrationId,
+            conversationId,
+            ...(input?.mouthShapes ? { mouthShapes: input.mouthShapes } : {}),
+            ...(input?.morphBinding !== undefined ? { morphBinding: input.morphBinding } : {}),
+            ...(input?.phonemeMap ? { phonemeMap: input.phonemeMap } : {}),
+          })
+          set((state) => ({
+            calibrationById: { ...state.calibrationById, [calibration.id]: calibration },
+            calibrations: [
+              {
+                id: calibration.id,
+                projectId: calibration.projectId,
+                narrationId: calibration.narrationId,
+                conversationId: calibration.conversationId,
+                title: calibration.title,
+                status: calibration.status,
+                partCount: calibration.timings.length,
+                modified: calibration.modified,
+              },
+              ...state.calibrations.filter((c) => c.id !== calibration.id),
+            ],
+            activeCalibrationId: calibration.id,
+          }))
+          try {
+            const messages = await get().api.listMessages(conversationId)
+            set((state) => ({
+              messagesById: { ...state.messagesById, [conversationId]: messages },
+            }))
+          } catch {
+            // Calibration itself succeeded; message refresh is best-effort.
+          }
+          return calibration
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return null
+          }
+          set({
+            calibrationError: {
+              code: 'calibration_create_failed',
+              message: error instanceof Error ? error.message : 'Calibration failed — retry.',
+            },
+          })
+          return null
+        } finally {
+          set({ calibrationBusy: false })
+        }
+      },
+
+      loadCalibration: async (id) => {
+        try {
+          const calibration = await get().api.getCalibration(id)
+          set((state) => ({ calibrationById: { ...state.calibrationById, [id]: calibration } }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      fallbackCalibrationPart: async (id, stepId, peaks) => {
+        try {
+          const calibration = await get().api.fallbackCalibrationPart(id, stepId, { peaks })
+          set((state) => ({ calibrationById: { ...state.calibrationById, [id]: calibration } }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      acceptCalibration: async (id) => {
+        try {
+          const calibration = await get().api.acceptCalibration(id)
+          set((state) => ({
+            calibrationById: { ...state.calibrationById, [id]: calibration },
+            calibrations: state.calibrations.map((c) =>
+              c.id === id
+                ? { ...c, status: calibration.status, modified: calibration.modified }
+                : c,
+            ),
+          }))
+          try {
+            const messages = await get().api.listMessages(calibration.conversationId)
+            set((state) => ({
+              messagesById: { ...state.messagesById, [calibration.conversationId]: messages },
+            }))
+          } catch {
+            // Accept itself succeeded; message refresh is best-effort.
+          }
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return
+          }
+          set({
+            calibrationError: {
+              code: 'calibration_accept_blocked',
+              message:
+                error instanceof Error ? error.message : 'Accept blocked — resolve checks first.',
+            },
+          })
+        }
+      },
+
+      rejectCalibration: async (id) => {
+        try {
+          const calibration = await get().api.rejectCalibration(id)
+          set((state) => ({
+            calibrationById: { ...state.calibrationById, [id]: calibration },
+            calibrations: state.calibrations.map((c) =>
+              c.id === id
+                ? { ...c, status: calibration.status, modified: calibration.modified }
+                : c,
+            ),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
       setActiveProposal: (id) => set({ activeProposalId: id }),
 
       loadProposals: async (projectId) => {
@@ -1248,6 +1418,7 @@ export const useAiStore = create<AiState>()(
         activeReconciliationId: state.activeReconciliationId,
         activeProposalId: state.activeProposalId,
         activeNarrationId: state.activeNarrationId,
+        activeCalibrationId: state.activeCalibrationId,
       }),
     },
   ),

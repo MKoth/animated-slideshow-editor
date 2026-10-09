@@ -330,6 +330,74 @@ export type AiProposalStatus =
   | 'executed'
   | 'execution_failed'
 
+export type AiCalibrationStatus = 'draft' | 'accepted' | 'rejected'
+
+export interface AiCalibrationWord {
+  word: string
+  start: number
+  end: number
+  phoneme?: string
+  shape?: string | null
+  missing?: boolean
+}
+
+export interface AiCalibrationTiming {
+  stepId: string
+  order: number
+  partTag: 'intro' | 'outro'
+  spokenLine: string
+  audioDuration: number | null
+  level: number | null
+  measured?: boolean
+  words: AiCalibrationWord[]
+  fallback: boolean
+  envelope: { t: number; open: number }[]
+  missingShapes: string[]
+}
+
+export interface AiCalibrationChecks {
+  voice: { ok: boolean; message?: string; expectedVoicePromptId?: string | null }
+  faceRig: { ok: boolean; message?: string; missing?: string[] }
+  camera: { ok: boolean; message?: string }
+}
+
+export interface AiCalibrationRevision {
+  id: string
+  sourceRequest: string
+  created: string
+}
+
+export interface AiCalibration {
+  id: string
+  projectId: string
+  narrationId: string
+  scenarioId: string
+  conversationId: string
+  title: string
+  status: AiCalibrationStatus
+  introRef: string
+  outroRef: string
+  phonemeMap: Record<string, string>
+  checks: AiCalibrationChecks
+  timings: AiCalibrationTiming[]
+  blockers: string[]
+  fallbackCount: number
+  revisions: AiCalibrationRevision[]
+  created: string
+  modified: string
+}
+
+export interface AiCalibrationSummary {
+  id: string
+  projectId: string
+  narrationId: string
+  conversationId: string
+  title: string
+  status: AiCalibrationStatus
+  partCount: number
+  modified: string
+}
+
 export type AiNarrationStatus = 'draft' | 'accepted' | 'rejected'
 export type AiNarrationPartStatus = 'pending' | 'ready' | 'failed'
 
@@ -767,5 +835,85 @@ export class AiApi {
 
   async rejectNarration(id: string): Promise<AiNarration> {
     return this.client.post<AiNarration>(`/api/ai/narrations/${encodeURIComponent(id)}/reject`, '')
+  }
+
+  async createCalibration(input: {
+    projectId: string
+    narrationId: string
+    conversationId: string
+    introRef?: string
+    outroRef?: string
+    phonemeMap?: Record<string, string>
+    voicePromptId?: string | null
+    mouthShapes?: string[]
+    morphBinding?: { fromShape?: string | null; toShape?: string | null } | null
+    cameraCount?: number
+    cameraKeys?: { property?: string; partTag?: string }[]
+    pregen?: { stepId?: string; audioDuration?: number; level?: number }[]
+  }): Promise<AiCalibration> {
+    return this.client.post<AiCalibration>('/api/ai/calibrations', JSON.stringify(input))
+  }
+
+  async listCalibrations(projectId: string, narrationId?: string): Promise<AiCalibrationSummary[]> {
+    const params = new URLSearchParams({ projectId })
+    if (narrationId) params.set('narrationId', narrationId)
+    return this.client.get<AiCalibrationSummary[]>(`/api/ai/calibrations?${params.toString()}`)
+  }
+
+  async getCalibration(id: string): Promise<AiCalibration> {
+    return this.client.get<AiCalibration>(`/api/ai/calibrations/${encodeURIComponent(id)}`)
+  }
+
+  async getCalibrationCanonical(id: string): Promise<{
+    id: string
+    projectId: string
+    narrationId: string
+    scenarioId: string
+    conversationId: string
+    status: AiCalibrationStatus
+    title: string
+    introRef: string
+    outroRef: string
+    phonemeMap: Record<string, string>
+    checks: AiCalibrationChecks
+    timings: AiCalibrationTiming[]
+  }> {
+    return this.client.get(`/api/ai/calibrations/${encodeURIComponent(id)}/canonical`)
+  }
+
+  async alignCalibrationPart(
+    id: string,
+    stepId: string,
+    words: { word: string; start: number; end: number; phoneme?: string }[],
+  ): Promise<AiCalibration> {
+    return this.client.post<AiCalibration>(
+      `/api/ai/calibrations/${encodeURIComponent(id)}/parts/${encodeURIComponent(stepId)}/align`,
+      JSON.stringify({ words }),
+    )
+  }
+
+  async fallbackCalibrationPart(
+    id: string,
+    stepId: string,
+    input: { peaks: number[]; audioDuration?: number },
+  ): Promise<AiCalibration> {
+    return this.client.post<AiCalibration>(
+      `/api/ai/calibrations/${encodeURIComponent(id)}/parts/${encodeURIComponent(stepId)}/fallback`,
+      JSON.stringify(input),
+    )
+  }
+
+  async acceptCalibration(id: string): Promise<AiCalibration> {
+    return this.client.post<AiCalibration>(
+      `/api/ai/calibrations/${encodeURIComponent(id)}/accept`,
+      '',
+    )
+  }
+
+  async rejectCalibration(id: string): Promise<AiCalibration> {
+    return this.client.post<AiCalibration>(
+      `/api/ai/calibrations/${encodeURIComponent(id)}/reject`,
+      '',
+    )
   }
 }

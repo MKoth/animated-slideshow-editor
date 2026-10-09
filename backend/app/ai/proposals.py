@@ -235,13 +235,53 @@ def _validate_fields(ctype: str, command: dict[str, Any], index: int) -> list[di
         tag = command.get("partTag")
         if tag is not None and tag not in ("intro", "outro"):
             errors.append(_field_error(index, ctype, "partTag", "must be 'intro' or 'outro'"))
+        for baked in ("shapeId", "fromShapeId", "toShapeId"):
+            if command.get(baked) is not None:
+                errors.append(
+                    _field_error(
+                        index, ctype, baked, "baked shape ids are forbidden — clips stay name-based"
+                    )
+                )
+        if str(command.get("property", "")).strip().lower() == "rotation":
+            errors.append(
+                _field_error(index, ctype, "property", "camera rotation is never written")
+            )
     elif ctype == "AiSetControlValue":
         req("nodeId", "controlKey", "value")
         num("value")
+        tag = command.get("partTag")
+        if tag is not None and tag not in ("intro", "outro"):
+            errors.append(_field_error(index, ctype, "partTag", "must be 'intro' or 'outro'"))
+        for baked in ("shapeId", "fromShapeId", "toShapeId"):
+            if command.get(baked) is not None:
+                errors.append(
+                    _field_error(
+                        index, ctype, baked, "baked shape ids are forbidden — clips stay name-based"
+                    )
+                )
+        if str(command.get("property", "")).strip().lower() == "rotation":
+            errors.append(
+                _field_error(index, ctype, "property", "camera rotation is never written")
+            )
     elif ctype == "AiPlaceMouthClip":
         req("nodeId", "clipName", "startTime")
         num("startTime", non_negative=True)
         num("duration", non_negative=True) if command.get("duration") is not None else None
+        tag = command.get("partTag")
+        if tag is not None and tag not in ("intro", "outro"):
+            errors.append(_field_error(index, ctype, "partTag", "must be 'intro' or 'outro'"))
+        semantic = command.get("semanticName")
+        if semantic is not None and semantic != "mouth":
+            errors.append(
+                _field_error(index, ctype, "semanticName", "mouth clips belong on 'mouth' nodes")
+            )
+        for baked in ("shapeId", "fromShapeId", "toShapeId"):
+            if command.get(baked) is not None:
+                errors.append(
+                    _field_error(
+                        index, ctype, baked, "baked shape ids are forbidden — clips stay name-based"
+                    )
+                )
     elif ctype == "SetSlideAnimationScript":
         req("slideId", "source")
         if command.get("source") is not None and not isinstance(command.get("source"), str):

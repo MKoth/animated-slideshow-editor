@@ -252,3 +252,50 @@ class AiNarrationRevisionRow(Base):
     source_request: Mapped[str] = mapped_column(Text, nullable=False, default="")
     snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiCalibrationRow(Base):
+    """Stage D calibration: verify-only triple check + phoneme-timed mouth map.
+
+    Own versioned record with an explicit accept gate; the merge reads only
+    the accepted version. Verify-only: the record measures pregen audio,
+    face-rig readiness, and camera framing — it never creates Shapes, never
+    rewrites audio bytes, never rebinds morphs. Per-part mouth timing is
+    either backend forced-alignment word timings mapped through the rig-local
+    phoneme-to-Shape map or a clearly marked waveform-peaks envelope fallback
+    driving a single Open coefficient. Never part of the .lesson file.
+    """
+
+    __tablename__ = "ai_calibrations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    narration_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    scenario_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    intro_ref: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    outro_ref: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    phoneme_map_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    checks_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    timings_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiCalibrationRevisionRow(Base):
+    """One calibration run of an accepted narration version."""
+
+    __tablename__ = "ai_calibration_revisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    calibration_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("ai_calibrations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_request: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

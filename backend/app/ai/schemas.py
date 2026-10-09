@@ -204,3 +204,34 @@ class AiNarrationPartReady(BaseModel):
 
 class AiNarrationPartFail(BaseModel):
     error: str = Field(default="TTS generation failed")
+
+
+class AiCalibrationWordIn(BaseModel):
+    word: str = Field(min_length=1)
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    phoneme: str | None = None
+
+
+class AiCalibrationCreate(BaseModel):
+    projectId: str = Field(min_length=1)
+    narrationId: str = Field(min_length=1)
+    conversationId: str = Field(min_length=1)
+    introRef: str = ""
+    outroRef: str = ""
+    phonemeMap: dict[str, str] | None = None
+    voicePromptId: str | None = None
+    mouthShapes: list[str] | None = None
+    morphBinding: dict[str, Any] | None = None
+    cameraCount: int | None = None
+    cameraKeys: list[dict[str, Any]] | None = None
+    pregen: list[dict[str, Any]] | None = None
+
+
+class AiCalibrationAlign(BaseModel):
+    words: list[AiCalibrationWordIn] = Field(min_length=1)
+
+
+class AiCalibrationFallback(BaseModel):
+    peaks: list[int] = Field(min_length=1)
+    audioDuration: float | None = Field(default=None, gt=0)

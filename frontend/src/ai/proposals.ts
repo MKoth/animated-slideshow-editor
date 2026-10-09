@@ -77,6 +77,44 @@ function isPlaceholder(type: string): boolean {
   return type.startsWith('Ai')
 }
 
+/** Stage D scope: mouth tracks stay on intro/outro, never baked ids or rotation. */
+function mouthScope(
+  command: Record<string, unknown>,
+  index: number,
+  ctype: string,
+): ProposalValidationError[] {
+  const out: ProposalValidationError[] = []
+  const tag = command.partTag
+  if (tag !== undefined && tag !== 'intro' && tag !== 'outro') {
+    out.push(
+      error(
+        index,
+        ctype,
+        `command #${index} (${ctype}): partTag must be 'intro' or 'outro' (middle excluded).`,
+      ),
+    )
+  }
+  for (const baked of ['shapeId', 'fromShapeId', 'toShapeId']) {
+    if (command[baked] !== undefined && command[baked] !== null) {
+      out.push(
+        error(
+          index,
+          ctype,
+          `command #${index} (${ctype}): baked shape ids are forbidden — clips stay name-based and portable.`,
+        ),
+      )
+    }
+  }
+  if (
+    String(command.property ?? '')
+      .trim()
+      .toLowerCase() === 'rotation'
+  ) {
+    out.push(error(index, ctype, `command #${index} (${ctype}): camera rotation is never written.`))
+  }
+  return out
+}
+
 /** Client mirror of the server schema gate (server runs first, this runs second). */
 export function validateProposalSchema(commands: unknown): ProposalSchemaResult {
   if (!Array.isArray(commands) || commands.length === 0) {
@@ -152,13 +190,26 @@ export function validateProposalSchema(commands: unknown): ProposalSchemaResult 
           'sourceEnd',
         ]),
       )
-    else if (ctype === 'AiSetMorphCoefficient')
+    else if (ctype === 'AiSetMorphCoefficient') {
       errors.push(...required(command, index, ctype, ['nodeId', 'coefficient']))
-    else if (ctype === 'AiSetControlValue')
+      errors.push(...mouthScope(command, index, ctype))
+    } else if (ctype === 'AiSetControlValue') {
       errors.push(...required(command, index, ctype, ['nodeId', 'controlKey', 'value']))
-    else if (ctype === 'AiPlaceMouthClip')
+      errors.push(...mouthScope(command, index, ctype))
+    } else if (ctype === 'AiPlaceMouthClip') {
       errors.push(...required(command, index, ctype, ['nodeId', 'clipName', 'startTime']))
-    else if (ctype === 'SetSlideAnimationScript')
+      errors.push(...mouthScope(command, index, ctype))
+      const semantic = command.semanticName
+      if (semantic !== undefined && semantic !== 'mouth') {
+        errors.push(
+          error(
+            index,
+            ctype,
+            `command #${index} (${ctype}): mouth clips belong on semanticName 'mouth' nodes.`,
+          ),
+        )
+      }
+    } else if (ctype === 'SetSlideAnimationScript')
       errors.push(...required(command, index, ctype, ['slideId', 'source']))
     else if (ctype === 'AiCreateBoardText')
       errors.push(...required(command, index, ctype, ['slideId', 'text']))

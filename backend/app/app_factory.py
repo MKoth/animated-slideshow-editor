@@ -4,6 +4,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.ai.library import AiLibrary
 from app.ai.model import (  # noqa: F401
+    AiCalibrationRevisionRow,
+    AiCalibrationRow,
     AiConversationRow,
     AiMessageRow,
     AiNarrationRevisionRow,
