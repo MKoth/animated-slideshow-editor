@@ -175,4 +175,64 @@ describe('animation sequence retained script compiles to ordinary timeline data 
     const checked = checkAnimationScript(system.engine, slideId, draft.scriptSource)
     expect(checked.runnable).toBe(true)
   })
+
+  it('compiles travel, explicit transitions, and Frozen Poses to ordinary timeline data (issue #443)', () => {
+    const { system, slideId, catId } = setup()
+    const cat = system.engine.getNode(catId)
+    const second: BeatAnalysis = {
+      ...readyBeat(),
+      beatId: 'b-sit',
+      label: 'Sit by the blackboard',
+    }
+    const draft = composeSequence({
+      beats: [
+        { ...readyBeat(), resolvedNodeIds: [catId] },
+        { ...second, resolvedNodeIds: [catId] },
+      ],
+      views: [],
+      snapshot: {
+        slideId,
+        slideName: 'Room',
+        duration: 12,
+        nodes: [{ id: catId, name: cat.name }],
+      },
+      travel: [{ beatId: 'b-walk', targetNodeId: catId, to: { x: 120, y: 40 }, duration: 2 }],
+      transitions: [{ fromBeatId: 'b-walk', toBeatId: 'b-sit', kind: 'hold', duration: 1 }],
+      frozenPoses: [
+        { beatId: 'b-walk', edge: 'before' },
+        { beatId: 'b-sit', edge: 'after' },
+      ],
+      alignmentOffsets: [{ collectionName: 'Walk Cycle', semanticName: 'paw', x: 4, y: -2 }],
+      collections: [{ name: 'Walk Cycle', bindings: { paw: 'clip-walk' }, placementCount: 0 }],
+    })
+    expect(draft.summary.draftable).toBe(2)
+    expect(draft.beats[0].travel).toHaveLength(1)
+    expect(draft.beats[0].frozenBefore).toBe(true)
+    expect(draft.beats[1].frozenAfter).toBe(true)
+    expect(draft.transitions.find((t) => t.explicit)).toBeDefined()
+    expect(draft.alignmentEffects).toHaveLength(1)
+    // Character-local motion stays as applies; travel is a separate raw tween.
+    expect(draft.scriptSource).toMatch(/\.apply\(/)
+    expect(draft.scriptSource).toMatch(/\.tween\(\{[^}]*x:[^}]*y:[^}]*\}/)
+    const checked = checkAnimationScript(system.engine, slideId, draft.scriptSource)
+    expect(checked.diagnostics.filter((d) => d.severity === 'error')).toEqual([])
+    expect(checked.runnable).toBe(true)
+
+    system.dispatcher.dispatch(
+      new SetSlideAnimationScriptCommand({ slideId, source: draft.scriptSource }) as never,
+    )
+    const boundDispatch = (command: never) => system.dispatcher.dispatch(command as never)
+    const result = runAnimationScript(
+      system.engine,
+      boundDispatch as never,
+      slideId,
+      draft.scriptSource,
+    )
+    expect(result.ran).toBe(true)
+    // Ordinary timeline data: collection placements plus scene-level travel keyframes.
+    expect(system.engine.getCollectionPlacements(catId).length).toBeGreaterThanOrEqual(2)
+    const xKeys = system.engine.getKeyframes(catId, 'positionX')
+    expect(xKeys.length).toBeGreaterThan(0)
+    expect(system.dispatcher.undo()).toBe(true)
+  })
 })

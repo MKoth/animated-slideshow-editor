@@ -262,6 +262,14 @@ _Avoid_: Animation set, pose library
 A reusable per-semantic-name X/Y translation added to the evaluated position of a matching child while its Clip Collection animation is active. Stored on the Clip Collection, shared by its placements, independent of clip keyframes, and composed in the child’s local coordinates.
 _Avoid_: Pose freeze, pivot correction
 
+**Frozen Pose**:
+A set of ordinary timeline keyframes copied from a Clip Collection’s first or last pose to hold that coordinated character state before or after the collection placement. It is slide-specific timeline data, not a reusable pose asset; hold interpolation prevents unintended transitions between independently animated parts.
+_Avoid_: Freeze asset, pose library
+
+**Scene Animation Sequence**:
+An ordered composition of reusable character Clips and Clip Collections, scene-level position/scale keyframes, and explicit frozen holds that produces one playable scene animation. Its Animation Script is retained as an editable recipe and compiles into the editor’s ordinary timeline data.
+_Avoid_: Runtime animation player, action playlist
+
 **Scale Group** (also **Group Node** alias):
 An empty scene node used as a parent to uniformly scale a rig and its animations without breaking relative motion; clips remain in local space and compose via world transform. No new component — reuses Rig Handle / Locator primitive.
 _Avoid_: Scale container, multiplier node
@@ -456,6 +464,10 @@ _Avoid_: Parent type
 **Shape**:
 An absolute per-mesh snapshot of all rest vertices sharing the mesh's topology. A `Shape {id, name, vertices: MeshVertex[]}` lives inside `MeshComponent.shapes`; `faces`/`uvs`/`boneWeights`/`bindPose` are not duplicated per Shape and `shape.vertices.length === mesh.vertices.length` is invariant. Shapes are node-owned and embedded in `NodeJSON` (and copied into `ReusableObjectJSON` and `LessonJSON` via `SlideAnimation` sidecars), never in `library`/`embeddedAssets`.
 _Avoid_: Morph target, blendshape (topology-varying)
+
+**Whole-character Pose**:
+A coordinated state of a character expressed by the relevant parts' Shapes and Morphs, transforms, Controls, and animation channels together. It is a conceptual composition across the character, not a single mesh Shape.
+_Avoid_: Shape (when referring to the whole character)
 
 **Morph**:
 The one-active-at-a-time lerp between any two Shapes on the same mesh, defined by `Morph {fromShapeId, toShapeId, coefficient}` with `coefficient` in [0,1] (exaggeration beyond 1 allowed in preview). Evaluated as `lerp(from.vertices[i], to.vertices[i], coefficient)` on rest vertices before `evaluateMeshDeformation` (morph then bones), deterministic per frame for preview and Video Export. `coefficient` is the `morphCoefficient` track on `NodeAnimation` with static sidecar `MorphBinding {fromShapeId,toShapeId|null}` (one lane, visible-pattern); clip and collection portability animates only the coefficient — the binding stays node-local and soft-warns if shape ids are missing on the target.

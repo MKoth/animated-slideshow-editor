@@ -14,6 +14,11 @@ import {
 } from '../../ai/renderedViews'
 import {
   composeSequence,
+  type AlignmentOffsetRequest,
+  type ExplicitTransitionRequest,
+  type FrozenPoseRequest,
+  type SceneTravelLeg,
+  type SequenceCollectionInventory,
   type SequenceDraft,
   type SequenceSnapshot,
 } from '../../ai/animationSequence'
@@ -27,6 +32,14 @@ interface AiAnimationViewProps {
   beats?: readonly RequestedBeat[]
   /** Requested rendered views (issue #441). Empty until the artist or assistant asks for visual evidence. */
   viewRequests?: readonly RenderedViewRequest[]
+  /** Scene-level travel legs per beat (issue #443). Empty until travel is authored. */
+  travel?: readonly SceneTravelLeg[]
+  /** Explicit authored transitions between beats (issue #443). Gaps without one stay sequential. */
+  transitions?: readonly ExplicitTransitionRequest[]
+  /** Explicit Frozen Pose holds before/after beats (issue #443). */
+  frozenPoses?: readonly FrozenPoseRequest[]
+  /** Requested Clip Collection Alignment Offset adjustments (issue #443). */
+  alignmentOffsets?: readonly AlignmentOffsetRequest[]
 }
 
 /**
@@ -44,6 +57,10 @@ export function AiAnimationView({
   disabled,
   beats = [],
   viewRequests = [],
+  travel = [],
+  transitions = [],
+  frozenPoses = [],
+  alignmentOffsets = [],
 }: AiAnimationViewProps) {
   const analysis = useMemo(
     () => analyzeBeats(beats, toAnalysisSnapshot(context.animation)),
@@ -63,8 +80,23 @@ export function AiAnimationView({
         name: node.name,
       })),
     }
-    return composeSequence({ beats: analysis.beats, views: rendered.views, snapshot })
-  }, [analysis, rendered, context])
+    const collections: SequenceCollectionInventory[] = context.animation.collections.map(
+      (collection) => ({
+        name: collection.name,
+        bindings: { ...collection.bindings },
+      }),
+    )
+    return composeSequence({
+      beats: analysis.beats,
+      views: rendered.views,
+      snapshot,
+      travel,
+      transitions,
+      frozenPoses,
+      alignmentOffsets,
+      collections,
+    })
+  }, [analysis, rendered, context, travel, transitions, frozenPoses, alignmentOffsets])
 
   if (disabled) {
     return (
@@ -272,6 +304,36 @@ function AiAnimationSequence({ draft }: { draft: SequenceDraft }) {
             <div>Target: {beat.targetNodeIds.map((id) => `[${id}]`).join(', ')}</div>
           )}
           {beat.collectionName && <div>Reusable: {beat.collectionName}</div>}
+          {beat.travel.map((leg, index) => (
+            <div key={index}>
+              Travel: [{leg.targetNodeId}] to ({leg.to.x}, {leg.to.y}
+              {typeof leg.to.scaleX === 'number' ? `, scale ${leg.to.scaleX}` : ''}
+              {typeof leg.to.scaleY === 'number' ? ` × ${leg.to.scaleY}` : ''}) over {leg.duration}s
+              — scene-level, separate from character-local motion
+            </div>
+          ))}
+          {(beat.frozenBefore || beat.frozenAfter) && (
+            <div>
+              Frozen pose{beat.frozenBefore && beat.frozenAfter ? 's' : ''}:{' '}
+              {[beat.frozenBefore ? 'holds before' : null, beat.frozenAfter ? 'holds after' : null]
+                .filter(Boolean)
+                .join(' and ')}{' '}
+              with hold interpolation
+            </div>
+          )}
+          {beat.transitionAfter && (
+            <div>
+              Transition to [{beat.transitionAfter.toBeatId}]: {beat.transitionAfter.kind}
+              {beat.transitionAfter.explicit ? ' (explicit)' : ' (sequential)'} — lane priority does
+              not crossfade
+            </div>
+          )}
+          {beat.jumps.map((jump, index) => (
+            <div key={index}>Handoff: {jump}</div>
+          ))}
+          {beat.alignmentNotes.map((note, index) => (
+            <div key={index}>Alignment: {note}</div>
+          ))}
           {beat.dependencies.map((dependency, index) => (
             <div key={index}>Dependency: {dependency}</div>
           ))}
@@ -290,6 +352,32 @@ function AiAnimationSequence({ draft }: { draft: SequenceDraft }) {
           {beat.previewViewIds.length > 0 && (
             <div>Verified by: {beat.previewViewIds.join(', ')}</div>
           )}
+        </div>
+      ))}
+      {draft.transitions
+        .filter((entry) => entry.explicit)
+        .map((entry) => (
+          <div
+            key={`${entry.fromBeatId}-${entry.toBeatId}`}
+            data-testid={`ai-sequence-transition-${entry.fromBeatId}-${entry.toBeatId}`}
+          >
+            Explicit {entry.kind} transition: {entry.label}
+          </div>
+        ))}
+      {draft.frozen.map((hold) => (
+        <div
+          key={`${hold.beatId}-${hold.edge}`}
+          data-testid={`ai-sequence-frozen-${hold.beatId}-${hold.edge}`}
+        >
+          Frozen pose {hold.edge} [{hold.beatId}]: {hold.label}
+        </div>
+      ))}
+      {draft.alignmentEffects.map((effect, index) => (
+        <div
+          key={`${effect.collectionName}-${effect.semanticName}-${index}`}
+          data-testid={`ai-sequence-alignment-${index}`}
+        >
+          Alignment offset: {effect.label} {effect.scope}
         </div>
       ))}
       {draft.previews.map((preview) => (

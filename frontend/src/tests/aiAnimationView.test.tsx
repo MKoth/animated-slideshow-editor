@@ -317,6 +317,56 @@ describe('AiAnimationView sequence (issue #442)', () => {
   })
 })
 
+describe('AiAnimationView travel, transitions, and Frozen Poses (issue #443)', () => {
+  it('previews scene travel separately from character-local motion', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+        ]}
+        viewRequests={[{ id: 'v-cat', scope: 'focused', time: 0, nodeIds: ['n-cat'] }]}
+        travel={[{ beatId: 'b-walk', targetNodeId: 'n-cat', to: { x: 120, y: 40 }, duration: 2 }]}
+      />,
+    )
+
+    expect(screen.getByTestId('ai-sequence-beat-b-walk')).toHaveTextContent(/draftable/i)
+    expect(screen.getByTestId('ai-sequence-beat-b-walk')).toHaveTextContent(/Travel/)
+    expect(screen.getByTestId('ai-sequence-beat-b-walk')).toHaveTextContent(/scene-level/)
+    expect(screen.getByTestId('ai-sequence-script')).toHaveTextContent(/\.tween\(/)
+    expect(screen.getByTestId('ai-sequence-script')).toHaveTextContent(/\.apply\(/)
+  })
+
+  it('holds Frozen Poses and previews explicit transitions without crossfades', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+          { id: 'b-walk-2', label: 'Keep walking', target: { name: 'Cat' }, motion: 'walk' },
+        ]}
+        transitions={[{ fromBeatId: 'b-walk', toBeatId: 'b-walk-2', kind: 'hold', duration: 1 }]}
+        frozenPoses={[{ beatId: 'b-walk', edge: 'before' }]}
+        alignmentOffsets={[{ collectionName: 'Walk Cycle', semanticName: 'cat', x: 4, y: -2 }]}
+      />,
+    )
+
+    expect(screen.getByTestId('ai-sequence-beat-b-walk')).toHaveTextContent(/Frozen pose/)
+    expect(screen.getByTestId('ai-sequence-beat-b-walk')).toHaveTextContent(/hold interpolation/)
+    expect(screen.getByTestId('ai-sequence-transition-b-walk-b-walk-2')).toHaveTextContent(/hold/)
+    expect(screen.getByTestId('ai-sequence-transition-b-walk-b-walk-2')).toHaveTextContent(
+      /does not crossfade/,
+    )
+    expect(screen.getByTestId('ai-sequence-frozen-b-walk-before')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-sequence-alignment-0')).toHaveTextContent(/shared/)
+    expect(screen.getByTestId('ai-animation-sequence')).toHaveTextContent(/ordinary timeline data/i)
+  })
+})
+
 describe('AiPanel animation mode', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
