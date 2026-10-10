@@ -96,7 +96,25 @@ describe('animation-assistant context snapshot', () => {
     expect(cat!.transform).toMatchObject({ x: 10, y: 20 })
     // World transform composes the root chain without touching project data.
     expect(cat!.worldTransform).toMatchObject({ x: 10, y: 20 })
+    // Nodes without an asset instance carry no asset metadata (issue #440).
+    expect(cat!.assetDefinitionId).toBeNull()
     expect(animation!.truncated.nodes).toBe(false)
+  })
+
+  it('grounds target resolution in asset metadata when present', () => {
+    const engine = animationEngine()
+    const root = (
+      engine as unknown as {
+        getNode: (id: string) => { components: Record<string, unknown> }
+      }
+    ).getNode('n-cat')
+    root.components = {
+      ...root.components,
+      assetInstance: { kind: 'assetInstance', assetDefinitionId: 'asset-cat' },
+    }
+    const snapshot = buildContextSnapshot(engine)
+    const animation = (snapshot as { animation?: AnimationAssistantSnapshot }).animation!
+    expect(animation.nodes.find((n) => n.id === 'n-cat')?.assetDefinitionId).toBe('asset-cat')
   })
 
   it('summarises rig, animation library, and timeline state', () => {

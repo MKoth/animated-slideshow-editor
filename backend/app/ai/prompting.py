@@ -126,6 +126,9 @@ def _animation_to_text(animation: dict[str, Any]) -> str:
         components = entry.get("components")
         if isinstance(components, list) and components:
             summary += f" <{', '.join(str(c) for c in components[:8])}>"
+        asset_definition = entry.get("assetDefinitionId")
+        if isinstance(asset_definition, str) and asset_definition.strip():
+            summary += f" [asset {asset_definition.strip()}]"
         parent = entry.get("parentId")
         if isinstance(parent, str) and parent:
             summary += f" child of {parent}"

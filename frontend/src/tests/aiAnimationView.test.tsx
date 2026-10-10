@@ -37,6 +37,7 @@ function context(): ContextSnapshot {
           depth: 1,
           semanticName: 'cat',
           components: ['mesh'],
+          assetDefinitionId: null,
           transform: { x: 10, y: 20, rotation: 0, scaleX: 1, scaleY: 1 },
           worldTransform: { x: 10, y: 20, rotation: 0, scaleX: 1, scaleY: 1 },
           visible: true,
@@ -105,6 +106,107 @@ describe('AiAnimationView', () => {
     render(<AiAnimationView projectId="p-1" conversationId="c-1" context={context()} disabled />)
 
     expect(screen.getByTestId('ai-animation-disabled')).toBeInTheDocument()
+  })
+})
+
+describe('AiAnimationView beat analysis (issue #440)', () => {
+  function sofaContext(): ContextSnapshot {
+    const base = context()
+    return {
+      ...base,
+      animation: {
+        ...base.animation,
+        nodes: [
+          ...base.animation.nodes,
+          {
+            id: 'n-sofa-frame',
+            name: 'Sofa Frame',
+            parentId: 'root',
+            depth: 1,
+            semanticName: null,
+            components: ['mesh'],
+            assetDefinitionId: 'asset-room',
+            transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+            worldTransform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+            visible: true,
+            childCount: 0,
+          },
+          {
+            id: 'n-sofa-cushion',
+            name: 'Sofa Cushion',
+            parentId: 'root',
+            depth: 1,
+            semanticName: null,
+            components: ['mesh'],
+            assetDefinitionId: 'asset-room',
+            transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+            worldTransform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+            visible: true,
+            childCount: 0,
+          },
+        ],
+      },
+    }
+  }
+
+  it('shows an empty note when no actions were requested yet', () => {
+    render(<AiAnimationView projectId="p-1" conversationId="c-1" context={context()} />)
+    expect(screen.getByTestId('ai-animation-analysis-empty')).toBeInTheDocument()
+  })
+
+  it('reports reusable motion while a blocked beat keeps its precise question', () => {
+    const before = JSON.stringify(sofaContext())
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={sofaContext()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+          {
+            id: 'b-sofa',
+            label: 'Get down from the sofa',
+            target: { name: 'sofa' },
+            motion: 'get-down',
+          },
+        ]}
+      />,
+    )
+
+    // Independent beats proceed: one ready, one asking — never one blocking the other.
+    expect(screen.getByTestId('ai-analysis-summary')).toHaveTextContent(/1 ready/)
+    expect(screen.getByTestId('ai-analysis-beat-b-walk')).toHaveTextContent(/ready/i)
+    expect(screen.getByTestId('ai-analysis-beat-b-walk')).toHaveTextContent(/Walk Cycle/)
+    const sofa = screen.getByTestId('ai-analysis-beat-b-sofa')
+    expect(sofa).toHaveTextContent(/clarification|ambiguous/i)
+    expect(screen.getByTestId('ai-analysis-question-b-sofa')).toHaveTextContent(/sofa/i)
+    // Read-only analysis leaves the supplied context untouched.
+    expect(JSON.stringify(sofaContext())).toBe(before)
+  })
+
+  it('surfaces missing camera prerequisites and missing motion explicitly', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          {
+            id: 'b-camera',
+            label: 'Turn and move toward the camera',
+            target: { name: 'Cat' },
+            motion: 'turn',
+            requiresCamera: true,
+          },
+          { id: 'b-sleep', label: 'Sleep on the sofa', target: { name: 'Cat' }, motion: 'sleep' },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('ai-analysis-beat-b-camera')).toHaveTextContent(/camera/i)
+    expect(screen.getByTestId('ai-analysis-beat-b-sleep')).toHaveTextContent(
+      /missing.*motion|no compatible/i,
+    )
   })
 })
 

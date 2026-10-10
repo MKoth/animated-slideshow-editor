@@ -1,10 +1,19 @@
+import { useMemo } from 'react'
 import type { ContextSnapshot } from '../../ai/contextSnapshot'
+import {
+  analyzeBeats,
+  toAnalysisSnapshot,
+  type BeatAnalysis,
+  type RequestedBeat,
+} from '../../ai/animationAnalysis'
 
 interface AiAnimationViewProps {
   projectId: string
   conversationId: string | null
   context: ContextSnapshot
   disabled?: boolean
+  /** Requested actions to analyze (issue #440). Empty until the artist describes a performance. */
+  beats?: readonly RequestedBeat[]
 }
 
 /**
@@ -20,7 +29,13 @@ export function AiAnimationView({
   conversationId,
   context,
   disabled,
+  beats = [],
 }: AiAnimationViewProps) {
+  const analysis = useMemo(
+    () => analyzeBeats(beats, toAnalysisSnapshot(context.animation)),
+    [beats, context],
+  )
+
   if (disabled) {
     return (
       <div className="ai-animation" data-testid="ai-animation-section">
@@ -86,6 +101,90 @@ export function AiAnimationView({
         Live-project context — reflects unsaved editor state. Summaries are bounded and read-only;
         nothing here mutates the project.
       </div>
+      <AiAnimationAnalysis analysis={analysis.beats} summary={analysis.summary} />
     </div>
   )
+}
+
+function AiAnimationAnalysis({
+  analysis,
+  summary,
+}: {
+  analysis: BeatAnalysis[]
+  summary: { total: number; ready: number; blocked: number }
+}) {
+  if (analysis.length === 0) {
+    return (
+      <div data-testid="ai-animation-analysis-empty">
+        No requested actions yet — describe the performance in chat and each beat&apos;s target,
+        reusable motion, gaps, and prerequisites will be analyzed here before anything is drafted.
+      </div>
+    )
+  }
+  return (
+    <div data-testid="ai-animation-analysis">
+      <div data-testid="ai-analysis-summary">
+        Analysis: {summary.ready} ready · {summary.blocked} blocked ({summary.total} beats). Blocked
+        beats stay unapplied while independent beats proceed.
+      </div>
+      {analysis.map((beat) => (
+        <div key={beat.beatId} data-testid={`ai-analysis-beat-${beat.beatId}`}>
+          <div>
+            {beat.label} — {formatStatus(beat.status)}
+          </div>
+          {beat.resolvedNodeIds.length > 0 && (
+            <div>Target: {beat.resolvedNodeIds.map((id) => `[${id}]`).join(', ')}</div>
+          )}
+          {beat.reusable.map((candidate) => (
+            <div key={candidate.collectionId ?? candidate.collectionName}>
+              Reusable: {candidate.collectionName} (bindings:{' '}
+              {candidate.matchedSemantics.join(', ')}
+              {candidate.clipIds.length > 0 ? `; clips: ${candidate.clipIds.join(', ')}` : ''})
+            </div>
+          ))}
+          {beat.question && (
+            <div data-testid={`ai-analysis-question-${beat.beatId}`}>{beat.question}</div>
+          )}
+          {beat.prerequisites.map((prerequisite, index) => (
+            <div key={index}>Prerequisite: {prerequisite}</div>
+          ))}
+          {beat.geometry.state !== 'not-checked' && <div>Geometry: {beat.geometry.note}</div>}
+          {beat.warnings.map((warning, index) => (
+            <div key={index}>Note: {warning}</div>
+          ))}
+          {beat.actions.map((action, index) => (
+            <div key={index}>Next step: {action}</div>
+          ))}
+          {beat.candidates.length > 0 && (
+            <div>
+              Candidates:{' '}
+              {beat.candidates
+                .map((c) => `${c.name} [${c.id}]${c.parentName ? ` (in ${c.parentName})` : ''}`)
+                .join(', ')}
+            </div>
+          )}
+        </div>
+      ))}
+      <div>
+        Read-only analysis — targets resolve by stable Scene Node identity and existing
+        names/metadata; ambiguous targets ask instead of guessing, and nothing here changes the
+        project.
+      </div>
+    </div>
+  )
+}
+
+function formatStatus(status: BeatAnalysis['status']): string {
+  switch (status) {
+    case 'ready':
+      return 'ready (compatible reusable motion)'
+    case 'needs-clarification':
+      return 'needs clarification (ambiguous target)'
+    case 'missing-motion':
+      return 'missing motion (no compatible reusable motion)'
+    case 'missing-prerequisite':
+      return 'blocked (missing prerequisite)'
+    case 'invalid':
+      return 'invalid (needs a precise fix)'
+  }
 }

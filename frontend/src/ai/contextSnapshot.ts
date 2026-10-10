@@ -14,6 +14,8 @@ export interface ContextSnapshotNodeSummary {
   depth: number
   semanticName: string | null
   components: string[]
+  /** Asset-definition reference for asset instances; null otherwise (issue #440). */
+  assetDefinitionId: string | null
   transform: { x: number; y: number; rotation: number; scaleX: number; scaleY: number }
   worldTransform: { x: number; y: number; rotation: number; scaleX: number; scaleY: number } | null
   visible: boolean
@@ -366,10 +368,22 @@ function summarizeNode(node: SceneNode, depth: number): ContextSnapshotNodeSumma
         ? node.semanticName.trim()
         : null,
     components,
+    assetDefinitionId: readAssetDefinitionId(node),
     transform,
     worldTransform: readWorldTransform(node),
     visible: node.visible !== false,
     childCount: Array.isArray(node.children) ? node.children.length : 0,
+  }
+}
+
+function readAssetDefinitionId(node: SceneNode): string | null {
+  try {
+    const asset = (node.components as { assetInstance?: { assetDefinitionId?: unknown } })
+      ?.assetInstance
+    const id = asset?.assetDefinitionId
+    return typeof id === 'string' && id.trim() ? id.trim() : null
+  } catch {
+    return null
   }
 }
 

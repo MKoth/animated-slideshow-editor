@@ -44,7 +44,8 @@ def test_context_to_text_includes_animation_snapshot() -> None:
                     "parentId": "root",
                     "depth": 1,
                     "semanticName": "cat",
-                    "components": ["mesh"],
+                    "components": ["mesh", "assetInstance"],
+                    "assetDefinitionId": "asset-cat",
                     "transform": {"x": 10, "y": 20, "rotation": 0, "scaleX": 1, "scaleY": 1},
                     "visible": True,
                 }
@@ -73,6 +74,7 @@ def test_context_to_text_includes_animation_snapshot() -> None:
     text = context_to_text(context)
     assert "Cat [n-cat]" in text
     assert "child of root" in text
+    assert "asset-cat" in text
     assert "shape-a -> shape-b" in text
     assert "Walk" in text
     assert "Walk Cycle" in text
