@@ -270,6 +270,14 @@ _Avoid_: Freeze asset, pose library
 An ordered composition of reusable character Clips and Clip Collections, scene-level position/scale keyframes, and explicit frozen holds that produces one playable scene animation. Its Animation Script is retained as an editable recipe and compiles into the editor’s ordinary timeline data.
 _Avoid_: Runtime animation player, action playlist
 
+**Proposal Revalidation**:
+The read-only comparison of a validated Scene Animation Sequence draft against the live Project before approval — stable Scene Node ids, Unique Names, Clip Collection bindings, camera presence, labelled previews, and the Animation Script Compiled Footprint. Relevant live changes block stale work until analysis and previews are refreshed and reviewed again; unrelated changes warn without blocking.
+_Avoid_: Re-validate (verb), stale check (coarse fingerprint only)
+
+**Replacement Scope**:
+The exact script-created output an Animation Script rerun would replace — tracks, placements, created nodes and data sources from the Compiled Footprint — shown with the affected beats and their dependencies before approval. Replacement requires approval; manual edits inside script-created subtrees are lost on re-run.
+_Avoid_: Footprint diff (raw ids without beat context), overwrite list
+
 **Scale Group** (also **Group Node** alias):
 An empty scene node used as a parent to uniformly scale a rig and its animations without breaking relative motion; clips remain in local space and compose via world transform. No new component — reuses Rig Handle / Locator primitive.
 _Avoid_: Scale container, multiplier node

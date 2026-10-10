@@ -27,6 +27,13 @@ import {
   toShapeDraftSnapshot,
   type ShapeDraftResult,
 } from '../../ai/shapeDrafts'
+import {
+  revalidateAnimationProposal,
+  toRevalidationSnapshotFromAssistant,
+  type RevalidationResult,
+  type RevalidationSnapshot,
+} from '../../ai/animationRevalidation'
+import type { CompiledFootprint } from '../../engine/compiledFootprint'
 
 interface AiAnimationViewProps {
   projectId: string
@@ -45,6 +52,14 @@ interface AiAnimationViewProps {
   frozenPoses?: readonly FrozenPoseRequest[]
   /** Requested Clip Collection Alignment Offset adjustments (issue #443). */
   alignmentOffsets?: readonly AlignmentOffsetRequest[]
+  /** Validated snapshot at dry-run time (issue #445). Null until the proposal is validated. */
+  validated?: RevalidationSnapshot | null
+  /** Live script footprint for replacement scope (issue #445). Null on first run. */
+  footprint?: CompiledFootprint | null
+  /** Live project fingerprint for stale detection (issue #445). Null when unknown. */
+  liveFingerprint?: string | null
+  /** True once the artist has reviewed the refreshed draft and previews (issue #445). */
+  reviewed?: boolean
 }
 
 /**
@@ -66,6 +81,10 @@ export function AiAnimationView({
   transitions = [],
   frozenPoses = [],
   alignmentOffsets = [],
+  validated = null,
+  footprint = null,
+  liveFingerprint = null,
+  reviewed = false,
 }: AiAnimationViewProps) {
   const analysis = useMemo(
     () => analyzeBeats(beats, toAnalysisSnapshot(context.animation)),
@@ -110,6 +129,19 @@ export function AiAnimationView({
       collections,
     })
   }, [analysis, rendered, context, travel, transitions, frozenPoses, alignmentOffsets])
+  const revalidation = useMemo(() => {
+    const live = toRevalidationSnapshotFromAssistant(context.animation, {
+      footprint,
+      fingerprint: liveFingerprint,
+    })
+    const validatedSnapshot = validated ?? live
+    return revalidateAnimationProposal({
+      draft: sequence,
+      validated: validatedSnapshot,
+      live,
+      reviewed,
+    })
+  }, [sequence, context, validated, footprint, liveFingerprint, reviewed])
 
   if (disabled) {
     return (
@@ -180,6 +212,7 @@ export function AiAnimationView({
       <AiShapeDrafts result={shapeDrafts} />
       <AiRenderedViews views={rendered.views} truncated={rendered.truncated} />
       <AiAnimationSequence draft={sequence} />
+      <AiAnimationRevalidation result={revalidation} />
     </div>
   )
 }
@@ -498,4 +531,89 @@ function formatDraftStatus(status: ShapeDraftResult['drafts'][number]['status'])
     case 'needs-artist-geometry':
       return 'needs artist-authored geometry (topology cannot express the pose)'
   }
+}
+
+function AiAnimationRevalidation({ result }: { result: RevalidationResult }) {
+  if (result.beats.length === 0) {
+    return (
+      <div data-testid="ai-animation-revalidation">
+        <div data-testid="ai-revalidation-empty">
+          No proposal to revalidate yet — affected beats, dependencies, and the exact script-created
+          output a rerun would replace will appear here before approval.
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div data-testid="ai-animation-revalidation">
+      <div data-testid="ai-revalidation-summary">
+        Revalidation: {result.affectedBeatIds.length} affected · {result.summary.draftable}{' '}
+        draftable ({result.summary.total} beats). Relevant live changes block stale work until
+        analysis and previews are refreshed and reviewed again.
+      </div>
+      {result.beats.map((beat) => (
+        <div key={beat.beatId} data-testid={`ai-revalidation-beat-${beat.beatId}`}>
+          <div>
+            Beat {beat.order + 1}: {beat.label} —{' '}
+            {beat.affected
+              ? 'affected (stale)'
+              : beat.draftStatus === 'draftable'
+                ? 'current'
+                : 'blocked (undrafted)'}
+          </div>
+          {beat.dependencies.map((dependency, index) => (
+            <div key={index}>Dependency: {dependency}</div>
+          ))}
+          {beat.reasons.map((reason, index) => (
+            <div key={index}>Affected: {reason}</div>
+          ))}
+          {beat.actions.map((action, index) => (
+            <div key={index}>Next step: {action}</div>
+          ))}
+        </div>
+      ))}
+      <div data-testid="ai-revalidation-replacement">
+        <div data-testid="ai-revalidation-replacement-label">{result.replacement.label}</div>
+        <div>Replacement requires approval — {result.replacement.warning}</div>
+      </div>
+      {result.blocked && (
+        <div data-testid="ai-revalidation-stale">
+          Stale — the live Project changed since validation
+          {result.affectedBeatIds.length > 0
+            ? ` (affected: ${result.affectedBeatIds.map((id) => `[${id}]`).join(', ')})`
+            : ''}
+          . Refresh analysis and previews, then review again before approval; blocked beats stay
+          unapplied.
+        </div>
+      )}
+      {result.needsReview && (
+        <div data-testid="ai-revalidation-review">
+          Requires renewed review before approval — review the affected beats, dependencies,
+          replacement scope, and labelled previews, then approve through the existing proposal
+          lifecycle.
+        </div>
+      )}
+      {result.approvable ? (
+        <div data-testid="ai-revalidation-approvable">
+          Ready for approval — relevant-current and reviewed; approval applies through one
+          Transaction with one undo entry.
+        </div>
+      ) : (
+        <div data-testid="ai-revalidation-blocked">
+          Not ready for approval —{' '}
+          {result.blocked
+            ? 'stale work is blocked until refreshed and reviewed again.'
+            : 'review the refreshed draft and previews before approving.'}
+        </div>
+      )}
+      {result.warnings.map((warning, index) => (
+        <div key={index}>Revalidation note: {warning}</div>
+      ))}
+      <div>{result.note}</div>
+      <div>
+        Read-only revalidation — relevant live changes block stale proposals and identify affected
+        work; refreshed analysis and previews require renewed review before approval.
+      </div>
+    </div>
+  )
 }

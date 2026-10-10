@@ -456,6 +456,115 @@ describe('AiAnimationView shape drafts (issue #444)', () => {
   })
 })
 
+describe('AiAnimationView revalidation (issue #445)', () => {
+  function validatedLive() {
+    return {
+      slideId: 's-1',
+      nodes: [{ id: 'n-cat', name: 'Cat' }],
+      collections: [{ name: 'Walk Cycle', bindings: { cat: 'clip-walk' } }],
+      hasCamera: false,
+      footprint: null,
+      fingerprint: 'fp-same',
+    }
+  }
+
+  it('shows an empty note when no proposal was drafted yet', () => {
+    render(<AiAnimationView projectId="p-1" conversationId="c-1" context={context()} />)
+    expect(screen.getByTestId('ai-revalidation-empty')).toBeInTheDocument()
+  })
+
+  it('identifies affected beats, dependencies, and exact replacement with approval warning', () => {
+    const before = JSON.stringify(context())
+    const liveFootprint = {
+      from: 0,
+      to: 4,
+      tracks: [{ nodeId: 'n-cat', target: { kind: 'positionX' } }],
+      placementParents: ['n-cat'],
+      instanceNodes: ['n-cat'],
+      entryVersions: {},
+      createdNodes: ['script-node-1'],
+      createdDataSources: ['script-data-1'],
+    } as never
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+          { id: 'b-walk-2', label: 'Keep walking', target: { name: 'Cat' }, motion: 'walk' },
+        ]}
+        validated={{ ...validatedLive(), footprint: liveFootprint }}
+        liveFingerprint="fp-same"
+        reviewed
+        footprint={liveFootprint}
+      />,
+    )
+
+    expect(screen.getByTestId('ai-revalidation-summary')).toHaveTextContent(/draftable/i)
+    // Affected beats carry their sequential dependencies even when current.
+    expect(screen.getByTestId('ai-revalidation-beat-b-walk-2')).toHaveTextContent(/Dependency/i)
+    // Exact script-created output the rerun would replace.
+    expect(screen.getByTestId('ai-revalidation-replacement-label')).toHaveTextContent(/n-cat/)
+    expect(screen.getByTestId('ai-revalidation-replacement-label')).toHaveTextContent(
+      /script-node-1/,
+    )
+    expect(screen.getByTestId('ai-animation-revalidation')).toHaveTextContent(/requires approval/i)
+    expect(screen.getByTestId('ai-animation-revalidation')).toHaveTextContent(/manual edits.*lost/i)
+    expect(screen.getByTestId('ai-revalidation-approvable')).toBeInTheDocument()
+    // Read-only revalidation leaves the supplied context untouched.
+    expect(JSON.stringify(context())).toBe(before)
+  })
+
+  it('blocks stale collection changes and identifies the affected beat', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+        ]}
+        validated={{
+          slideId: 's-1',
+          nodes: [{ id: 'n-cat', name: 'Cat' }],
+          collections: [{ name: 'Walk Cycle', bindings: { cat: 'clip-old' } }],
+          hasCamera: false,
+          footprint: null,
+          fingerprint: 'fp-old',
+        }}
+        liveFingerprint="fp-new"
+        reviewed
+      />,
+    )
+
+    expect(screen.getByTestId('ai-revalidation-stale')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-revalidation-beat-b-walk')).toHaveTextContent(/affected/i)
+    expect(screen.getByTestId('ai-revalidation-beat-b-walk')).toHaveTextContent(/Walk Cycle/)
+    expect(screen.getByTestId('ai-revalidation-blocked')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-revalidation-approvable')).not.toBeInTheDocument()
+  })
+
+  it('requires renewed review after a refresh before approval', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+        ]}
+        validated={validatedLive()}
+        liveFingerprint="fp-same"
+      />,
+    )
+
+    expect(screen.getByTestId('ai-revalidation-review')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-revalidation-blocked')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-revalidation-approvable')).not.toBeInTheDocument()
+  })
+})
+
 describe('AiPanel animation mode', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
