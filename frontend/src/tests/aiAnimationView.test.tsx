@@ -257,6 +257,66 @@ describe('AiAnimationView rendered views (issue #441)', () => {
   })
 })
 
+describe('AiAnimationView sequence (issue #442)', () => {
+  it('shows an empty note when no beats were requested yet', () => {
+    render(<AiAnimationView projectId="p-1" conversationId="c-1" context={context()} />)
+    expect(screen.getByTestId('ai-animation-sequence-empty')).toBeInTheDocument()
+  })
+
+  it('drafts binding-compatible beats with labelled previews and a retained script', () => {
+    const before = JSON.stringify(context())
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+          { id: 'b-sleep', label: 'Sleep on the sofa', target: { name: 'Cat' }, motion: 'sleep' },
+        ]}
+        viewRequests={[{ id: 'v-cat', scope: 'focused', time: 0, nodeIds: ['n-cat'] }]}
+      />,
+    )
+
+    // Ordered beats: one draftable, one blocked — blocked never drafts.
+    expect(screen.getByTestId('ai-sequence-summary')).toHaveTextContent(/1 draftable/)
+    expect(screen.getByTestId('ai-sequence-beat-b-walk')).toHaveTextContent(/draftable/i)
+    expect(screen.getByTestId('ai-sequence-beat-b-walk')).toHaveTextContent(/Walk Cycle/)
+    expect(screen.getByTestId('ai-sequence-beat-b-sleep')).toHaveTextContent(/blocked/i)
+    // Per-beat and full-sequence previews carry Slide, time, and stable ids.
+    expect(screen.getByTestId('ai-sequence-preview-label-b-walk')).toHaveTextContent(/Room/)
+    expect(screen.getByTestId('ai-sequence-preview-label-b-walk')).toHaveTextContent(/s-1/)
+    expect(screen.getByTestId('ai-sequence-preview-label-b-walk')).toHaveTextContent(/n-cat/)
+    expect(screen.getByTestId('ai-sequence-preview-label-full')).toHaveTextContent(/sequence/i)
+    expect(screen.getByTestId('ai-sequence-preview-label-full')).toHaveTextContent(/n-cat/)
+    // Verified beat links its covering labelled view.
+    expect(screen.getByTestId('ai-sequence-beat-b-walk')).toHaveTextContent(/v-cat/)
+    // Retained script compiles to ordinary timeline data, not a runtime player.
+    expect(screen.getByTestId('ai-sequence-script')).toHaveTextContent(/Walk Cycle/)
+    expect(screen.getByTestId('ai-sequence-script')).toHaveTextContent(/\.apply\(/)
+    expect(screen.getByTestId('ai-animation-sequence')).toHaveTextContent(/ordinary timeline data/i)
+    // Read-only composition leaves the supplied context untouched.
+    expect(JSON.stringify(context())).toBe(before)
+  })
+
+  it('warns when visual fit is unverified instead of inferring from names', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('ai-sequence-beat-b-walk')).toHaveTextContent(
+      /focused view|rendered preview/i,
+    )
+  })
+})
+
 describe('AiPanel animation mode', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())

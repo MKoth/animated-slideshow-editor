@@ -12,6 +12,11 @@ import {
   type RenderedView,
   type RenderedViewRequest,
 } from '../../ai/renderedViews'
+import {
+  composeSequence,
+  type SequenceDraft,
+  type SequenceSnapshot,
+} from '../../ai/animationSequence'
 
 interface AiAnimationViewProps {
   projectId: string
@@ -48,6 +53,18 @@ export function AiAnimationView({
     () => resolveRenderedViews(viewRequests, toRenderedViewSnapshot(context)),
     [viewRequests, context],
   )
+  const sequence = useMemo(() => {
+    const snapshot: SequenceSnapshot = {
+      slideId: context.animation.timeline.slideId,
+      slideName: context.activeSlideName,
+      duration: context.activeSlideDuration ?? context.animation.timeline.duration,
+      nodes: context.animation.nodes.map((node) => ({
+        id: node.id,
+        name: node.name,
+      })),
+    }
+    return composeSequence({ beats: analysis.beats, views: rendered.views, snapshot })
+  }, [analysis, rendered, context])
 
   if (disabled) {
     return (
@@ -116,6 +133,7 @@ export function AiAnimationView({
       </div>
       <AiAnimationAnalysis analysis={analysis.beats} summary={analysis.summary} />
       <AiRenderedViews views={rendered.views} truncated={rendered.truncated} />
+      <AiAnimationSequence draft={sequence} />
     </div>
   )
 }
@@ -222,6 +240,76 @@ function AiRenderedViews({ views, truncated }: { views: RenderedView[]; truncate
       <div>
         Visual evidence complements structured project data — identity and relationships come from
         stable Scene Node ids, hierarchy, and names, never from pixels.
+      </div>
+    </div>
+  )
+}
+
+function AiAnimationSequence({ draft }: { draft: SequenceDraft }) {
+  if (draft.beats.length === 0) {
+    return (
+      <div data-testid="ai-animation-sequence">
+        <div data-testid="ai-animation-sequence-empty">
+          No sequence drafted yet — ordered beats, per-beat previews, the full-sequence preview, and
+          the retained Animation Script will appear here before anything is applied.
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div data-testid="ai-animation-sequence">
+      <div data-testid="ai-sequence-summary">
+        Sequence: {draft.summary.draftable} draftable · {draft.summary.blocked} blocked (
+        {draft.summary.total} beats). Blocked beats stay undrafted while independent beats proceed.
+      </div>
+      {draft.beats.map((beat) => (
+        <div key={beat.beatId} data-testid={`ai-sequence-beat-${beat.beatId}`}>
+          <div>
+            Beat {beat.order + 1}: {beat.label} —{' '}
+            {beat.status === 'draftable' ? 'draftable' : 'blocked (undrafted)'}
+          </div>
+          {beat.targetNodeIds.length > 0 && (
+            <div>Target: {beat.targetNodeIds.map((id) => `[${id}]`).join(', ')}</div>
+          )}
+          {beat.collectionName && <div>Reusable: {beat.collectionName}</div>}
+          {beat.dependencies.map((dependency, index) => (
+            <div key={index}>Dependency: {dependency}</div>
+          ))}
+          {beat.assumptions.map((assumption, index) => (
+            <div key={index}>Assumption: {assumption}</div>
+          ))}
+          {beat.warnings.map((warning, index) => (
+            <div key={index}>Note: {warning}</div>
+          ))}
+          {beat.blockers.map((blocker, index) => (
+            <div key={index}>Blocked: {blocker}</div>
+          ))}
+          {beat.actions.map((action, index) => (
+            <div key={index}>Next step: {action}</div>
+          ))}
+          {beat.previewViewIds.length > 0 && (
+            <div>Verified by: {beat.previewViewIds.join(', ')}</div>
+          )}
+        </div>
+      ))}
+      {draft.previews.map((preview) => (
+        <div
+          key={preview.beatId ?? 'full'}
+          data-testid={`ai-sequence-preview-${preview.beatId ?? 'full'}`}
+        >
+          <div data-testid={`ai-sequence-preview-label-${preview.beatId ?? 'full'}`}>
+            {preview.label}
+          </div>
+        </div>
+      ))}
+      <div data-testid="ai-sequence-script">{draft.scriptSource}</div>
+      {draft.warnings.map((warning, index) => (
+        <div key={index}>Sequence note: {warning}</div>
+      ))}
+      <div>{draft.note}</div>
+      <div>
+        Read-only sequence — binding-compatible reusable motion only, labelled previews before
+        approval, and the retained script compiles to ordinary timeline data.
       </div>
     </div>
   )
