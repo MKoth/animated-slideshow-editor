@@ -210,6 +210,53 @@ describe('AiAnimationView beat analysis (issue #440)', () => {
   })
 })
 
+describe('AiAnimationView rendered views (issue #441)', () => {
+  it('shows an empty note when no views were requested yet', () => {
+    render(<AiAnimationView projectId="p-1" conversationId="c-1" context={context()} />)
+    expect(screen.getByTestId('ai-rendered-views-empty')).toBeInTheDocument()
+  })
+
+  it('labels current and focused views with Slide, time, and stable node ids', () => {
+    const before = JSON.stringify(context())
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        viewRequests={[
+          { id: 'v-current', scope: 'current', time: 3.2 },
+          { id: 'v-focused', scope: 'focused', time: 5, nodeIds: ['n-cat'] },
+        ]}
+      />,
+    )
+
+    const current = screen.getByTestId('ai-rendered-view-v-current')
+    expect(screen.getByTestId('ai-rendered-view-label-v-current')).toHaveTextContent(/Room/)
+    expect(current).toHaveTextContent(/s-1/)
+    expect(current).toHaveTextContent(/3\.2/)
+    expect(current).toHaveTextContent(/n-cat/)
+    expect(screen.getByTestId('ai-rendered-view-label-v-focused')).toHaveTextContent(/n-cat/)
+    // Visual evidence never replaces structured identity.
+    expect(screen.getByTestId('ai-rendered-views')).toHaveTextContent(/never from pixels/i)
+    // Read-only views leave the supplied context untouched.
+    expect(JSON.stringify(context())).toBe(before)
+  })
+
+  it('reports invalid view requests with the precise fix', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        viewRequests={[{ id: 'v-bad', scope: 'focused', time: 1, nodeIds: ['n-gone'] }]}
+      />,
+    )
+
+    expect(screen.getByTestId('ai-rendered-view-v-bad')).toHaveTextContent(/invalid/i)
+    expect(screen.getByTestId('ai-rendered-view-v-bad')).toHaveTextContent(/n-gone/i)
+  })
+})
+
 describe('AiPanel animation mode', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())

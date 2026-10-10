@@ -110,6 +110,52 @@ def _dict_entries(items: object, limit: int) -> list[dict[str, Any]]:
     return [entry for entry in items[:limit] if isinstance(entry, dict)]
 
 
+RENDERED_VIEW_NOTE = (
+    "rendered views complement structured project data — identity and relationships "
+    "come from stable Scene Node ids, hierarchy, and names, never from pixels"
+)
+
+
+def format_rendered_view_label(
+    slide_name: str,
+    slide_id: str,
+    time: float,
+    node_ids: list[str],
+    scope: str = "current",
+    node_names: dict[str, str] | None = None,
+) -> str:
+    """Canonical labelled rendered-view descriptor (issue #441).
+
+    Mirrors the frontend `formatRenderedViewLabel` so both sides agree on the
+    Slide/time/stable-id label. Pure and read-only: formats its arguments and
+    never touches project data. Rendered views complement structured evidence —
+    see RENDERED_VIEW_NOTE — they never replace it.
+    """
+    import math
+
+    if scope == "focused":
+        scope_word = "focused"
+    elif scope == "current":
+        scope_word = "current scene"
+    else:
+        raise ValueError(f'unknown rendered-view scope {scope!r} — use "current" or "focused"')
+    if not isinstance(time, (int, float)) or not math.isfinite(time):
+        raise ValueError("rendered-view time must be a finite number of Slide seconds")
+    ids = [entry for entry in (node_ids or []) if isinstance(entry, str) and entry]
+    if ids:
+        names = node_names or {}
+        rendered = ", ".join(
+            f"{names[id]} [{id}]" if isinstance(names.get(id), str) and names[id] else f"[{id}]"
+            for id in ids
+        )
+    else:
+        rendered = "no scene nodes"
+    return (
+        f'Slide "{slide_name}" [{slide_id}] @ {round(float(time), 2):g}s — '
+        f"{scope_word} view (nodes: {rendered})"
+    )
+
+
 def _animation_to_text(animation: dict[str, Any]) -> str:
     """Bounded rendering of the animation-assistant snapshot (issue #438).
 
@@ -230,4 +276,9 @@ def _animation_to_text(animation: dict[str, Any]) -> str:
     if isinstance(truncated, dict) and any(truncated.values()):
         flagged = sorted(k for k, v in truncated.items() if v)
         lines.append(f"note: truncated snapshot sections: {', '.join(flagged)}")
+    if lines:
+        # Authority reminder travels with animation evidence (issue #441):
+        # labelled rendered views complement the structured snapshot above and
+        # never replace stable Scene Node identity or relationships.
+        lines.append(f"note: {RENDERED_VIEW_NOTE}")
     return "\n".join(lines)

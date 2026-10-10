@@ -14,8 +14,9 @@ import type { AnimationAssistantSnapshot } from './contextSnapshot'
  * counts as reusable when at least one of its semantic bindings overlaps the
  * resolved target subtree. Name matches without binding overlap are kept as
  * labelled `nameOnly` evidence with an explicit warning — they are never
- * assumed compatible. Rendered-preview verification arrives in #441; until
- * then every reusable candidate carries a preview warning.
+ * assumed compatible. Labelled rendered-view verification lives in
+ * `./renderedViews` (issue #441); until the artist confirms fit with a
+ * labelled view, every reusable candidate carries a preview warning.
  */
 
 /** Per-beat cap so one vague request cannot flood the analysis. */

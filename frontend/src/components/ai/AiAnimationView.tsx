@@ -6,6 +6,12 @@ import {
   type BeatAnalysis,
   type RequestedBeat,
 } from '../../ai/animationAnalysis'
+import {
+  resolveRenderedViews,
+  toRenderedViewSnapshot,
+  type RenderedView,
+  type RenderedViewRequest,
+} from '../../ai/renderedViews'
 
 interface AiAnimationViewProps {
   projectId: string
@@ -14,6 +20,8 @@ interface AiAnimationViewProps {
   disabled?: boolean
   /** Requested actions to analyze (issue #440). Empty until the artist describes a performance. */
   beats?: readonly RequestedBeat[]
+  /** Requested rendered views (issue #441). Empty until the artist or assistant asks for visual evidence. */
+  viewRequests?: readonly RenderedViewRequest[]
 }
 
 /**
@@ -30,10 +38,15 @@ export function AiAnimationView({
   context,
   disabled,
   beats = [],
+  viewRequests = [],
 }: AiAnimationViewProps) {
   const analysis = useMemo(
     () => analyzeBeats(beats, toAnalysisSnapshot(context.animation)),
     [beats, context],
+  )
+  const rendered = useMemo(
+    () => resolveRenderedViews(viewRequests, toRenderedViewSnapshot(context)),
+    [viewRequests, context],
   )
 
   if (disabled) {
@@ -102,6 +115,7 @@ export function AiAnimationView({
         nothing here mutates the project.
       </div>
       <AiAnimationAnalysis analysis={analysis.beats} summary={analysis.summary} />
+      <AiRenderedViews views={rendered.views} truncated={rendered.truncated} />
     </div>
   )
 }
@@ -169,6 +183,45 @@ function AiAnimationAnalysis({
         Read-only analysis — targets resolve by stable Scene Node identity and existing
         names/metadata; ambiguous targets ask instead of guessing, and nothing here changes the
         project.
+      </div>
+    </div>
+  )
+}
+
+function AiRenderedViews({ views, truncated }: { views: RenderedView[]; truncated: boolean }) {
+  if (views.length === 0) {
+    return (
+      <div data-testid="ai-rendered-views-empty">
+        No rendered views requested yet — ask for the current scene or a focused view at a selected
+        time and each view will be labelled with its Slide, time, and stable Scene Node ids.
+      </div>
+    )
+  }
+  return (
+    <div data-testid="ai-rendered-views">
+      <div data-testid="ai-rendered-views-summary">
+        Rendered views: {views.length} requested{truncated ? ' (truncated to the bounded set)' : ''}
+        . Read-only — requesting a view never changes the project.
+      </div>
+      {views.map((view) => (
+        <div key={view.requestId} data-testid={`ai-rendered-view-${view.requestId}`}>
+          {view.status === 'ready' ? (
+            <div data-testid={`ai-rendered-view-label-${view.requestId}`}>{view.label}</div>
+          ) : (
+            <div>View {view.requestId} — invalid (needs a precise fix)</div>
+          )}
+          {view.warnings.map((warning, index) => (
+            <div key={index}>Note: {warning}</div>
+          ))}
+          {view.actions.map((action, index) => (
+            <div key={index}>Next step: {action}</div>
+          ))}
+          <div>{view.note}</div>
+        </div>
+      ))}
+      <div>
+        Visual evidence complements structured project data — identity and relationships come from
+        stable Scene Node ids, hierarchy, and names, never from pixels.
       </div>
     </div>
   )

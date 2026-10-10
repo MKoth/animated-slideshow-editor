@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from app.ai.crypto import decrypt_key, encrypt_key, mask_key
-from app.ai.prompting import ChatMessage, compose_messages, context_to_text, estimate_tokens
+from app.ai.prompting import (
+    RENDERED_VIEW_NOTE,
+    ChatMessage,
+    compose_messages,
+    context_to_text,
+    estimate_tokens,
+    format_rendered_view_label,
+)
 from app.ai.zen import chat_completions_payload, friendly_error_for_status, parse_sse_tokens
 
 
@@ -141,3 +148,42 @@ def test_sse_parser_tolerant_of_nonstandard_chunks() -> None:
         'event: message\ndata: {"choices": [{"delta": {"content": " world"}}]}\n\n'
     )
     assert parse_sse_tokens(raw) == ["Hello", " world"]
+
+
+def test_rendered_view_label_carries_slide_time_and_stable_ids() -> None:
+    label = format_rendered_view_label(
+        "Room", "s-1", 3.2, ["n-cat", "n-sofa"], "current", {"n-cat": "Cat", "n-sofa": "Sofa"}
+    )
+    assert "Room" in label
+    assert "s-1" in label
+    assert "3.2" in label
+    assert "n-cat" in label
+    assert "n-sofa" in label
+
+
+def test_rendered_view_label_marks_focused_scope() -> None:
+    label = format_rendered_view_label("Room", "s-1", 5, ["n-cat"], "focused", {"n-cat": "Cat"})
+    assert "focused" in label
+    assert "n-cat" in label
+
+
+def test_rendered_view_label_rejects_unknown_scope() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="scope"):
+        format_rendered_view_label("Room", "s-1", 1, [], "close-up")
+
+
+def test_animation_text_states_visual_evidence_complements_structured_data() -> None:
+    context = {
+        "projectName": "Cat Lesson",
+        "activeSlideName": "Room",
+        "animation": {
+            "nodes": [{"id": "n-cat", "name": "Cat"}],
+            "timeline": {"duration": 12},
+            "truncated": {},
+        },
+    }
+    text = context_to_text(context)
+    assert RENDERED_VIEW_NOTE in text
+    assert "never from pixels" in text
