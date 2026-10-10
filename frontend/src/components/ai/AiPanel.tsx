@@ -8,6 +8,7 @@ import { useSelectionStore } from '../../stores/selectionStore'
 import { useBackendStore } from '../../stores/backendStore'
 import { AiPlanView } from './AiPlanView'
 import { AiProposalView } from './AiProposalView'
+import { AiAnimationView } from './AiAnimationView'
 import { AiBoardView } from './AiBoardView'
 import { AiCalibrationView } from './AiCalibrationView'
 import { AiNarrationView } from './AiNarrationView'
@@ -29,6 +30,7 @@ export function AiPanel() {
   const streamingContent = useAiStore((s) => s.streamingContent)
   const lastError = useAiStore((s) => s.lastError)
   const panelOpen = useAiStore((s) => s.panelOpen)
+  const assistantMode = useAiStore((s) => s.assistantMode)
 
   const activeId = projectId ? (activeByProject[projectId] ?? null) : null
   const draft = projectId ? (drafts[projectId] ?? '') : ''
@@ -77,6 +79,7 @@ export function AiPanel() {
   const messages = activeId ? (messagesById[activeId] ?? []) : []
   const isStreaming = status === 'streaming' && streamingConversationId === activeId
   const unavailable = status === 'unavailable' || backendStatus === 'unavailable'
+  const isAnimationMode = assistantMode === 'animation'
 
   const handleSend = () => {
     if (!projectId || !activeId || !draft.trim() || isStreaming || unavailable) return
@@ -98,44 +101,76 @@ export function AiPanel() {
           Close
         </button>
       </div>
+      <div className="ai-panel__modes" data-testid="ai-assistant-mode">
+        <button
+          data-testid="ai-mode-lesson"
+          disabled={assistantMode === 'lesson'}
+          onClick={() => store.setAssistantMode('lesson')}
+        >
+          Lesson
+        </button>
+        <button
+          data-testid="ai-mode-animation"
+          disabled={isAnimationMode}
+          onClick={() => store.setAssistantMode('animation')}
+        >
+          Animation
+        </button>
+      </div>
 
       {unavailable ? (
         <>
           <div data-testid="ai-unavailable">
             AI unavailable — the backend is unreachable. The editor still works.
           </div>
-          <AiPlanView projectId={projectId} conversationId={activeId} context={context} disabled />
-          <AiScenarioView
-            projectId={projectId}
-            conversationId={activeId}
-            context={context}
-            disabled
-          />
-          <AiReconciliationView
-            projectId={projectId}
-            scenarioId={activeScenarioId}
-            conversationId={activeId}
-            context={context}
-            disabled
-          />
-          <AiNarrationView
-            projectId={projectId}
-            reconciliationId={activeReconciliationId}
-            conversationId={activeId}
-            disabled
-          />
-          <AiCalibrationView
-            projectId={projectId}
-            narrationId={activeNarrationId}
-            conversationId={activeId}
-            disabled
-          />
-          <AiBoardView
-            projectId={projectId}
-            narrationId={activeNarrationId}
-            conversationId={activeId}
-            disabled
-          />
+          {isAnimationMode ? (
+            <AiAnimationView
+              projectId={projectId}
+              conversationId={activeId}
+              context={context}
+              disabled
+            />
+          ) : (
+            <>
+              <AiPlanView
+                projectId={projectId}
+                conversationId={activeId}
+                context={context}
+                disabled
+              />
+              <AiScenarioView
+                projectId={projectId}
+                conversationId={activeId}
+                context={context}
+                disabled
+              />
+              <AiReconciliationView
+                projectId={projectId}
+                scenarioId={activeScenarioId}
+                conversationId={activeId}
+                context={context}
+                disabled
+              />
+              <AiNarrationView
+                projectId={projectId}
+                reconciliationId={activeReconciliationId}
+                conversationId={activeId}
+                disabled
+              />
+              <AiCalibrationView
+                projectId={projectId}
+                narrationId={activeNarrationId}
+                conversationId={activeId}
+                disabled
+              />
+              <AiBoardView
+                projectId={projectId}
+                narrationId={activeNarrationId}
+                conversationId={activeId}
+                disabled
+              />
+            </>
+          )}
           <AiProposalView projectId={projectId} conversationId={activeId} disabled />
         </>
       ) : (
@@ -255,7 +290,7 @@ export function AiPanel() {
           <div className="ai-panel__input">
             <textarea
               data-testid="ai-input"
-              placeholder="Ask about your lesson…"
+              placeholder={isAnimationMode ? 'Describe the performance…' : 'Ask about your lesson…'}
               value={draft}
               onChange={(e) => projectId && store.setDraft(projectId, e.target.value)}
               onKeyDown={(e) => {
@@ -284,48 +319,59 @@ export function AiPanel() {
             </button>
           </div>
 
-          <AiPlanView
-            projectId={projectId}
-            conversationId={activeId}
-            context={context}
-            disabled={unavailable}
-          />
+          {isAnimationMode ? (
+            <AiAnimationView
+              projectId={projectId}
+              conversationId={activeId}
+              context={context}
+              disabled={unavailable}
+            />
+          ) : (
+            <>
+              <AiPlanView
+                projectId={projectId}
+                conversationId={activeId}
+                context={context}
+                disabled={unavailable}
+              />
 
-          <AiScenarioView
-            projectId={projectId}
-            conversationId={activeId}
-            context={context}
-            disabled={unavailable}
-          />
+              <AiScenarioView
+                projectId={projectId}
+                conversationId={activeId}
+                context={context}
+                disabled={unavailable}
+              />
 
-          <AiReconciliationView
-            projectId={projectId}
-            scenarioId={activeScenarioId}
-            conversationId={activeId}
-            context={context}
-            disabled={unavailable}
-          />
+              <AiReconciliationView
+                projectId={projectId}
+                scenarioId={activeScenarioId}
+                conversationId={activeId}
+                context={context}
+                disabled={unavailable}
+              />
 
-          <AiNarrationView
-            projectId={projectId}
-            reconciliationId={activeReconciliationId}
-            conversationId={activeId}
-            disabled={unavailable}
-          />
+              <AiNarrationView
+                projectId={projectId}
+                reconciliationId={activeReconciliationId}
+                conversationId={activeId}
+                disabled={unavailable}
+              />
 
-          <AiCalibrationView
-            projectId={projectId}
-            narrationId={activeNarrationId}
-            conversationId={activeId}
-            disabled={unavailable}
-          />
+              <AiCalibrationView
+                projectId={projectId}
+                narrationId={activeNarrationId}
+                conversationId={activeId}
+                disabled={unavailable}
+              />
 
-          <AiBoardView
-            projectId={projectId}
-            narrationId={activeNarrationId}
-            conversationId={activeId}
-            disabled={unavailable}
-          />
+              <AiBoardView
+                projectId={projectId}
+                narrationId={activeNarrationId}
+                conversationId={activeId}
+                disabled={unavailable}
+              />
+            </>
+          )}
 
           <AiProposalView projectId={projectId} conversationId={activeId} disabled={unavailable} />
         </>

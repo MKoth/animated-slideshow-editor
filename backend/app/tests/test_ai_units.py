@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.ai.crypto import decrypt_key, encrypt_key, mask_key
-from app.ai.prompting import ChatMessage, compose_messages, estimate_tokens
+from app.ai.prompting import ChatMessage, compose_messages, context_to_text, estimate_tokens
 from app.ai.zen import chat_completions_payload, friendly_error_for_status, parse_sse_tokens
 
 
@@ -28,6 +28,57 @@ def test_estimate_tokens_char_approximation() -> None:
     assert estimate_tokens("hi") == 1
     assert estimate_tokens("abcd") == 1
     assert estimate_tokens("abcde") == 2
+
+
+def test_context_to_text_includes_animation_snapshot() -> None:
+    import copy
+
+    context = {
+        "projectName": "Cat Lesson",
+        "activeSlideName": "Room",
+        "animation": {
+            "nodes": [
+                {
+                    "id": "n-cat",
+                    "name": "Cat",
+                    "parentId": "root",
+                    "depth": 1,
+                    "semanticName": "cat",
+                    "components": ["mesh"],
+                    "transform": {"x": 10, "y": 20, "rotation": 0, "scaleX": 1, "scaleY": 1},
+                    "visible": True,
+                }
+            ],
+            "rig": {
+                "boneCount": 0,
+                "shapeInventory": [{"nodeId": "n-cat", "shapeCount": 1, "shapeNames": ["Sit"]}],
+                "morphBindings": [
+                    {"nodeId": "n-cat", "fromShapeId": "shape-a", "toShapeId": "shape-b"}
+                ],
+                "controls": [{"hostNodeId": "n-cat", "keys": ["mouthOpen"]}],
+            },
+            "clips": [{"name": "Walk", "duration": 2, "channelCount": 2}],
+            "collections": [{"name": "Walk Cycle", "bindingCount": 1}],
+            "timeline": {
+                "slideId": "s-1",
+                "duration": 12,
+                "animatedNodeCount": 1,
+                "totalKeyframes": 1,
+                "controlHosts": [{"nodeId": "n-cat", "keys": ["mouthOpen"]}],
+            },
+            "truncated": {"nodes": False},
+        },
+    }
+    before = copy.deepcopy(context)
+    text = context_to_text(context)
+    assert "Cat [n-cat]" in text
+    assert "child of root" in text
+    assert "shape-a -> shape-b" in text
+    assert "Walk" in text
+    assert "Walk Cycle" in text
+    assert "12" in text
+    # Analysis rendering never mutates the project context it reads.
+    assert context == before
 
 
 def test_compose_trims_oldest_first_and_never_drops_context() -> None:

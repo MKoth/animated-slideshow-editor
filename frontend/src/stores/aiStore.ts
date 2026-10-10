@@ -29,6 +29,8 @@ import { streamAiChat } from '../ai/sse'
 
 export type AiBackendStatus = 'idle' | 'loading' | 'streaming' | 'unavailable'
 
+export type AiAssistantMode = 'lesson' | 'animation'
+
 interface AiState {
   conversations: AiConversationSummary[]
   messagesById: Record<string, AiMessage[]>
@@ -36,6 +38,7 @@ interface AiState {
   drafts: Record<string, string>
   search: string
   panelOpen: boolean
+  assistantMode: AiAssistantMode
   settingsOpen: boolean
   status: AiBackendStatus
   streamingConversationId: string | null
@@ -82,6 +85,7 @@ interface AiState {
   proposalError: { code: string; message: string } | null
 
   setPanelOpen: (open: boolean) => void
+  setAssistantMode: (mode: AiAssistantMode) => void
   setSettingsOpen: (open: boolean) => void
   setSearch: (search: string) => void
   setDraft: (projectId: string, draft: string) => void
@@ -257,6 +261,7 @@ export const useAiStore = create<AiState>()(
       drafts: {},
       search: '',
       panelOpen: false,
+      assistantMode: 'lesson',
       settingsOpen: false,
       status: 'idle',
       streamingConversationId: null,
@@ -303,6 +308,7 @@ export const useAiStore = create<AiState>()(
       proposalError: null,
 
       setPanelOpen: (open) => set({ panelOpen: open }),
+      setAssistantMode: (mode) => set({ assistantMode: mode }),
       setSettingsOpen: (open) => set({ settingsOpen: open }),
       setSearch: (search) => set({ search }),
       setDraft: (projectId, draft) =>
@@ -1590,6 +1596,7 @@ export const useAiStore = create<AiState>()(
         activeByProject: state.activeByProject,
         drafts: state.drafts,
         panelOpen: state.panelOpen,
+        assistantMode: state.assistantMode,
         activePlanId: state.activePlanId,
         planRequest: state.planRequest,
         activeScenarioId: state.activeScenarioId,
