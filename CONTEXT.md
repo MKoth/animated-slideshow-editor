@@ -469,6 +469,10 @@ _Avoid_: Morph target, blendshape (topology-varying)
 A coordinated state of a character expressed by the relevant parts' Shapes and Morphs, transforms, Controls, and animation channels together. It is a conceptual composition across the character, not a single mesh Shape.
 _Avoid_: Shape (when referring to the whole character)
 
+**Shape Draft**:
+A separate reviewable Shape duplicated from a closest-fit Shape with the existing `DuplicateShape` command when existing topology can express a missing pose. The source Shape keeps its id, name, and vertices and mesh topology is preserved; the copy is inspected, sculpted or renamed, then accepted (the choice retained as project feedback) or rejected. Insufficient topology is reported as requiring artist-authored geometry — nothing inferred or substituted.
+_Avoid_: Shape copy (ambiguous with engine duplication), inferred geometry
+
 **Morph**:
 The one-active-at-a-time lerp between any two Shapes on the same mesh, defined by `Morph {fromShapeId, toShapeId, coefficient}` with `coefficient` in [0,1] (exaggeration beyond 1 allowed in preview). Evaluated as `lerp(from.vertices[i], to.vertices[i], coefficient)` on rest vertices before `evaluateMeshDeformation` (morph then bones), deterministic per frame for preview and Video Export. `coefficient` is the `morphCoefficient` track on `NodeAnimation` with static sidecar `MorphBinding {fromShapeId,toShapeId|null}` (one lane, visible-pattern); clip and collection portability animates only the coefficient — the binding stays node-local and soft-warns if shape ids are missing on the target.
 _Avoid_: Blend, shape key

@@ -22,6 +22,11 @@ import {
   type SequenceDraft,
   type SequenceSnapshot,
 } from '../../ai/animationSequence'
+import {
+  proposeShapeDrafts,
+  toShapeDraftSnapshot,
+  type ShapeDraftResult,
+} from '../../ai/shapeDrafts'
 
 interface AiAnimationViewProps {
   projectId: string
@@ -69,6 +74,14 @@ export function AiAnimationView({
   const rendered = useMemo(
     () => resolveRenderedViews(viewRequests, toRenderedViewSnapshot(context)),
     [viewRequests, context],
+  )
+  const shapeDrafts = useMemo(
+    () =>
+      proposeShapeDrafts({
+        beats: analysis.beats,
+        nodes: toShapeDraftSnapshot(context.animation),
+      }),
+    [analysis, context],
   )
   const sequence = useMemo(() => {
     const snapshot: SequenceSnapshot = {
@@ -164,6 +177,7 @@ export function AiAnimationView({
         nothing here mutates the project.
       </div>
       <AiAnimationAnalysis analysis={analysis.beats} summary={analysis.summary} />
+      <AiShapeDrafts result={shapeDrafts} />
       <AiRenderedViews views={rendered.views} truncated={rendered.truncated} />
       <AiAnimationSequence draft={sequence} />
     </div>
@@ -233,6 +247,59 @@ function AiAnimationAnalysis({
         Read-only analysis — targets resolve by stable Scene Node identity and existing
         names/metadata; ambiguous targets ask instead of guessing, and nothing here changes the
         project.
+      </div>
+    </div>
+  )
+}
+
+function AiShapeDrafts({ result }: { result: ShapeDraftResult }) {
+  if (result.drafts.length === 0) {
+    return (
+      <div data-testid="ai-shape-drafts-empty">
+        No missing Shape drafts yet — beats with missing pose geometry will propose a separate
+        closest-fit draft here for review before anything is duplicated.
+      </div>
+    )
+  }
+  return (
+    <div data-testid="ai-shape-drafts">
+      <div data-testid="ai-shape-drafts-summary">
+        Shape drafts: {result.summary.proposed} proposed · {result.summary.needsArtistGeometry}{' '}
+        needing artist-authored geometry ({result.summary.total} missing-pose beats). Sources stay
+        unchanged; topology is preserved.
+      </div>
+      {result.drafts.map((draft) => (
+        <div key={draft.draftId} data-testid={`ai-shape-draft-${draft.beatId}`}>
+          <div>
+            {draft.label} — {formatDraftStatus(draft.status)}
+          </div>
+          {draft.nodeId && (
+            <div>
+              Target: {draft.nodeName} [{draft.nodeId}]
+            </div>
+          )}
+          {draft.sourceShapeName && (
+            <div>
+              Source (unchanged): {draft.sourceShapeName} → draft: {draft.draftName}
+            </div>
+          )}
+          <div>{draft.note}</div>
+          {draft.warnings.map((warning, index) => (
+            <div key={index}>Note: {warning}</div>
+          ))}
+          {draft.actions.map((action, index) => (
+            <div key={index}>Next step: {action}</div>
+          ))}
+          {draft.feedback && <div>Review: {draft.feedback}</div>}
+        </div>
+      ))}
+      {result.warnings.map((warning, index) => (
+        <div key={index}>Draft note: {warning}</div>
+      ))}
+      <div>{result.note}</div>
+      <div>
+        Read-only drafts — duplication mints a separate Shape with the existing DuplicateShape
+        command only after approval; the source Shape is never mutated.
       </div>
     </div>
   )
@@ -415,5 +482,20 @@ function formatStatus(status: BeatAnalysis['status']): string {
       return 'blocked (missing prerequisite)'
     case 'invalid':
       return 'invalid (needs a precise fix)'
+  }
+}
+
+function formatDraftStatus(status: ShapeDraftResult['drafts'][number]['status']): string {
+  switch (status) {
+    case 'proposed':
+      return 'proposed (separate closest-fit copy for review)'
+    case 'accepted':
+      return 'accepted (artist-approved copy)'
+    case 'edited':
+      return 'edited (renamed review copy)'
+    case 'rejected':
+      return 'rejected (source unchanged)'
+    case 'needs-artist-geometry':
+      return 'needs artist-authored geometry (topology cannot express the pose)'
   }
 }

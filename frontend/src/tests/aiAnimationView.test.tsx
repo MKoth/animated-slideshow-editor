@@ -367,6 +367,95 @@ describe('AiAnimationView travel, transitions, and Frozen Poses (issue #443)', (
   })
 })
 
+describe('AiAnimationView shape drafts (issue #444)', () => {
+  function propContext(): ContextSnapshot {
+    const base = context()
+    return {
+      ...base,
+      animation: {
+        ...base.animation,
+        nodes: [
+          ...base.animation.nodes,
+          {
+            id: 'n-prop',
+            name: 'Prop',
+            parentId: 'root',
+            depth: 1,
+            semanticName: null,
+            components: ['mesh'],
+            assetDefinitionId: null,
+            transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+            worldTransform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+            visible: true,
+            childCount: 0,
+          },
+        ],
+      },
+    }
+  }
+
+  it('shows an empty note when no pose geometry is missing', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          // 'Sit' already exists on the target inventory — geometry is
+          // available, so no closest-fit draft is proposed.
+          { id: 'b-sit', label: 'Sit by the blackboard', target: { name: 'Cat' }, motion: 'sit' },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('ai-shape-drafts-empty')).toBeInTheDocument()
+  })
+
+  it('proposes a separate closest-fit draft while the source stays unchanged', () => {
+    const before = JSON.stringify(propContext())
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={propContext()}
+        beats={[
+          { id: 'b-sleep', label: 'Sleep on the sofa', target: { name: 'Cat' }, motion: 'sleep' },
+        ]}
+      />,
+    )
+
+    const draft = screen.getByTestId('ai-shape-draft-b-sleep')
+    expect(screen.getByTestId('ai-shape-drafts-summary')).toHaveTextContent(/1 proposed/)
+    expect(draft).toHaveTextContent(/proposed/i)
+    // The review copy is separate from its source — the source is never mutated.
+    expect(draft).toHaveTextContent(/Sit/)
+    expect(draft).toHaveTextContent(/source.*unchanged|unchanged/i)
+    expect(draft).toHaveTextContent(/topology/i)
+    expect(draft).toHaveTextContent(/inspect|review/i)
+    // Read-only drafts leave the supplied context untouched.
+    expect(JSON.stringify(propContext())).toBe(before)
+  })
+
+  it('reports inadequate topology as requiring artist-authored geometry', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={propContext()}
+        beats={[
+          { id: 'b-prop', label: 'Strike a pose', target: { name: 'Prop' }, motion: 'sleep' },
+        ]}
+      />,
+    )
+
+    const draft = screen.getByTestId('ai-shape-draft-b-prop')
+    expect(draft).toHaveTextContent(/artist-authored geometry/i)
+    expect(screen.getByTestId('ai-shape-drafts-summary')).toHaveTextContent(
+      /needing artist-authored geometry/,
+    )
+  })
+})
+
 describe('AiPanel animation mode', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
