@@ -633,3 +633,146 @@ describe('AiPanel animation mode', () => {
     expect(screen.getByTestId('ai-plan-section')).toBeInTheDocument()
   })
 })
+
+describe('AiAnimationView apply (issue #446)', () => {
+  function validatedLive() {
+    return {
+      slideId: 's-1',
+      nodes: [{ id: 'n-cat', name: 'Cat' }],
+      collections: [{ name: 'Walk Cycle', bindings: { cat: 'clip-walk' } }],
+      hasCamera: false,
+      footprint: null,
+      fingerprint: 'fp-same',
+    }
+  }
+
+  it('shows an empty note when no batch was approved yet', () => {
+    render(<AiAnimationView projectId="p-1" conversationId="c-1" context={context()} />)
+    expect(screen.getByTestId('ai-apply-empty')).toBeInTheDocument()
+  })
+
+  it('plans exactly one Transaction with the Save flow for an approved valid beat', () => {
+    const before = JSON.stringify(context())
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+        ]}
+        validated={validatedLive()}
+        liveFingerprint="fp-same"
+        reviewed
+        approvedBeats={['b-walk']}
+      />,
+    )
+
+    expect(screen.getByTestId('ai-apply-summary')).toHaveTextContent(/1 appliable beat/)
+    expect(screen.getByTestId('ai-apply-beat-b-walk')).toHaveTextContent(/appliable/i)
+    expect(screen.getByTestId('ai-apply-approvable')).toHaveTextContent(/one Transaction/i)
+    expect(screen.getByTestId('ai-apply-save')).toHaveTextContent(/Save flow/)
+    expect(screen.getByTestId('ai-apply-save')).toHaveTextContent(/nothing is saved implicitly/i)
+    // Read-only planning leaves the supplied context untouched.
+    expect(JSON.stringify(context())).toBe(before)
+  })
+
+  it('leaves a blocked beat unapplied while the approved beat stays appliable', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+          { id: 'b-sleep', label: 'Sleep on the sofa', target: { name: 'Cat' }, motion: 'sleep' },
+        ]}
+        validated={validatedLive()}
+        liveFingerprint="fp-same"
+        reviewed
+        approvedBeats={['b-walk', 'b-sleep']}
+      />,
+    )
+
+    expect(screen.getByTestId('ai-apply-beat-b-walk')).toHaveTextContent(/appliable/i)
+    const blocked = screen.getByTestId('ai-apply-beat-b-sleep')
+    expect(blocked).toHaveTextContent(/remains unapplied/i)
+    expect(blocked).toHaveTextContent(/locked/i)
+    expect(screen.getByTestId('ai-apply-approvable')).toBeInTheDocument()
+  })
+
+  it('leaves unapproved beats unapplied and never includes them', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+        ]}
+        validated={validatedLive()}
+        liveFingerprint="fp-same"
+        reviewed
+      />,
+    )
+
+    const beat = screen.getByTestId('ai-apply-beat-b-walk')
+    expect(beat).toHaveTextContent(/remains unapplied/i)
+    expect(beat).toHaveTextContent(/explicit.*approv/i)
+    expect(screen.queryByTestId('ai-apply-approvable')).not.toBeInTheDocument()
+    expect(screen.getByTestId('ai-apply-blocked')).toBeInTheDocument()
+  })
+
+  it('leaves a dependency-incomplete beat unapplied while independents proceed', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+          { id: 'b-walk-2', label: 'Keep walking', target: { name: 'Cat' }, motion: 'walk' },
+        ]}
+        validated={validatedLive()}
+        liveFingerprint="fp-same"
+        reviewed
+        approvedBeats={['b-walk-2']}
+      />,
+    )
+
+    const second = screen.getByTestId('ai-apply-beat-b-walk-2')
+    expect(second).toHaveTextContent(/remains unapplied/i)
+    expect(second).toHaveTextContent(/ependenc/i)
+    expect(screen.queryByTestId('ai-apply-approvable')).not.toBeInTheDocument()
+  })
+
+  it('blocks a stale batch and identifies the affected beat', () => {
+    render(
+      <AiAnimationView
+        projectId="p-1"
+        conversationId="c-1"
+        context={context()}
+        beats={[
+          { id: 'b-walk', label: 'Walk across the room', target: { name: 'Cat' }, motion: 'walk' },
+        ]}
+        validated={{
+          slideId: 's-1',
+          nodes: [{ id: 'n-cat', name: 'Cat' }],
+          collections: [{ name: 'Walk Cycle', bindings: { cat: 'clip-old' } }],
+          hasCamera: false,
+          footprint: null,
+          fingerprint: 'fp-old',
+        }}
+        liveFingerprint="fp-new"
+        reviewed
+        approvedBeats={['b-walk']}
+      />,
+    )
+
+    const beat = screen.getByTestId('ai-apply-beat-b-walk')
+    expect(beat).toHaveTextContent(/remains unapplied/i)
+    expect(beat).toHaveTextContent(/tale/i)
+    expect(screen.getByTestId('ai-apply-blocked')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-apply-approvable')).not.toBeInTheDocument()
+  })
+})

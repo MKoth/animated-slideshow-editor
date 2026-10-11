@@ -33,6 +33,7 @@ import {
   type RevalidationResult,
   type RevalidationSnapshot,
 } from '../../ai/animationRevalidation'
+import { planAnimationApply, type AnimationApplyPlan } from '../../ai/animationApply'
 import type { CompiledFootprint } from '../../engine/compiledFootprint'
 
 interface AiAnimationViewProps {
@@ -60,6 +61,10 @@ interface AiAnimationViewProps {
   liveFingerprint?: string | null
   /** True once the artist has reviewed the refreshed draft and previews (issue #445). */
   reviewed?: boolean
+  /** Explicitly approved beat ids for the atomic apply batch (issue #446). Empty until approved. */
+  approvedBeats?: readonly string[]
+  /** Explicitly approved Shape draft ids for the atomic apply batch (issue #446). Empty until approved. */
+  approvedDrafts?: readonly string[]
 }
 
 /**
@@ -85,6 +90,8 @@ export function AiAnimationView({
   footprint = null,
   liveFingerprint = null,
   reviewed = false,
+  approvedBeats = [],
+  approvedDrafts = [],
 }: AiAnimationViewProps) {
   const analysis = useMemo(
     () => analyzeBeats(beats, toAnalysisSnapshot(context.animation)),
@@ -142,6 +149,17 @@ export function AiAnimationView({
       reviewed,
     })
   }, [sequence, context, validated, footprint, liveFingerprint, reviewed])
+  const applyPlan = useMemo(
+    () =>
+      planAnimationApply({
+        draft: sequence,
+        shapes: shapeDrafts,
+        revalidation,
+        approvedBeatIds: approvedBeats,
+        approvedDraftIds: approvedDrafts,
+      }),
+    [sequence, shapeDrafts, revalidation, approvedBeats, approvedDrafts],
+  )
 
   if (disabled) {
     return (
@@ -213,6 +231,7 @@ export function AiAnimationView({
       <AiRenderedViews views={rendered.views} truncated={rendered.truncated} />
       <AiAnimationSequence draft={sequence} />
       <AiAnimationRevalidation result={revalidation} />
+      <AiAnimationApply plan={applyPlan} />
     </div>
   )
 }
@@ -613,6 +632,90 @@ function AiAnimationRevalidation({ result }: { result: RevalidationResult }) {
       <div>
         Read-only revalidation — relevant live changes block stale proposals and identify affected
         work; refreshed analysis and previews require renewed review before approval.
+      </div>
+    </div>
+  )
+}
+
+function AiAnimationApply({ plan }: { plan: AnimationApplyPlan }) {
+  if (!plan.appliable && plan.skippedBeats.length === 0 && plan.skippedDrafts.length === 0) {
+    return (
+      <div data-testid="ai-animation-apply">
+        <div data-testid="ai-apply-empty">
+          No approved batch yet — approve coherent valid beats and accepted Shape drafts and the
+          atomic apply plan will appear here before anything changes the project.
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div data-testid="ai-animation-apply">
+      <div data-testid="ai-apply-summary">
+        Apply: {plan.summary.appliableBeats} appliable beat(s) · {plan.summary.appliableDrafts}{' '}
+        appliable draft(s) ({plan.summary.skippedBeats + plan.summary.skippedDrafts} remaining
+        unapplied). One approved batch is one Transaction with one undo entry.
+      </div>
+      {plan.appliableBeats.map((beat) => (
+        <div key={beat.beatId} data-testid={`ai-apply-beat-${beat.beatId}`}>
+          <div>
+            Beat {beat.order + 1}: {beat.label} — appliable (explicitly approved and valid)
+          </div>
+        </div>
+      ))}
+      {plan.skippedBeats.map((beat) => (
+        <div key={beat.beatId} data-testid={`ai-apply-beat-${beat.beatId}`}>
+          <div>
+            Beat {beat.order + 1}: {beat.label} — remains unapplied
+          </div>
+          <div>Reason: {beat.reason}</div>
+          <div>Next step: {beat.action}</div>
+        </div>
+      ))}
+      {plan.appliableDrafts.map((draft) => (
+        <div key={draft.draftId} data-testid={`ai-apply-draft-${draft.draftId}`}>
+          <div>
+            Shape draft {draft.draftId} — appliable (accepted review copy; the source stays
+            unchanged)
+          </div>
+        </div>
+      ))}
+      {plan.skippedDrafts.map((draft) => (
+        <div key={draft.draftId} data-testid={`ai-apply-draft-${draft.draftId}`}>
+          <div>Shape draft {draft.draftId} — remains unapplied</div>
+          <div>Reason: {draft.reason}</div>
+          <div>Next step: {draft.action}</div>
+        </div>
+      ))}
+      {plan.approvable ? (
+        <div data-testid="ai-apply-approvable">
+          Ready to apply — relevant-current and reviewed; one approved batch applies as one
+          Transaction with one undo entry.
+        </div>
+      ) : (
+        <div data-testid="ai-apply-blocked">
+          Not ready to apply —{' '}
+          {plan.blocked
+            ? 'stale work is blocked until refreshed and reviewed again.'
+            : 'review and approve valid work before applying.'}
+        </div>
+      )}
+      {plan.needsReview && (
+        <div data-testid="ai-apply-review">
+          Requires renewed review before applying — review the refreshed draft and previews, then
+          approve again.
+        </div>
+      )}
+      <div data-testid="ai-apply-save">
+        Applying changes the active Project in memory; persistence uses the existing Save flow —
+        nothing is saved implicitly.
+      </div>
+      {plan.warnings.map((warning, index) => (
+        <div key={index}>Apply note: {warning}</div>
+      ))}
+      <div>{plan.note}</div>
+      <div>
+        Read-only apply plan — only explicitly approved, valid beats and accepted Shape drafts
+        apply; blocked, rejected, stale, or dependency-incomplete work remains unapplied.
       </div>
     </div>
   )

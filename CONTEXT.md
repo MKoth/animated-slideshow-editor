@@ -278,6 +278,10 @@ _Avoid_: Re-validate (verb), stale check (coarse fingerprint only)
 The exact script-created output an Animation Script rerun would replace — tracks, placements, created nodes and data sources from the Compiled Footprint — shown with the affected beats and their dependencies before approval. Replacement requires approval; manual edits inside script-created subtrees are lost on re-run.
 _Avoid_: Footprint diff (raw ids without beat context), overwrite list
 
+**Approved Batch**:
+The explicitly approved valid beats and accepted Shape drafts an apply step adopts together — one batch executes as one Transaction with one undoable History Entry. Blocked, rejected, stale, or dependency-incomplete work remains unapplied. Applying changes the active Project in memory; persistence uses the existing Save flow (no implicit save).
+_Avoid_: Auto-apply (unreviewed mutation), partial transaction (split history)
+
 **Scale Group** (also **Group Node** alias):
 An empty scene node used as a parent to uniformly scale a rig and its animations without breaking relative motion; clips remain in local space and compose via world transform. No new component — reuses Rig Handle / Locator primitive.
 _Avoid_: Scale container, multiplier node
