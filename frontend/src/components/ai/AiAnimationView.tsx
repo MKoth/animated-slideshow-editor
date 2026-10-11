@@ -34,6 +34,13 @@ import {
   type RevalidationSnapshot,
 } from '../../ai/animationRevalidation'
 import { planAnimationApply, type AnimationApplyPlan } from '../../ai/animationApply'
+import {
+  describeSupportedConditions,
+  verifyPilot,
+  type PilotBeatEvidence,
+  type PilotVerification,
+  type SupportedConditions,
+} from '../../ai/pilotVerification'
 import type { CompiledFootprint } from '../../engine/compiledFootprint'
 
 interface AiAnimationViewProps {
@@ -160,6 +167,20 @@ export function AiAnimationView({
       }),
     [sequence, shapeDrafts, revalidation, approvedBeats, approvedDrafts],
   )
+  const pilot = useMemo(
+    () =>
+      verifyPilot({
+        requested: [...beats],
+        analysis,
+        views: rendered.views,
+        draft: sequence,
+        shapes: shapeDrafts,
+        revalidation,
+        applyPlan,
+      }),
+    [beats, analysis, rendered, sequence, shapeDrafts, revalidation, applyPlan],
+  )
+  const pilotConditions = useMemo(() => describeSupportedConditions(pilot), [pilot])
 
   if (disabled) {
     return (
@@ -232,6 +253,11 @@ export function AiAnimationView({
       <AiAnimationSequence draft={sequence} />
       <AiAnimationRevalidation result={revalidation} />
       <AiAnimationApply plan={applyPlan} />
+      <AiPilotVerification
+        requestedBeatIds={beats.map((beat) => beat.id)}
+        verification={pilot}
+        conditions={pilotConditions}
+      />
     </div>
   )
 }
@@ -719,4 +745,121 @@ function AiAnimationApply({ plan }: { plan: AnimationApplyPlan }) {
       </div>
     </div>
   )
+}
+
+function AiPilotVerification({
+  requestedBeatIds,
+  verification,
+  conditions,
+}: {
+  requestedBeatIds: readonly string[]
+  verification: PilotVerification
+  conditions: SupportedConditions
+}) {
+  const requestedPilotIds = requestedBeatIds.filter((id) =>
+    verification.beats.some((beat) => beat.beatId === id),
+  )
+  if (requestedPilotIds.length === 0) {
+    return (
+      <div data-testid="ai-pilot-verification">
+        <div data-testid="ai-pilot-empty">
+          No pilot route requested yet — describe the six-beat sofa-to-blackboard performance
+          (sleep, wake/stretch, get-down, room travel, turn/move toward the camera, sit) and the
+          end-to-end verification with its supported conditions will appear here.
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div data-testid="ai-pilot-verification">
+      <div data-testid="ai-pilot-summary">
+        Pilot: {verification.summary.draftable} draftable · {verification.summary.blocked} blocked (
+        {verification.summary.total} beats).{' '}
+        {verification.coversAllSix
+          ? 'Covers the six-beat sofa-to-blackboard route.'
+          : 'Partial pilot route — request all six beats for full coverage.'}{' '}
+        {verification.summary.visuallyVerified} visually verified · {verification.summary.appliable}{' '}
+        appliable.
+      </div>
+      {verification.beats.map((beat) => (
+        <div key={beat.beatId} data-testid={`ai-pilot-beat-${beat.beatId}`}>
+          <div>
+            {beat.label} — {formatPilotStatus(beat.status)}
+          </div>
+          {beat.targetNodeIds.length > 0 && (
+            <div>Target: {beat.targetNodeIds.map((id) => `[${id}]`).join(', ')}</div>
+          )}
+          {beat.reusableNames.map((name) => (
+            <div key={name}>Reusable: {name} (binding-compatible, not name-inferred)</div>
+          ))}
+          {beat.nameOnlyNames.length > 0 && (
+            <div>Name-only (not reusable): {beat.nameOnlyNames.join(', ')}</div>
+          )}
+          {beat.prerequisites.map((prerequisite, index) => (
+            <div key={index}>Prerequisite: {prerequisite}</div>
+          ))}
+          {beat.previewLabels.map((label, index) => (
+            <div key={index}>Preview: {label}</div>
+          ))}
+          {!beat.visuallyVerified && beat.reusableNames.length > 0 && (
+            <div>Visual fit unverified — request a focused rendered view before approving.</div>
+          )}
+          {beat.blockers.map((blocker, index) => (
+            <div key={index}>Blocked: {blocker}</div>
+          ))}
+          {beat.actions.map((action, index) => (
+            <div key={index}>Next step: {action}</div>
+          ))}
+          {beat.affected && <div>Affected (stale) — refresh and review again before approval.</div>}
+          {beat.appliable && <div>Appliable in the approved batch.</div>}
+        </div>
+      ))}
+      {verification.successes.map((success, index) => (
+        <div key={`success-${index}`}>Success: {success}</div>
+      ))}
+      {verification.limitations.map((limitation, index) => (
+        <div key={`limitation-${index}`}>Limitation: {limitation}</div>
+      ))}
+      <div data-testid="ai-pilot-conditions">
+        <div>Supported conditions — demonstrated:</div>
+        {conditions.demonstrated.map((entry, index) => (
+          <div key={`demonstrated-${index}`}>{entry}</div>
+        ))}
+        <div>Prerequisites:</div>
+        {conditions.prerequisites.map((entry, index) => (
+          <div key={`prerequisite-${index}`}>{entry}</div>
+        ))}
+        <div>Limitations:</div>
+        {conditions.limitations.map((entry, index) => (
+          <div key={`condition-limitation-${index}`}>{entry}</div>
+        ))}
+        <div>Support claim: {conditions.claim}</div>
+      </div>
+      <div data-testid="ai-pilot-review-gate">
+        {conditions.requiresHumanEvidenceReview
+          ? 'Expansion beyond the pilot requires a later human evidence review that approves an explicit support envelope — no broader claim is made from the pilot alone.'
+          : 'Human evidence review recorded.'}
+      </div>
+      <div>{verification.note}</div>
+      <div>
+        Read-only pilot evidence — successes, blockers, and limitations are recorded per beat;
+        equivalent rigs and scenes re-run this verification with their own stable node ids.
+      </div>
+    </div>
+  )
+}
+
+function formatPilotStatus(status: PilotBeatEvidence['status']): string {
+  switch (status) {
+    case 'ready':
+      return 'ready (compatible reusable motion)'
+    case 'needs-clarification':
+      return 'needs clarification (ambiguous target)'
+    case 'missing-motion':
+      return 'missing motion (no compatible reusable motion)'
+    case 'missing-prerequisite':
+      return 'blocked (missing prerequisite)'
+    case 'invalid':
+      return 'invalid (needs a precise fix)'
+  }
 }

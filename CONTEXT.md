@@ -282,6 +282,14 @@ _Avoid_: Footprint diff (raw ids without beat context), overwrite list
 The explicitly approved valid beats and accepted Shape drafts an apply step adopts together — one batch executes as one Transaction with one undoable History Entry. Blocked, rejected, stale, or dependency-incomplete work remains unapplied. Applying changes the active Project in memory; persistence uses the existing Save flow (no implicit save).
 _Avoid_: Auto-apply (unreviewed mutation), partial transaction (split history)
 
+**Pilot Verification**:
+The read-only end-to-end evidence over the six-beat sofa-to-blackboard route — sleep, wake/stretch, get-down, room travel, turn/move toward the camera, and sit — across beat analysis, labelled rendered views, the composed sequence, Shape drafts, revalidation, and the apply plan. Candidate walk/turn/sit reuse counts only on rig-binding compatibility confirmed by labelled previews; absent motion, camera setup, and pose geometry stay explicit as gaps and prerequisites. Equivalent rigs and scenes re-run the same evidence shape with their own stable Scene Node ids.
+_Avoid_: Pilot demo (a visual-only walkthrough), general support claim
+
+**Supported Animation Conditions**:
+The bounded support envelope evidenced by a pilot run — the demonstrated route, its prerequisites (stable-identity targets, human-authored camera setup, approved Shape drafts or artist-authored geometry, reviewed labelled previews), and its recorded successes, blockers, and limitations. Failures narrow the claim; expansion beyond the pilot requires a later human evidence review that approves an explicit support envelope.
+_Avoid_: Broad production claim, supported devices (unrelated)
+
 **Scale Group** (also **Group Node** alias):
 An empty scene node used as a parent to uniformly scale a rig and its animations without breaking relative motion; clips remain in local space and compose via world transform. No new component — reuses Rig Handle / Locator primitive.
 _Avoid_: Scale container, multiplier node
