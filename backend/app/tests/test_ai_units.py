@@ -253,6 +253,40 @@ def test_go_chat_uses_go_route_and_stable_session_header() -> None:
     assert requests[0].headers["user-agent"] == "animated-slideshow-editor/1.0"
 
 
+def test_chat_stream_reports_diagnostics_for_empty_content_debugging() -> None:
+    import httpx
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        _ = request
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"type": "response.created"}\n\n'
+                'data: {"type": "response.output_text.delta", "delta": "Hi"}\n\n'
+            ),
+        )
+
+    client = ZenClient("https://opencode.ai/zen/go/v1", "test-key")
+    diagnostics: dict[str, object] = {}
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        tokens = list(
+            client.chat_stream(
+                model="muse-spark-1.3-contributor",
+                messages=[{"role": "user", "content": "Say hi"}],
+                temperature=0.7,
+                max_tokens=100,
+                diagnostics=diagnostics,
+                timeout_s=120.0,
+                http_client=http_client,
+            )
+        )
+    assert tokens == ["Hi"]
+    assert diagnostics["streamChunks"] == 2
+    assert diagnostics["streamEventTypes"] == ["response.created", "response.output_text.delta"]
+    assert isinstance(diagnostics["streamBytes"], int) and diagnostics["streamBytes"] > 0
+    assert "response.output_text.delta" in str(diagnostics["streamSample"])
+
+
 def test_rendered_view_label_carries_slide_time_and_stable_ids() -> None:
     label = format_rendered_view_label(
         "Room", "s-1", 3.2, ["n-cat", "n-sofa"], "current", {"n-cat": "Cat", "n-sofa": "Sofa"}

@@ -170,7 +170,7 @@ class AiLibrary:
             endpoint=inference_endpoint(self._settings.opencode_base_url or DEFAULT_ZEN_URL),
             model=fallback_model,
             temperature=0.7,
-            max_tokens=2000,
+            max_tokens=8000,
             streaming=True,
             system_prompt=self._settings.ai_system_prompt_default or DEFAULT_SYSTEM_PROMPT,
             encrypted_key=None,

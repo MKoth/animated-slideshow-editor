@@ -117,12 +117,21 @@ export class ApiClient {
 async function errorDetail(response: Response): Promise<string | null> {
   try {
     const body: unknown = await response.json()
-    if (
-      typeof body === 'object' &&
-      body !== null &&
-      typeof (body as { detail?: unknown }).detail === 'string'
-    ) {
-      return (body as { detail: string }).detail
+    if (typeof body !== 'object' || body === null) return null
+    const detail = (body as { detail?: unknown }).detail
+    if (typeof detail === 'string') return detail
+    // Structured FastAPI detail, e.g. {code, message, logId} from AI endpoints.
+    if (typeof detail === 'object' && detail !== null) {
+      const { message, code, logId } = detail as {
+        message?: unknown
+        code?: unknown
+        logId?: unknown
+      }
+      if (typeof message === 'string') {
+        const prefix = typeof code === 'string' && code ? `${code}: ` : ''
+        const suffix = typeof logId === 'string' && logId ? ` (log ${logId})` : ''
+        return `${prefix}${message}${suffix}`
+      }
     }
   } catch {
     // the body is not JSON; keep the generic status message

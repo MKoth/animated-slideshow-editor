@@ -15,7 +15,7 @@ class AiSettingsRow(Base):
     endpoint: Mapped[str] = mapped_column(String(512), nullable=False)
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     temperature: Mapped[float] = mapped_column(nullable=False, default=0.7)
-    max_tokens: Mapped[int] = mapped_column(nullable=False, default=2000)
+    max_tokens: Mapped[int] = mapped_column(nullable=False, default=8000)
     streaming: Mapped[bool] = mapped_column(nullable=False, default=True)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     encrypted_key: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)

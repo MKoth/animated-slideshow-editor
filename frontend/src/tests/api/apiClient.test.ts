@@ -39,4 +39,29 @@ describe('ApiClient', () => {
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).detail).toBeNull()
   })
+
+  it('surfaces structured object detail with log id from AI endpoints', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: {
+            code: 'provider_error',
+            message: 'model did not return usable commands',
+            logId: 'draft-abc123',
+          },
+        }),
+        {
+          status: 502,
+        },
+      ),
+    )
+
+    const error = await client.get('/api/ai/proposals/draft').catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(502)
+    expect((error as ApiError).detail).toBe(
+      'provider_error: model did not return usable commands (log draft-abc123)',
+    )
+  })
 })

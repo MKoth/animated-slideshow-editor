@@ -5,6 +5,7 @@ import json
 import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.ai.failure_log import log_ai_failure
 from app.ai.library import (
     AiConversationNotFoundError,
     AiLibrary,
@@ -85,6 +87,17 @@ def _library(request: Request) -> AiLibrary:
     if library is None:
         raise HTTPException(status_code=500, detail="AI library is not configured")
     return library  # type: ignore[no-any-return]
+
+
+def _data_dir(request: Request) -> Path:
+    """Backend data dir for append-only logs; falls back to cwd-adjacent var/."""
+    settings = getattr(request.app.state, "settings", None)
+    data_dir = getattr(settings, "data_dir", None)
+    if isinstance(data_dir, Path):
+        return data_dir
+    if isinstance(data_dir, str) and data_dir:
+        return Path(data_dir)
+    return Path("var")
 
 
 # -- settings ----------------------------------------------------------
@@ -376,8 +389,11 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
         zen = ZenClient(row.endpoint, key)
         collected: list[str] = []
         reported_usage: dict[str, int] = {}
+        stream_diag: dict[str, Any] = {}
         try:
             if row.streaming:
+                # Generous time-to-first-token: large scene prompts can keep a
+                # reasoning model silent for a while (seen: >15s stalls).
                 for token in zen.chat_stream(
                     model=row.model,
                     messages=zen_messages,
@@ -385,6 +401,8 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                     max_tokens=row.max_tokens,
                     session_id=body.conversationId,
                     usage=reported_usage,
+                    diagnostics=stream_diag,
+                    timeout_s=120.0,
                 ):
                     collected.append(token)
                     yield _sse("token", {"delta": token, "messageId": assistant_id})
@@ -410,7 +428,24 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
             partial = "".join(collected)
             combined = f"{partial}\n\n{text}" if partial else text
             library.update_message_content(assistant_id, combined, error_code=code)
-            yield _sse("error", {"code": code, "message": text, "messageId": assistant_id})
+            log_id = log_ai_failure(
+                _data_dir(request),
+                operation="chat",
+                code=code,
+                http_status=exc.status,
+                model=row.model,
+                endpoint=row.endpoint,
+                provider_status=exc.status,
+                provider_body=exc.body,
+                message_excerpt=current,
+                conversation_id=body.conversationId,
+                message_id=assistant_id,
+                extra={"partialChars": len(partial), "streaming": row.streaming},
+            )
+            yield _sse(
+                "error",
+                {"code": code, "message": text, "messageId": assistant_id, "logId": log_id},
+            )
             return
         except GeneratorExit:
             # Client pressed Stop: persist the partial response as-is with a stopped marker.
@@ -423,9 +458,32 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
             combined = f"{partial}\n\n{text}" if partial else text
             library.update_message_content(assistant_id, combined, error_code="provider_error")
             logger.warning("ai zen network error: %s", exc)
+            log_id = log_ai_failure(
+                _data_dir(request),
+                operation="chat",
+                code="provider_error",
+                http_status=502,
+                model=row.model,
+                endpoint=row.endpoint,
+                message_excerpt=current,
+                conversation_id=body.conversationId,
+                message_id=assistant_id,
+                extra={
+                    "reason": "network error",
+                    "errorType": type(exc).__name__,
+                    "error": str(exc)[:500],
+                    "partialChars": len(partial),
+                    "streaming": row.streaming,
+                },
+            )
             yield _sse(
                 "error",
-                {"code": "provider_error", "message": text, "messageId": assistant_id},
+                {
+                    "code": "provider_error",
+                    "message": text,
+                    "messageId": assistant_id,
+                    "logId": log_id,
+                },
             )
             return
         except Exception as exc:
@@ -434,20 +492,82 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
             combined = f"{partial}\n\n{text}" if partial else text
             library.update_message_content(assistant_id, combined, error_code="provider_error")
             logger.warning("ai zen unexpected error: %s", exc)
+            log_id = log_ai_failure(
+                _data_dir(request),
+                operation="chat",
+                code="provider_error",
+                http_status=502,
+                model=row.model,
+                endpoint=row.endpoint,
+                message_excerpt=current,
+                conversation_id=body.conversationId,
+                message_id=assistant_id,
+                extra={
+                    "reason": "unexpected error",
+                    "errorType": type(exc).__name__,
+                    "error": str(exc)[:500],
+                    "partialChars": len(partial),
+                    "streaming": row.streaming,
+                },
+            )
             yield _sse(
                 "error",
-                {"code": "provider_error", "message": text, "messageId": assistant_id},
+                {
+                    "code": "provider_error",
+                    "message": text,
+                    "messageId": assistant_id,
+                    "logId": log_id,
+                },
             )
             return
 
         full = "".join(collected)
         if not full.strip():
-            # Malformed/empty provider content maps to a retryable provider error.
-            text = _error_assistant_text("provider_error", "Provider error — retry.")
-            library.update_message_content(assistant_id, text, error_code="provider_error")
+            # A truncated stream (reasoning models can exhaust max tokens
+            # before emitting visible text) is a settings problem, not a
+            # provider outage — say so instead of "Provider error — retry."
+            event_types = stream_diag.get("streamEventTypes", [])
+            truncated = isinstance(event_types, list) and (
+                "response.incomplete" in event_types or "response.failed" in event_types
+            )
+            if truncated:
+                code = "response_truncated"
+                text = (
+                    "The model ran out of output tokens mid-reply — raise Max tokens "
+                    "in AI Settings and retry."
+                )
+            else:
+                code = "provider_error"
+                text = _error_assistant_text(code, "Provider error — retry.")
+            library.update_message_content(assistant_id, text, error_code=code)
+            log_id = log_ai_failure(
+                _data_dir(request),
+                operation="chat",
+                code=code,
+                http_status=502,
+                model=row.model,
+                endpoint=row.endpoint,
+                message_excerpt=current,
+                conversation_id=body.conversationId,
+                message_id=assistant_id,
+                extra={
+                    "reason": "empty provider content",
+                    "truncated": truncated,
+                    "streaming": row.streaming,
+                    "streamBytes": stream_diag.get("streamBytes", 0),
+                    "streamChunks": stream_diag.get("streamChunks", 0),
+                    "streamEventTypes": stream_diag.get("streamEventTypes", []),
+                    "streamSample": stream_diag.get("streamSample", ""),
+                },
+            )
             yield _sse(
                 "error",
-                {"code": "provider_error", "message": text, "messageId": assistant_id},
+                {
+                    "code": code,
+                    "message": text,
+                    "messageId": assistant_id,
+                    "logId": log_id,
+                },
             )
             return
         usage_kwargs: dict[str, int] = {
@@ -2822,16 +2942,44 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
         code, friendly = friendly_error_for_status(exc.status, exc.body)
         text = _error_assistant_text(code, friendly)
         library.append_message(body.conversationId, "assistant", text, error_code=code)
+        log_id = log_ai_failure(
+            _data_dir(request),
+            operation="proposals/draft",
+            code=code,
+            http_status=409 if code != "provider_error" else 502,
+            model=row.model,
+            endpoint=row.endpoint,
+            provider_status=exc.status,
+            provider_body=exc.body,
+            message_excerpt=message.content,
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            message_id=body.messageId,
+        )
         raise HTTPException(
             status_code=409 if code != "provider_error" else 502,
-            detail={"code": code, "message": text},
+            detail={"code": code, "message": text, "logId": log_id},
         ) from exc
     except Exception as exc:
         logger.warning("ai proposal draft unexpected error: %s", exc)
         text = _error_assistant_text("provider_error", "Provider error — retry.")
         library.append_message(body.conversationId, "assistant", text, error_code="provider_error")
+        log_id = log_ai_failure(
+            _data_dir(request),
+            operation="proposals/draft",
+            code="provider_error",
+            http_status=502,
+            model=row.model,
+            endpoint=row.endpoint,
+            message_excerpt=message.content,
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            message_id=body.messageId,
+            extra={"errorType": type(exc).__name__, "error": str(exc)[:500]},
+        )
         raise HTTPException(
-            status_code=502, detail={"code": "provider_error", "message": text}
+            status_code=502,
+            detail={"code": "provider_error", "message": text, "logId": log_id},
         ) from exc
 
     title_value = raw.get("title")
@@ -2848,11 +2996,39 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
                 break
             commands.append({str(key): value for key, value in entry.items()})
     if not commands_valid:
-        text = _error_assistant_text("provider_error", "Provider error — retry.")
-        library.append_message(body.conversationId, "assistant", text, error_code="provider_error")
+        text = (
+            "This message has no actionable edit to draft — ask the assistant "
+            "for a concrete change, then draft again."
+        )
+        library.append_message(
+            body.conversationId, "assistant", text, error_code="no_actionable_edit"
+        )
+        log_id = log_ai_failure(
+            _data_dir(request),
+            operation="proposals/draft",
+            code="no_actionable_edit",
+            http_status=422,
+            model=row.model,
+            endpoint=row.endpoint,
+            message_excerpt=message.content,
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            message_id=body.messageId,
+            extra={
+                "reason": "model did not return usable commands",
+                "rawKeys": sorted(raw.keys()),
+                "titleType": type(title_value).__name__,
+                "commandsType": type(commands_raw).__name__,
+                "commandsLen": len(commands_raw) if isinstance(commands_raw, list) else 0,
+            },
+        )
         raise HTTPException(
-            status_code=502,
-            detail={"code": "provider_error", "message": "model did not return usable commands"},
+            status_code=422,
+            detail={
+                "code": "no_actionable_edit",
+                "message": text,
+                "logId": log_id,
+            },
         ) from None
     try:
         created = library.create_proposal(

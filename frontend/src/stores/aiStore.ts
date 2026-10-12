@@ -26,6 +26,7 @@ import {
   type AiScenarioSummary,
 } from '../api/aiApi'
 import { streamAiChat } from '../ai/sse'
+import { ApiError } from '../api/apiClient'
 
 export type AiBackendStatus = 'idle' | 'loading' | 'streaming' | 'unavailable'
 
@@ -293,6 +294,13 @@ function isBackendDown(error: unknown): boolean {
   if (error instanceof Error && /failed to fetch|network|load failed/i.test(error.message))
     return true
   return false
+}
+
+/** Prefer the backend's structured detail over the generic status message. */
+function requestErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError && error.detail) return error.detail
+  if (error instanceof Error) return error.message
+  return fallback
 }
 
 export const useAiStore = create<AiState>()(
@@ -1646,7 +1654,7 @@ export const useAiStore = create<AiState>()(
           set({
             proposalError: {
               code: 'proposal_draft_failed',
-              message: error instanceof Error ? error.message : 'Proposal drafting failed.',
+              message: requestErrorMessage(error, 'Proposal drafting failed.'),
             },
           })
           return null

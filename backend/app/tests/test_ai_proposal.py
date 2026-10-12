@@ -236,7 +236,88 @@ def test_draft_proposal_rejects_unusable_model_output(
             "context": {},
         },
     )
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["code"] == "no_actionable_edit"
+
+
+def test_draft_failure_writes_redacted_log_with_log_id(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    """Every draft 502 must leave a correlatable, secret-free log line."""
+    from app.ai.zen import ZenFetchError
+
+    _make_project(client, "p-prop-draft-log")
+    conv_id = _make_conversation(client, "p-prop-draft-log")
+    assistant_id = _assistant_message_id(client, conv_id)
+    _enable_key(client, "sk-test-key-1234")
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+
+    import app.api.ai as ai_api
+
+    def _boom(**kwargs: Any) -> dict[str, Any]:
+        _ = kwargs
+        raise ZenFetchError(503, "upstream exploded")
+
+    monkeypatch.setattr(ai_api, "_generate_proposal_structured", _boom)
+
+    r = client.post(
+        "/api/ai/proposals/draft",
+        json={
+            "projectId": "p-prop-draft-log",
+            "conversationId": conv_id,
+            "messageId": assistant_id,
+            "context": {},
+        },
+    )
     assert r.status_code == 502, r.text
+    detail = r.json()["detail"]
+    log_id = detail.get("logId")
+    assert isinstance(log_id, str) and log_id.startswith("draft-"), detail
+
+    log_file = settings.data_dir / "ai_provider_failures.jsonl"
+    assert log_file.exists()
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    event = json.loads(lines[0])
+    assert event["logId"] == log_id
+    assert event["operation"] == "proposals/draft"
+    assert event["httpStatus"] == 502
+    assert event["providerStatus"] == 503
+    assert "upstream exploded" in event["providerBodySnippet"]
+    assert "sk-test-key-1234" not in log_file.read_text(encoding="utf-8")
+
+
+def test_draft_unusable_commands_failure_carries_log_id(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    _make_project(client, "p-prop-draft-log2")
+    conv_id = _make_conversation(client, "p-prop-draft-log2")
+    assistant_id = _assistant_message_id(client, conv_id)
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+    _fake_draft(monkeypatch, {"title": "No commands here"})
+
+    r = client.post(
+        "/api/ai/proposals/draft",
+        json={
+            "projectId": "p-prop-draft-log2",
+            "conversationId": conv_id,
+            "messageId": assistant_id,
+            "context": {},
+        },
+    )
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "no_actionable_edit"
+    assert "no actionable edit" in detail["message"]
+    assert isinstance(detail.get("logId"), str)
+
+    log_file = settings.data_dir / "ai_provider_failures.jsonl"
+    event = json.loads(log_file.read_text(encoding="utf-8").splitlines()[-1])
+    assert event["logId"] == detail["logId"]
+    assert event["extra"]["reason"] == "model did not return usable commands"
 
 
 def test_invalid_type_blocked_with_fixable_message(client: TestClient) -> None:

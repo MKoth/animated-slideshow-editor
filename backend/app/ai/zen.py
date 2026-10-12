@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -352,12 +353,16 @@ class ZenClient:
         session_id: str | None = None,
         http_client: httpx.Client | None = None,
         usage: dict[str, int] | None = None,
+        diagnostics: dict[str, Any] | None = None,
+        timeout_s: float | None = None,
     ) -> Iterator[str]:
         """Yield content deltas from a streaming chat/completions call.
 
         When `usage` is provided it is mutated in place with the real provider
         token counts parsed from the stream (last snapshot wins); absent or
-        unreported usage leaves it empty.
+        unreported usage leaves it empty. When `diagnostics` is provided it is
+        filled in with stream shape info (bytes, chunks, event types, a head
+        sample) so empty-content failures can be diagnosed from the log.
         """
         path, payload = inference_request(
             model=model,
@@ -366,8 +371,14 @@ class ZenClient:
             max_tokens=max_tokens,
             stream=True,
         )
-        client = http_client or httpx.Client(timeout=self._timeout)
+        client = http_client or httpx.Client(
+            timeout=timeout_s if timeout_s is not None else self._timeout
+        )
         close = http_client is None
+        diag_bytes = 0
+        diag_chunks = 0
+        diag_sample = ""
+        diag_types: set[str] = set()
         try:
             with client.stream(
                 "POST",
@@ -380,14 +391,43 @@ class ZenClient:
                     raise ZenFetchError(response.status_code, body)
                 buffer = ""
                 for text in response.iter_text():
+                    diag_bytes += len(text)
+                    if len(diag_sample) < 1000:
+                        diag_sample += text[: 1000 - len(diag_sample)]
                     buffer += text
                     while "\n\n" in buffer:
                         chunk, buffer = buffer.split("\n\n", 1)
                         raw = chunk + "\n\n"
+                        diag_chunks += 1
+                        for line in chunk.splitlines():
+                            line = line.strip()
+                            if not line.startswith("data:"):
+                                continue
+                            data = line[len("data:") :].strip()
+                            if data == "[DONE]":
+                                continue
+                            try:
+                                payload_json = json.loads(data)
+                            except json.JSONDecodeError:
+                                continue
+                            event_type = (
+                                payload_json.get("type") if isinstance(payload_json, dict) else None
+                            )
+                            if isinstance(event_type, str):
+                                diag_types.add(event_type)
                         if usage is not None:
                             merge_usage(usage, parse_sse_usage(raw))
                         yield from parse_sse_tokens(raw)
         finally:
+            if diagnostics is not None:
+                diagnostics.update(
+                    {
+                        "streamBytes": diag_bytes,
+                        "streamChunks": diag_chunks,
+                        "streamEventTypes": sorted(diag_types),
+                        "streamSample": diag_sample[:1000],
+                    }
+                )
             if close:
                 client.close()
 

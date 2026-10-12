@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from typing import Any
 
@@ -191,3 +192,48 @@ def test_chat_provider_errors_map_and_preserve_history(
         json={"conversationId": conv["id"], "message": "again", "mode": "send", "context": {}},
     )
     assert "limit_exceeded" in r2.text
+
+
+def test_chat_truncated_stream_says_raise_max_tokens(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    """An incomplete responses stream must not masquerade as a provider error."""
+    _enable_key(client)
+    _fake_models(monkeypatch, ["muse-spark-1.3-contributor"])
+    client.put("/api/ai/settings", json={"model": "muse-spark-1.3-contributor"})
+
+    def _stream_incomplete(self: ZenClient, **kwargs: Any) -> Iterator[str]:
+        _ = self
+        diagnostics = kwargs.get("diagnostics")
+        assert isinstance(diagnostics, dict)
+        diagnostics.update(
+            {
+                "streamBytes": 1974,
+                "streamChunks": 4,
+                "streamEventTypes": [
+                    "response.created",
+                    "response.in_progress",
+                    "response.incomplete",
+                ],
+                "streamSample": 'data: {"type":"response.incomplete"}\n\n',
+            }
+        )
+        yield from ()
+
+    monkeypatch.setattr(ZenClient, "chat_stream", _stream_incomplete)
+
+    conv = client.post("/api/ai/conversations", json={"projectId": "p-1"}).json()
+    r = client.post(
+        "/api/ai/chat",
+        json={"conversationId": conv["id"], "message": "Hi", "mode": "send", "context": {}},
+    )
+    assert r.status_code == 200
+    assert "response_truncated" in r.text
+    assert "Max tokens" in r.text
+    msgs = client.get(f"/api/ai/conversations/{conv['id']}/messages").json()
+    assert msgs[-1]["errorCode"] == "response_truncated"
+
+    log_file = settings.data_dir / "ai_provider_failures.jsonl"
+    event = json.loads(log_file.read_text(encoding="utf-8").splitlines()[-1])
+    assert event["code"] == "response_truncated"
+    assert event["extra"]["truncated"] is True

@@ -74,7 +74,7 @@ function unattachedProposal(projectId: string) {
   }
 }
 
-function installFetch(projectId: string) {
+function installFetch(projectId: string, draftFailure = false) {
   const conv = { id: 'c-1', projectId, title: 'Chat', mode: 'lesson', modified: now() }
   const messages = [userMessage, assistantMessage]
   const proposals = [attachedProposal(projectId), unattachedProposal(projectId)]
@@ -82,6 +82,19 @@ function installFetch(projectId: string) {
     const path = String(url)
     const method = (init as RequestInit | undefined)?.method ?? 'GET'
     if (method === 'POST' && path === '/api/ai/proposals/draft') {
+      if (draftFailure) {
+        return new Response(
+          JSON.stringify({
+            detail: {
+              code: 'no_actionable_edit',
+              message:
+                'This message has no actionable edit to draft — ask the assistant for a concrete change, then draft again.',
+              logId: 'draft-test123',
+            },
+          }),
+          { status: 422 },
+        )
+      }
       const body = JSON.parse(String((init as RequestInit)?.body ?? '{}'))
       return new Response(
         JSON.stringify({
@@ -140,9 +153,9 @@ function installFetch(projectId: string) {
   })
 }
 
-function renderInline() {
+function renderInline(draftFailure = false) {
   const { value, projectId } = seedEngine()
-  installFetch(projectId)
+  installFetch(projectId, draftFailure)
   useAiStore.setState({
     conversations: [{ id: 'c-1', projectId, title: 'Chat', mode: 'lesson', modified: now() }],
     messagesById: { 'c-1': [userMessage, assistantMessage] },
@@ -254,6 +267,15 @@ describe('AiPanel inline proposals', () => {
     // The drafted card now renders inline under its message.
     expect(screen.getByTestId('ai-message-proposal-prop-drafted')).toHaveTextContent(
       'Drafted slide',
+    )
+  })
+
+  it('shows the backend reason when the message has no actionable edit', async () => {
+    renderInline(true)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('ai-message-draft-m-1'))
+    expect(await screen.findByTestId('ai-message-draft-error-m-1')).toHaveTextContent(
+      'no actionable edit',
     )
   })
 })
