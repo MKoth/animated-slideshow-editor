@@ -1,8 +1,4 @@
-"""opencode.ai Zen gateway client: OpenAI-compatible chat/completions + models catalog.
-
-Family routing is pinned: always POST {endpoint}/chat/completions. No
-/responses or /messages branching — a different family needs a spec amendment.
-"""
+"""Client for the OpenCode inference API and its model-family endpoints."""
 
 # ruff: noqa: BLE001, S112
 from __future__ import annotations
@@ -15,6 +11,90 @@ from dataclasses import dataclass
 import httpx
 
 logger = logging.getLogger(__name__)
+DEFAULT_GO_ENDPOINT = "https://opencode.ai/zen/go/v1"
+
+
+def opencode_headers(api_key: str, session_id: str | None = None) -> dict[str, str]:
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "User-Agent": "animated-slideshow-editor/1.0",
+    }
+    if session_id:
+        headers["x-opencode-session"] = session_id
+    return headers
+
+
+def inference_endpoint(endpoint: str) -> str:
+    """Translate older OpenCode URLs to the OpenCode Go API endpoint."""
+    normalized = endpoint.rstrip("/")
+    if normalized in {
+        "https://opencode.ai/zen/v1",
+        "https://opencode.ai/zen",
+        "https://opencode.ai",
+        "https://opencode.ai/inference",
+    }:
+        return DEFAULT_GO_ENDPOINT
+    return normalized
+
+
+def canonical_model_id(model: str) -> str:
+    """Remove legacy provider prefixes from model IDs stored by older builds."""
+    for prefix in ("anthropic/", "openai/", "google/", "opencode/"):
+        if model.startswith(prefix):
+            return model[len(prefix) :]
+    return model
+
+
+def model_api_family(model: str) -> str:
+    model_id = canonical_model_id(model).lower()
+    if model_id.startswith(("claude-", "qwen", "minimax-")):
+        return "anthropic"
+    if model_id.startswith(("gpt-", "grok-", "muse-spark-")):
+        return "responses"
+    return "openai"
+
+
+def inference_request(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+    stream: bool,
+) -> tuple[str, dict[str, object]]:
+    """Build the URL path and request body for a model's documented API family."""
+    model_id = canonical_model_id(model)
+    family = model_api_family(model_id)
+    if family == "anthropic":
+        system = "\n".join(m["content"] for m in messages if m["role"] == "system")
+        payload: dict[str, object] = {
+            "model": model_id,
+            "messages": [m for m in messages if m["role"] != "system"],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": stream,
+        }
+        if system:
+            payload["system"] = system
+        return "/messages", payload
+    if family == "responses":
+        payload = {
+            "model": model_id,
+            "input": [{"role": m["role"], "content": m["content"]} for m in messages],
+            "temperature": temperature,
+            "max_output_tokens": max_tokens,
+            "stream": stream,
+        }
+        return "/responses", payload
+    payload = chat_completions_payload(
+        model=model_id,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=stream,
+    )
+    return "/chat/completions", payload
 
 
 @dataclass(frozen=True)
@@ -27,6 +107,11 @@ class ZenError:
 def friendly_error_for_status(status: int, body_text: str = "") -> tuple[str, str]:
     """Map provider failures to (code, user-facing message) per Spec 12 R17."""
     lowered = (body_text or "").lower()
+    if status == 403 and "freetiererror" in lowered:
+        return (
+            "model_access_denied",
+            "OpenCode rejected this model for your Go plan. Check that the model is included in your plan, then retry.",
+        )
     if status == 401:
         return (
             "invalid_or_exhausted",
@@ -35,7 +120,7 @@ def friendly_error_for_status(status: int, body_text: str = "") -> tuple[str, st
     if status == 402:
         return (
             "limit_exceeded",
-            "Credit limit exceeded — top up and retry.",
+            "OpenCode Go usage limit reached — check your 5-hour, weekly, and monthly usage in Console; wait for a reset or enable balance fallback.",
         )
     if status == 429:
         return ("rate_limited", "Rate-limited — wait a moment and retry.")
@@ -94,6 +179,23 @@ def parse_sse_tokens(raw: str) -> list[str]:
                 continue
             # OpenAI chat chunk shape
             try:
+                delta = payload.get("delta", {}) or {}
+                if payload.get("type") == "content_block_delta":
+                    text = delta.get("text")
+                    if isinstance(text, str) and text:
+                        tokens.append(text)
+                        continue
+                if payload.get("type") == "response.output_text.delta":
+                    text = payload.get("delta")
+                    if isinstance(text, str) and text:
+                        tokens.append(text)
+                        continue
+                candidates = payload.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts and isinstance(parts[0].get("text"), str):
+                        tokens.append(parts[0]["text"])
+                        continue
                 choices = payload.get("choices", [])
                 if choices:
                     delta = choices[0].get("delta", {}) or {}
@@ -113,9 +215,12 @@ class ZenClient:
     """Thin wrapper over httpx so tests can inject a MockTransport."""
 
     def __init__(self, endpoint: str, api_key: str, timeout_s: float = 15.0) -> None:
-        self._endpoint = endpoint.rstrip("/")
+        self._endpoint = inference_endpoint(endpoint)
         self._api_key = api_key
         self._timeout = timeout_s
+
+    def _headers(self, session_id: str | None = None) -> dict[str, str]:
+        return opencode_headers(self._api_key, session_id)
 
     def list_models(self, http_client: httpx.Client | None = None) -> list[str]:
         client = http_client or httpx.Client(timeout=self._timeout)
@@ -123,7 +228,7 @@ class ZenClient:
         try:
             response = client.get(
                 f"{self._endpoint}/models",
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers=self._headers(),
             )
             if response.status_code != 200:
                 raise ZenFetchError(response.status_code, response.text)
@@ -133,9 +238,9 @@ class ZenClient:
             if isinstance(raw, list):
                 for entry in raw:
                     if isinstance(entry, str):
-                        models.append(entry)
+                        models.append(canonical_model_id(entry))
                     elif isinstance(entry, dict) and isinstance(entry.get("id"), str):
-                        models.append(entry["id"])
+                        models.append(canonical_model_id(entry["id"]))
             return models
         finally:
             if close:
@@ -148,10 +253,11 @@ class ZenClient:
         messages: list[dict[str, str]],
         temperature: float,
         max_tokens: int,
+        session_id: str | None = None,
         http_client: httpx.Client | None = None,
     ) -> Iterator[str]:
         """Yield content deltas from a streaming chat/completions call."""
-        payload = chat_completions_payload(
+        path, payload = inference_request(
             model=model,
             messages=messages,
             temperature=temperature,
@@ -163,11 +269,8 @@ class ZenClient:
         try:
             with client.stream(
                 "POST",
-                f"{self._endpoint}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
+                f"{self._endpoint}{path}",
+                headers=self._headers(session_id),
                 json=payload,
             ) as response:
                 if response.status_code != 200:
@@ -190,9 +293,10 @@ class ZenClient:
         messages: list[dict[str, str]],
         temperature: float,
         max_tokens: int,
+        session_id: str | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> AsyncIterator[str]:
-        payload = chat_completions_payload(
+        path, payload = inference_request(
             model=model,
             messages=messages,
             temperature=temperature,
@@ -204,11 +308,8 @@ class ZenClient:
         try:
             async with client.stream(
                 "POST",
-                f"{self._endpoint}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
+                f"{self._endpoint}{path}",
+                headers=self._headers(session_id),
                 json=payload,
             ) as response:
                 if response.status_code != 200:

@@ -52,7 +52,16 @@ from app.ai.schemas import (
     AiScenarioUpdate,
     AiSettingsUpdate,
 )
-from app.ai.zen import ZenClient, ZenFetchError, friendly_error_for_status
+from app.ai.zen import (
+    ZenClient,
+    ZenFetchError,
+    canonical_model_id,
+    friendly_error_for_status,
+    inference_endpoint,
+    inference_request,
+    model_api_family,
+    opencode_headers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +231,7 @@ def _error_assistant_text(code: str, fallback: str) -> str:
         "limit_exceeded": "Credit limit exceeded — top up and retry.",
         "rate_limited": "Rate-limited — wait a moment and retry.",
         "model_unlisted": "Model no longer listed — reselect a model in AI Settings, then retry.",
+        "model_access_denied": "OpenCode rejected this model for your Go plan. Check that the model is included in your plan, then retry.",
         "provider_error": "Provider error — retry.",
     }
     return mapping.get(code, fallback)
@@ -292,7 +302,9 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
             return
 
         live_models, _ = _resolve_live_models(row.endpoint, key, fallback_models or [row.model])
-        if row.model not in live_models:
+        if canonical_model_id(row.model) not in {
+            canonical_model_id(model) for model in live_models
+        }:
             text = _error_assistant_text("model_unlisted", "")
             assistant = library.append_message(
                 body.conversationId, "assistant", text, error_code="model_unlisted"
@@ -336,6 +348,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                     messages=zen_messages,
                     temperature=row.temperature,
                     max_tokens=row.max_tokens,
+                    session_id=body.conversationId,
                 ):
                     collected.append(token)
                     yield _sse("token", {"delta": token, "messageId": assistant_id})
@@ -347,6 +360,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                     messages=zen_messages,
                     temperature=row.temperature,
                     max_tokens=row.max_tokens,
+                    session_id=body.conversationId,
                 )
                 collected.append(content)
                 yield _sse("token", {"delta": content, "messageId": assistant_id})
@@ -413,10 +427,9 @@ def _chat_once_non_streaming(
     messages: list[dict[str, str]],
     temperature: float,
     max_tokens: int,
+    session_id: str,
 ) -> str:
-    from app.ai.zen import chat_completions_payload
-
-    payload = chat_completions_payload(
+    path, payload = inference_request(
         model=model,
         messages=messages,
         temperature=temperature,
@@ -425,11 +438,8 @@ def _chat_once_non_streaming(
     )
     try:
         response = httpx.post(
-            f"{endpoint.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
+            f"{inference_endpoint(endpoint)}{path}",
+            headers=opencode_headers(api_key, session_id),
             json=payload,
             timeout=30.0,
         )
@@ -439,13 +449,63 @@ def _chat_once_non_streaming(
         raise ZenFetchError(response.status_code, response.text)
     try:
         data = response.json()
-        choices = data.get("choices", [])
-        content = choices[0].get("message", {}).get("content", "")
+        content = _inference_response_text(data)
         if not isinstance(content, str):
             return ""
         return content
     except Exception:
         return ""
+
+
+def _inference_response_text(data: dict[str, Any]) -> str:
+    if "output" in data:
+        return "".join(
+            part.get("text", "")
+            for item in data.get("output", [])
+            if item.get("type") == "message"
+            for part in item.get("content", [])
+        )
+    if isinstance(data.get("content"), list):
+        return "".join(part.get("text", "") for part in data["content"])
+    if data.get("candidates"):
+        return "".join(
+            part.get("text", "")
+            for part in data["candidates"][0].get("content", {}).get("parts", [])
+        )
+    choices = data.get("choices", [])
+    if choices:
+        content = choices[0].get("message", {}).get("content", "")
+        return content if isinstance(content, str) else ""
+    return ""
+
+
+def _structured_inference_payload(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+    name: str,
+    schema: dict[str, object],
+) -> tuple[str, dict[str, object]]:
+    path, payload = inference_request(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=False,
+    )
+    family = model_api_family(model)
+    if family == "anthropic":
+        payload["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
+    elif family == "responses":
+        payload["text"] = {"format": {"type": "json_schema", "name": name, "schema": schema}}
+    else:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": name, "schema": schema},
+        }
+    return path, payload
 
 
 # -- lesson plans --------------------------------------------------------
@@ -459,26 +519,21 @@ def _generate_plan_structured(
     messages: list[dict[str, str]],
     temperature: float,
     max_tokens: int,
+    session_id: str,
 ) -> dict[str, object]:
     """Call Zen chat/completions with a Lesson Plan JSON schema. Mock seam for tests."""
-    payload: dict[str, object] = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "stream": False,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {"name": "lesson_plan", "schema": PLAN_JSON_SCHEMA},
-        },
-    }
+    path, payload = _structured_inference_payload(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        name="lesson_plan",
+        schema=PLAN_JSON_SCHEMA,
+    )
     try:
         response = httpx.post(
-            f"{endpoint.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
+            f"{inference_endpoint(endpoint)}{path}",
+            headers=opencode_headers(api_key, session_id),
             json=payload,
             timeout=60.0,
         )
@@ -488,11 +543,7 @@ def _generate_plan_structured(
         raise ZenFetchError(response.status_code, response.text)
     try:
         data = response.json()
-        choices = data.get("choices", [])
-        if not choices or not isinstance(choices[0], dict):
-            raise TypeError("empty plan choices")
-        message = choices[0].get("message", {})
-        content = message.get("content", "") if isinstance(message, dict) else ""
+        content = _inference_response_text(data)
         if not isinstance(content, str) or not content.strip():
             raise TypeError("empty plan content")
         parsed: object = json.loads(content)
@@ -586,7 +637,7 @@ def post_ai_plan(request: Request, body: AiPlanCreate) -> dict[str, object]:
         raise HTTPException(status_code=409, detail={"code": "missing_key", "message": text})
 
     live_models, _ = _resolve_live_models(row.endpoint, key, fallback_models or [row.model])
-    if row.model not in live_models:
+    if canonical_model_id(row.model) not in {canonical_model_id(model) for model in live_models}:
         text = _error_assistant_text("model_unlisted", "")
         library.append_message(body.conversationId, "assistant", text, error_code="model_unlisted")
         raise HTTPException(status_code=409, detail={"code": "model_unlisted", "message": text})
@@ -609,6 +660,7 @@ def post_ai_plan(request: Request, body: AiPlanCreate) -> dict[str, object]:
             messages=zen_messages,
             temperature=row.temperature,
             max_tokens=row.max_tokens,
+            session_id=body.conversationId,
         )
     except ZenFetchError as exc:
         code, friendly = friendly_error_for_status(exc.status, exc.body)
@@ -767,28 +819,23 @@ def _generate_scenario_structured(
     messages: list[dict[str, str]],
     temperature: float,
     max_tokens: int,
+    session_id: str,
 ) -> dict[str, object]:
     """Call Zen chat/completions with an Action Scenario JSON schema. Mock seam for tests."""
     from app.ai.scenarios import SCENARIO_JSON_SCHEMA
 
-    payload: dict[str, object] = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "stream": False,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {"name": "action_scenario", "schema": SCENARIO_JSON_SCHEMA},
-        },
-    }
+    path, payload = _structured_inference_payload(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        name="action_scenario",
+        schema=SCENARIO_JSON_SCHEMA,
+    )
     try:
         response = httpx.post(
-            f"{endpoint.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
+            f"{inference_endpoint(endpoint)}{path}",
+            headers=opencode_headers(api_key, session_id),
             json=payload,
             timeout=60.0,
         )
@@ -798,11 +845,7 @@ def _generate_scenario_structured(
         raise ZenFetchError(response.status_code, response.text)
     try:
         data = response.json()
-        choices = data.get("choices", [])
-        if not choices or not isinstance(choices[0], dict):
-            raise TypeError("empty scenario choices")
-        message = choices[0].get("message", {})
-        content = message.get("content", "") if isinstance(message, dict) else ""
+        content = _inference_response_text(data)
         if not isinstance(content, str) or not content.strip():
             raise TypeError("empty scenario content")
         parsed: object = json.loads(content)
@@ -900,7 +943,7 @@ def post_ai_scenario(request: Request, body: AiScenarioCreate) -> dict[str, obje
         raise HTTPException(status_code=409, detail={"code": "missing_key", "message": text})
 
     live_models, _ = _resolve_live_models(row.endpoint, key, fallback_models or [row.model])
-    if row.model not in live_models:
+    if canonical_model_id(row.model) not in {canonical_model_id(model) for model in live_models}:
         text = _error_assistant_text("model_unlisted", "")
         library.append_message(body.conversationId, "assistant", text, error_code="model_unlisted")
         raise HTTPException(status_code=409, detail={"code": "model_unlisted", "message": text})
@@ -923,6 +966,7 @@ def post_ai_scenario(request: Request, body: AiScenarioCreate) -> dict[str, obje
             messages=zen_messages,
             temperature=row.temperature,
             max_tokens=row.max_tokens,
+            session_id=body.conversationId,
         )
     except ZenFetchError as exc:
         code, friendly = friendly_error_for_status(exc.status, exc.body)

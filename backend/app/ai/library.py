@@ -26,8 +26,15 @@ from app.ai.model import (
     AiSettingsRow,
 )
 from app.ai.proposals import validate_proposal_commands
+from app.ai.zen import canonical_model_id, inference_endpoint
 from app.config import DEFAULT_CONTEXT_BUDGET, DEFAULT_SYSTEM_PROMPT, DEFAULT_ZEN_URL, Settings
 from app.database import Database
+
+GO_MODEL_MIGRATIONS = {
+    "claude-sonnet-5": "kimi-k2.6",
+    "muse-spark-1.2": "muse-spark-1.2-contributor",
+    "muse-spark-1.3": "muse-spark-1.3-contributor",
+}
 
 
 def _now() -> datetime:
@@ -123,6 +130,23 @@ class AiLibrary:
             if row is None:
                 row = self._seed_row(session)
                 session.commit()
+            else:
+                changed = False
+                if row.endpoint.rstrip("/") in {
+                    "https://opencode.ai/zen/v1",
+                    "https://opencode.ai/zen",
+                    "https://opencode.ai",
+                    "https://opencode.ai/inference",
+                }:
+                    row.endpoint = DEFAULT_ZEN_URL
+                    changed = True
+                replacement_model = GO_MODEL_MIGRATIONS.get(canonical_model_id(row.model).lower())
+                if replacement_model:
+                    row.model = replacement_model
+                    changed = True
+                if changed:
+                    row.updated_at = _now()
+                    session.commit()
         # Re-fetch detached-safe copy
         with self._database.session() as session:
             fetched = session.get(AiSettingsRow, "singleton")
@@ -138,9 +162,12 @@ class AiLibrary:
             if self._settings.ai_fallback_models
             else "anthropic/claude-sonnet-4-5"
         )
+        fallback_model = GO_MODEL_MIGRATIONS.get(
+            canonical_model_id(fallback_model).lower(), fallback_model
+        )
         row = AiSettingsRow(
             id="singleton",
-            endpoint=self._settings.opencode_base_url or DEFAULT_ZEN_URL,
+            endpoint=inference_endpoint(self._settings.opencode_base_url or DEFAULT_ZEN_URL),
             model=fallback_model,
             temperature=0.7,
             max_tokens=2000,

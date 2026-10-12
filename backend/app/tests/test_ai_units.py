@@ -11,7 +11,13 @@ from app.ai.prompting import (
     estimate_tokens,
     format_rendered_view_label,
 )
-from app.ai.zen import chat_completions_payload, friendly_error_for_status, parse_sse_tokens
+from app.ai.zen import (
+    ZenClient,
+    chat_completions_payload,
+    friendly_error_for_status,
+    inference_request,
+    parse_sse_tokens,
+)
 
 
 def test_mask_key_shows_only_tail() -> None:
@@ -115,14 +121,20 @@ def test_compose_never_splits_message() -> None:
 def test_error_taxonomy_mapping() -> None:
     code, _ = friendly_error_for_status(401, "CreditsError")
     assert code == "invalid_or_exhausted"
-    code, _ = friendly_error_for_status(402, "")
+    code, message = friendly_error_for_status(402, "")
     assert code == "limit_exceeded"
+    assert "OpenCode Go usage limit" in message
     code, _ = friendly_error_for_status(429, "")
     assert code == "rate_limited"
     code, _ = friendly_error_for_status(500, "")
     assert code == "provider_error"
     code, _ = friendly_error_for_status(400, "InvalidRequestError")
     assert code == "provider_error"
+    code, message = friendly_error_for_status(
+        403, '{"type":"error","error":{"type":"FreeTierError"}}'
+    )
+    assert code == "model_access_denied"
+    assert "Go plan" in message
 
 
 def test_chat_payload_pins_family_routing() -> None:
@@ -148,6 +160,93 @@ def test_sse_parser_tolerant_of_nonstandard_chunks() -> None:
         'event: message\ndata: {"choices": [{"delta": {"content": " world"}}]}\n\n'
     )
     assert parse_sse_tokens(raw) == ["Hello", " world"]
+
+
+def test_inference_request_routes_by_opencode_model_family() -> None:
+    messages = [
+        {"role": "system", "content": "Be concise"},
+        {"role": "user", "content": "Say hi"},
+    ]
+    path, payload = inference_request(
+        model="claude-haiku-5-5",
+        messages=messages,
+        temperature=0.7,
+        max_tokens=200,
+        stream=True,
+    )
+    assert path == "/messages"
+    assert payload["model"] == "claude-haiku-5-5"
+    assert payload["system"] == "Be concise"
+    assert payload["max_tokens"] == 200
+
+    path, payload = inference_request(
+        model="gpt-6-luna",
+        messages=messages,
+        temperature=0.7,
+        max_tokens=200,
+        stream=False,
+    )
+    assert path == "/responses"
+    assert payload["model"] == "gpt-6-luna"
+
+    path, _ = inference_request(
+        model="muse-spark-1.3-contributor",
+        messages=messages,
+        temperature=0.7,
+        max_tokens=200,
+        stream=False,
+    )
+    assert path == "/responses"
+
+
+def test_legacy_zen_endpoint_lists_models_from_v2_catalog() -> None:
+    import httpx
+
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "claude-sonnet-4-6"}, {"id": "step-5-preview-free"}]},
+        )
+
+    client = ZenClient("https://opencode.ai/zen/go/v1", "test-key")
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        assert client.list_models(http_client) == ["claude-sonnet-4-6", "step-5-preview-free"]
+    assert str(requests[0].url) == "https://opencode.ai/zen/go/v1/models"
+    assert requests[0].headers["user-agent"] == "animated-slideshow-editor/1.0"
+
+
+def test_go_chat_uses_go_route_and_stable_session_header() -> None:
+    import httpx
+
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"OK"}}]}\n\n',
+        )
+
+    client = ZenClient("https://opencode.ai/zen/go/v1", "test-key")
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        tokens = list(
+            client.chat_stream(
+                model="kimi-k2.6",
+                messages=[{"role": "user", "content": "Say OK"}],
+                temperature=0.7,
+                max_tokens=100,
+                session_id="conversation-123",
+                http_client=http_client,
+            )
+        )
+
+    assert tokens == ["OK"]
+    assert str(requests[0].url) == "https://opencode.ai/zen/go/v1/chat/completions"
+    assert requests[0].headers["x-opencode-session"] == "conversation-123"
+    assert requests[0].headers["user-agent"] == "animated-slideshow-editor/1.0"
 
 
 def test_rendered_view_label_carries_slide_time_and_stable_ids() -> None:

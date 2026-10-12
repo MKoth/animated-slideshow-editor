@@ -2,10 +2,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "var"
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
-DEFAULT_ZEN_URL = "https://opencode.ai/zen/v1"
-DEFAULT_FALLBACK_MODELS = ("anthropic/claude-sonnet-4-5",)
+DEFAULT_ZEN_URL = "https://opencode.ai/zen/go/v1"
+DEFAULT_FALLBACK_MODELS = ("kimi-k2.6",)
 DEFAULT_CONTEXT_BUDGET = 8000
 DEFAULT_SYSTEM_PROMPT = (
     "You are the AI lesson advisor inside the AI Slideshow Editor. "
@@ -48,7 +50,14 @@ def _parse_context_budget(raw: str | None) -> int:
     return value if value > 0 else DEFAULT_CONTEXT_BUDGET
 
 
+def _load_environment_file(path: Path) -> None:
+    load_dotenv(path, override=False)
+
+
 def load_settings() -> Settings:
+    # Load backend/.env for local development; variables exported by the
+    # process/container take precedence over values in the file.
+    _load_environment_file(Path(__file__).resolve().parents[1] / ".env")
     data_dir = Path(os.getenv("DATA_DIR", str(DEFAULT_DATA_DIR)))
     secret_raw = os.getenv("AI_SECRET_KEY")
     secret = secret_raw.strip() if secret_raw and secret_raw.strip() else None

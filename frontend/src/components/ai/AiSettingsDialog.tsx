@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { apiClient } from '../../api'
+import { ApiError } from '../../api/apiClient'
 import { AiApi, type AiSettings } from '../../api/aiApi'
 import { useAiStore } from '../../stores/aiStore'
 
 const DEFAULT_SETTINGS: AiSettings = {
-  endpoint: 'https://opencode.ai/zen/v1',
-  model: 'anthropic/claude-sonnet-4-5',
+  endpoint: 'https://opencode.ai/zen/go/v1',
+  model: 'kimi-k2.6',
   temperature: 0.7,
   maxTokens: 2000,
   streaming: true,
@@ -78,9 +79,22 @@ export function AiSettingsDialog() {
       })
       setSettings(updated)
       setApiKey('')
+      // A newly saved key may make the provider's live model catalog available.
+      // Refresh it after saving, while retaining the selected model if it is
+      // not returned by the provider.
+      try {
+        const modelList = await api.listModels()
+        setModels(modelList.models)
+        setFallback(modelList.fallback)
+      } catch {
+        setModels((current) => [...new Set([...current, updated.model])].filter(Boolean))
+        setFallback(true)
+      }
       setNotice('Saved.')
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(
+        e instanceof ApiError && e.detail ? e.detail : e instanceof Error ? e.message : String(e),
+      )
     } finally {
       setSaving(false)
     }
@@ -94,7 +108,7 @@ export function AiSettingsDialog() {
       data-testid="ai-settings-dialog"
       className="ai-settings-dialog"
     >
-      <h3>AI Settings (opencode.ai)</h3>
+      <h3>AI Settings (OpenCode Go)</h3>
       {loading && <div data-testid="ai-settings-loading">Loading…</div>}
       {error && <div data-testid="ai-settings-error">{error}</div>}
       {notice && <div data-testid="ai-settings-notice">{notice}</div>}
@@ -107,7 +121,7 @@ export function AiSettingsDialog() {
         />
       </label>
       <label>
-        API key
+        OpenCode Go API key
         <input
           data-testid="ai-settings-key"
           type="password"

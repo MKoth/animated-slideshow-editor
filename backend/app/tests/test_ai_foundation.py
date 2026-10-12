@@ -23,6 +23,15 @@ def test_ai_settings_masked_read_and_empty_key_keeps_existing(client: TestClient
     assert data["hasKey"] is False
     assert data["keyMasked"] == ""
 
+    # Existing saved v1 settings migrate to the current OpenCode endpoint.
+    legacy = client.put("/api/ai/settings", json={"endpoint": "https://opencode.ai/zen/v1"})
+    assert legacy.status_code == 200
+    assert legacy.json()["endpoint"] == "https://opencode.ai/zen/go/v1"
+    assert client.get("/api/ai/settings").json()["endpoint"] == "https://opencode.ai/zen/go/v1"
+
+    client.put("/api/ai/settings", json={"model": "muse-spark-1.3"})
+    assert client.get("/api/ai/settings").json()["model"] == "muse-spark-1.3-contributor"
+
     # Saving without secret configured fails clearly when a key is provided
     bad = client.put("/api/ai/settings", json={"apiKey": "sk-test-1234"})
     assert bad.status_code == 500

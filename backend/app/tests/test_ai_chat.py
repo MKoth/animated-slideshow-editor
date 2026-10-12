@@ -33,6 +33,7 @@ def _fake_models(monkeypatch: pytest.MonkeyPatch, models: list[str]) -> None:
 def _fake_stream(monkeypatch: pytest.MonkeyPatch, tokens: list[str]) -> None:
     def _stream(self: ZenClient, **kwargs: Any) -> Iterator[str]:
         _ = (self, kwargs)
+        assert kwargs.get("session_id")
         yield from tokens
 
     monkeypatch.setattr(ZenClient, "chat_stream", _stream)

@@ -15,7 +15,7 @@ describe('AiApi', () => {
 
   it('reads settings with masked key only', async () => {
     const settings = {
-      endpoint: 'https://opencode.ai/zen/v1',
+      endpoint: 'https://opencode.ai/zen/go/v1',
       model: 'anthropic/claude-sonnet-4-5',
       temperature: 0.7,
       maxTokens: 2000,
