@@ -87,7 +87,13 @@ export function AiSettingsDialog() {
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="AI Settings" data-testid="ai-settings-dialog">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="AI Settings"
+      data-testid="ai-settings-dialog"
+      className="ai-settings-dialog"
+    >
       <h3>AI Settings (opencode.ai)</h3>
       {loading && <div data-testid="ai-settings-loading">Loading…</div>}
       {error && <div data-testid="ai-settings-error">{error}</div>}
