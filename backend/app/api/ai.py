@@ -43,6 +43,7 @@ from app.ai.schemas import (
     AiPlanUpdate,
     AiProposalApprove,
     AiProposalCreate,
+    AiProposalDraft,
     AiProposalDryRun,
     AiProposalExecute,
     AiReconciliationCreate,
@@ -59,9 +60,11 @@ from app.ai.zen import (
     friendly_error_for_status,
     inference_endpoint,
     inference_request,
+    inference_response_usage,
     model_api_family,
     opencode_headers,
 )
+from app.config import DEFAULT_ANIMATION_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -136,29 +139,34 @@ def get_ai_models(request: Request) -> AiModelsOut:
 
 
 @router.get("/ai/conversations")
-def list_ai_conversations(request: Request, projectId: str = "") -> list[dict[str, object]]:
+def list_ai_conversations(
+    request: Request, projectId: str = "", mode: str | None = None
+) -> list[dict[str, object]]:
     if not projectId.strip():
         raise HTTPException(status_code=422, detail="projectId is required")
     library = _library(request)
+    wanted = library.normalize_conversation_mode(mode) if mode is not None else None
     return [
         {
             "id": row.id,
             "projectId": row.project_id,
             "title": row.title,
+            "mode": library.normalize_conversation_mode(row.mode),
             "modified": _iso(row.updated_at),
         }
-        for row in library.list_conversations(projectId)
+        for row in library.list_conversations(projectId, wanted)
     ]
 
 
 @router.post("/ai/conversations", status_code=201)
 def create_ai_conversation(request: Request, body: AiConversationCreate) -> dict[str, object]:
     library = _library(request)
-    row = library.create_conversation(body.projectId, body.title)
+    row = library.create_conversation(body.projectId, body.title, body.mode)
     return {
         "id": row.id,
         "projectId": row.project_id,
         "title": row.title,
+        "mode": library.normalize_conversation_mode(row.mode),
         "created": _iso(row.created_at),
         "modified": _iso(row.updated_at),
     }
@@ -179,6 +187,7 @@ def rename_ai_conversation(
         "id": row.id,
         "projectId": row.project_id,
         "title": row.title,
+        "mode": library.normalize_conversation_mode(row.mode),
         "modified": _iso(row.updated_at),
     }
 
@@ -211,6 +220,9 @@ def list_ai_messages(
             "content": row.content,
             "stopped": bool(row.stopped),
             "errorCode": row.error_code,
+            "promptTokens": getattr(row, "prompt_tokens", None),
+            "completionTokens": getattr(row, "completion_tokens", None),
+            "totalTokens": getattr(row, "total_tokens", None),
             "created": _iso(row.created_at),
         }
         for row in sliced
@@ -251,6 +263,22 @@ def _resolve_live_models(
     return fallback, True
 
 
+def _effective_assistant_mode(requested: str | None, conversation_mode: object) -> str:
+    """Lesson/animation split: explicit request wins, else stored conversation mode."""
+    if requested == "animation" or requested == "lesson":
+        return requested
+    return AiLibrary.normalize_conversation_mode(conversation_mode)
+
+
+def _system_prompt_for_mode(stored_prompt: str, effective_mode: str) -> str:
+    """Mode-aware prompt: custom user prompt wins for both modes, else mode default."""
+    if effective_mode != "animation":
+        return stored_prompt
+    if stored_prompt.strip() and stored_prompt.strip() != DEFAULT_SYSTEM_PROMPT.strip():
+        return stored_prompt
+    return DEFAULT_ANIMATION_SYSTEM_PROMPT
+
+
 @router.post("/ai/chat")
 def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
     library = _library(request)
@@ -258,11 +286,13 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
         conversation = library.get_conversation(body.conversationId)
     except AiConversationNotFoundError as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
-    _ = conversation
+
+    effective_mode = _effective_assistant_mode(body.assistantMode, conversation.mode)
 
     settings = request.app.state.settings
     fallback_models: list[str] = list(getattr(settings, "ai_fallback_models", []))
     row, key = library.get_settings_raw()
+    system_prompt = _system_prompt_for_mode(row.system_prompt, effective_mode)
 
     # Resolve the prompt input without persisting yet.
     if body.mode == "send":
@@ -281,6 +311,10 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
             raise HTTPException(status_code=422, detail="no user message to regenerate")
 
     context_text = context_to_text(body.context)
+    if context_text:
+        context_text = f"{context_text}\nassistant mode: {effective_mode}"
+    else:
+        context_text = f"assistant mode: {effective_mode}"
     stored = library.list_messages(body.conversationId)
     history = [ChatMessage(role=m.role, content=m.content) for m in stored]
 
@@ -317,7 +351,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
             return
 
         budget = library.context_budget
-        composed = compose_messages(row.system_prompt, context_text, history, current, budget)
+        composed = compose_messages(system_prompt, context_text, history, current, budget)
         zen_messages = [{"role": m.role, "content": m.content} for m in composed]
         # Log prompt size for the budget test seam (no token math client-side).
         logger.debug(
@@ -341,6 +375,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
 
         zen = ZenClient(row.endpoint, key)
         collected: list[str] = []
+        reported_usage: dict[str, int] = {}
         try:
             if row.streaming:
                 for token in zen.chat_stream(
@@ -349,11 +384,12 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                     temperature=row.temperature,
                     max_tokens=row.max_tokens,
                     session_id=body.conversationId,
+                    usage=reported_usage,
                 ):
                     collected.append(token)
                     yield _sse("token", {"delta": token, "messageId": assistant_id})
             else:
-                content = _chat_once_non_streaming(
+                content, non_stream_usage = _chat_once_non_streaming(
                     endpoint=row.endpoint,
                     api_key=key,
                     model=row.model,
@@ -362,6 +398,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                     max_tokens=row.max_tokens,
                     session_id=body.conversationId,
                 )
+                reported_usage.update(non_stream_usage)
                 collected.append(content)
                 yield _sse("token", {"delta": content, "messageId": assistant_id})
         except ZenFetchError as exc:
@@ -413,8 +450,16 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                 {"code": "provider_error", "message": text, "messageId": assistant_id},
             )
             return
-        library.update_message_content(assistant_id, full)
-        yield _sse("done", {"messageId": assistant_id, "content": full})
+        usage_kwargs: dict[str, int] = {
+            key: reported_usage[key]
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            if isinstance(reported_usage.get(key), int)
+        }
+        library.update_message_content(assistant_id, full, **usage_kwargs)  # type: ignore[arg-type]
+        done_payload: dict[str, object] = {"messageId": assistant_id, "content": full}
+        if usage_kwargs:
+            done_payload["usage"] = usage_kwargs
+        yield _sse("done", done_payload)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -428,7 +473,7 @@ def _chat_once_non_streaming(
     temperature: float,
     max_tokens: int,
     session_id: str,
-) -> str:
+) -> tuple[str, dict[str, int]]:
     path, payload = inference_request(
         model=model,
         messages=messages,
@@ -451,10 +496,10 @@ def _chat_once_non_streaming(
         data = response.json()
         content = _inference_response_text(data)
         if not isinstance(content, str):
-            return ""
-        return content
+            return "", {}
+        return content, inference_response_usage(data)
     except Exception:
-        return ""
+        return "", {}
 
 
 def _inference_response_text(data: dict[str, Any]) -> str:
@@ -2636,6 +2681,194 @@ def reject_ai_board(request: Request, board_id: str) -> dict[str, object]:
 
 # -- edit proposals ------------------------------------------------------
 
+PROPOSAL_DRAFT_JSON_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "commands": {"type": "array", "items": {"type": "object"}},
+    },
+    "required": ["commands"],
+    "additionalProperties": False,
+}
+
+PROPOSAL_COMMAND_TYPES: tuple[str, ...] = (
+    "CreateSlide",
+    "CreatePrompterPart",
+    "UpdatePrompterPart",
+    "UpdatePrompterPartWithShift",
+    "ReplacePrompterWords",
+    "SetPrompterPartAudio",
+    "SetSlideAnimationScript",
+    "AiCommitTts",
+    "AiImportSlides",
+)
+
+
+def _generate_proposal_structured(
+    *,
+    endpoint: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+    session_id: str,
+) -> dict[str, object]:
+    """Call Zen chat/completions with a proposal-draft JSON schema. Mock seam for tests."""
+    path, payload = _structured_inference_payload(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        name="proposal_draft",
+        schema=PROPOSAL_DRAFT_JSON_SCHEMA,
+    )
+    try:
+        response = httpx.post(
+            f"{inference_endpoint(endpoint)}{path}",
+            headers=opencode_headers(api_key, session_id),
+            json=payload,
+            timeout=60.0,
+        )
+    except httpx.HTTPError as exc:
+        raise ZenFetchError(0, str(exc)) from exc
+    if response.status_code != 200:
+        raise ZenFetchError(response.status_code, response.text)
+    try:
+        data = response.json()
+        content = _inference_response_text(data)
+        if not isinstance(content, str) or not content.strip():
+            raise TypeError("empty proposal content")
+        parsed: object = json.loads(content)
+        if not isinstance(parsed, dict):
+            raise TypeError("proposal content is not an object")
+        return parsed
+    except ZenFetchError:
+        raise
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise ZenFetchError(0, f"malformed proposal content: {exc}") from exc
+
+
+@router.post("/ai/proposals/draft", status_code=201)
+def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str, object]:
+    """Ask the model to convert one assistant message into proposal commands.
+
+    The created proposal is attached to the message, so it renders inline
+    under it in the conversation. Server schema-validates the commands;
+    anything invalid stays a reviewable draft — the project is untouched.
+    """
+    library = _library(request)
+    try:
+        conversation = library.get_conversation(body.conversationId)
+    except AiConversationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    try:
+        message = library.get_message(body.messageId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="message not found") from exc
+    if message.conversation_id != body.conversationId:
+        raise HTTPException(status_code=422, detail="message does not belong to this conversation")
+
+    effective_mode = _effective_assistant_mode(None, conversation.mode)
+    settings = request.app.state.settings
+    fallback_models: list[str] = list(getattr(settings, "ai_fallback_models", []))
+    row, key = library.get_settings_raw()
+    system_prompt = _system_prompt_for_mode(row.system_prompt, effective_mode)
+
+    if not key:
+        text = _error_assistant_text("missing_key", "")
+        library.append_message(body.conversationId, "assistant", text, error_code="missing_key")
+        raise HTTPException(status_code=409, detail={"code": "missing_key", "message": text})
+
+    live_models, _ = _resolve_live_models(row.endpoint, key, fallback_models or [row.model])
+    if canonical_model_id(row.model) not in {canonical_model_id(model) for model in live_models}:
+        text = _error_assistant_text("model_unlisted", "")
+        library.append_message(body.conversationId, "assistant", text, error_code="model_unlisted")
+        raise HTTPException(status_code=409, detail={"code": "model_unlisted", "message": text})
+
+    context_text = context_to_text(body.context)
+    if context_text:
+        context_text = f"{context_text}\nassistant mode: {effective_mode}"
+    else:
+        context_text = f"assistant mode: {effective_mode}"
+    stored = library.list_messages(body.conversationId)
+    history = [ChatMessage(role=m.role, content=m.content) for m in stored]
+    budget = library.context_budget
+
+    hint = (body.instruction or "").strip()
+    user_text = (
+        "Convert the following assistant message into an edit proposal: "
+        "a short title plus a JSON array of canonical engine commands that "
+        "implement exactly what the message describes and nothing more. "
+        f"Use only these command types: {', '.join(PROPOSAL_COMMAND_TYPES)}. "
+        "Reply as a single JSON object with title and commands."
+        + (f" Extra instruction: {hint}" if hint else "")
+        + f"\n\nAssistant message:\n{message.content}"
+    )
+    composed = compose_messages(system_prompt, context_text, history, user_text, budget)
+    zen_messages = [{"role": m.role, "content": m.content} for m in composed]
+
+    try:
+        raw = _generate_proposal_structured(
+            endpoint=row.endpoint,
+            api_key=key,
+            model=row.model,
+            messages=zen_messages,
+            temperature=row.temperature,
+            max_tokens=row.max_tokens,
+            session_id=body.conversationId,
+        )
+    except ZenFetchError as exc:
+        code, friendly = friendly_error_for_status(exc.status, exc.body)
+        text = _error_assistant_text(code, friendly)
+        library.append_message(body.conversationId, "assistant", text, error_code=code)
+        raise HTTPException(
+            status_code=409 if code != "provider_error" else 502,
+            detail={"code": code, "message": text},
+        ) from exc
+    except Exception as exc:
+        logger.warning("ai proposal draft unexpected error: %s", exc)
+        text = _error_assistant_text("provider_error", "Provider error — retry.")
+        library.append_message(body.conversationId, "assistant", text, error_code="provider_error")
+        raise HTTPException(
+            status_code=502, detail={"code": "provider_error", "message": text}
+        ) from exc
+
+    title_value = raw.get("title")
+    title = title_value if isinstance(title_value, str) else ""
+    commands_raw = raw.get("commands")
+    commands: list[dict[str, Any]] = []
+    if not isinstance(commands_raw, list) or not commands_raw:
+        commands_valid = False
+    else:
+        commands_valid = True
+        for entry in commands_raw:
+            if not isinstance(entry, dict):
+                commands_valid = False
+                break
+            commands.append({str(key): value for key, value in entry.items()})
+    if not commands_valid:
+        text = _error_assistant_text("provider_error", "Provider error — retry.")
+        library.append_message(body.conversationId, "assistant", text, error_code="provider_error")
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "provider_error", "message": "model did not return usable commands"},
+        ) from None
+    try:
+        created = library.create_proposal(
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            title=title or "Drafted proposal",
+            commands=commands,
+            project_fingerprint=f"draft:{body.messageId}",
+            message_id=body.messageId,
+        )
+    except AiConversationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _proposal_to_out(request, created.id)
+
 
 def _proposal_to_out(request: Request, proposal_id: str) -> dict[str, object]:
     import json as _json
@@ -2676,6 +2909,7 @@ def _proposal_to_out(request: Request, proposal_id: str) -> dict[str, object]:
         "id": row.id,
         "projectId": row.project_id,
         "conversationId": row.conversation_id,
+        "messageId": getattr(row, "message_id", None),
         "title": row.title,
         "status": row.status,
         "commands": commands if isinstance(commands, list) else [],
@@ -2703,9 +2937,12 @@ def post_ai_proposal(request: Request, body: AiProposalCreate) -> dict[str, obje
             title=body.title or "",
             commands=commands,
             project_fingerprint=body.projectFingerprint,
+            message_id=body.messageId,
         )
     except AiConversationNotFoundError as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _proposal_to_out(request, row.id)
 
 

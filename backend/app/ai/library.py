@@ -182,16 +182,33 @@ class AiLibrary:
 
     # -- conversations -------------------------------------------------
 
-    def list_conversations(self, project_id: str) -> list[AiConversationRow]:
+    @staticmethod
+    def normalize_conversation_mode(mode: object) -> str:
+        """Lesson/animation split: unknown or missing reads as lesson for old rows."""
+        return "animation" if mode == "animation" else "lesson"
+
+    def list_conversations(
+        self, project_id: str, mode: str | None = None
+    ) -> list[AiConversationRow]:
         statement = (
             select(AiConversationRow)
             .where(AiConversationRow.project_id == project_id)
             .order_by(AiConversationRow.updated_at.desc(), AiConversationRow.id)
         )
+        wanted = self.normalize_conversation_mode(mode) if mode is not None else None
         with self._database.session() as session:
-            return list(session.scalars(statement))
+            rows = list(session.scalars(statement))
+        if wanted is None:
+            return rows
+        return [row for row in rows if self.normalize_conversation_mode(row.mode) == wanted]
 
-    def create_conversation(self, project_id: str, title: str | None = None) -> AiConversationRow:
+    def create_conversation(
+        self,
+        project_id: str,
+        title: str | None = None,
+        mode: str | None = None,
+    ) -> AiConversationRow:
+        wanted = self.normalize_conversation_mode(mode)
         with self._database.session() as session:
             count = session.scalar(
                 select(func.count())
@@ -205,6 +222,7 @@ class AiLibrary:
                 id=str(uuid4()),
                 project_id=project_id,
                 title=clean[:255],
+                mode=wanted,
                 created_at=now,
                 updated_at=now,
             )
@@ -363,6 +381,9 @@ class AiLibrary:
         *,
         stopped: bool = False,
         error_code: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
     ) -> AiMessageRow:
         if role not in ("user", "assistant"):
             raise ValueError("role must be user or assistant")
@@ -381,6 +402,9 @@ class AiLibrary:
                 error_code=error_code,
                 created_at=now,
             )
+            row.prompt_tokens = prompt_tokens
+            row.completion_tokens = completion_tokens
+            row.total_tokens = total_tokens
             session.add(row)
             conv.updated_at = now
             session.commit()
@@ -401,6 +425,9 @@ class AiLibrary:
         *,
         stopped: bool | None = None,
         error_code: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
     ) -> AiMessageRow:
         with self._database.session() as session:
             row = session.get(AiMessageRow, message_id)
@@ -411,6 +438,12 @@ class AiLibrary:
                 row.stopped = stopped
             if error_code is not None:
                 row.error_code = error_code
+            if prompt_tokens is not None:
+                row.prompt_tokens = prompt_tokens
+            if completion_tokens is not None:
+                row.completion_tokens = completion_tokens
+            if total_tokens is not None:
+                row.total_tokens = total_tokens
             conv = session.get(AiConversationRow, row.conversation_id)
             if conv is not None:
                 conv.updated_at = _now()
@@ -2195,6 +2228,7 @@ class AiLibrary:
         title: str,
         commands: list[dict[str, object]],
         project_fingerprint: str,
+        message_id: str | None = None,
     ) -> AiProposalRow:
         import json as _json
 
@@ -2205,10 +2239,17 @@ class AiLibrary:
             conv = session.get(AiConversationRow, conversation_id)
             if conv is None:
                 raise AiConversationNotFoundError(conversation_id)
+            if message_id is not None:
+                message = session.get(AiMessageRow, message_id)
+                if message is None:
+                    raise ValueError(f"message {message_id} not found")
+                if message.conversation_id != conversation_id:
+                    raise ValueError("message does not belong to this conversation")
             row = AiProposalRow(
                 id=proposal_id,
                 project_id=project_id,
                 conversation_id=conversation_id,
+                message_id=message_id,
                 title=(title or "")[:255],
                 status="validated" if ok else "draft",
                 commands_json=_json.dumps(commands),

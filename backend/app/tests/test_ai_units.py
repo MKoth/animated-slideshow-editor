@@ -14,9 +14,13 @@ from app.ai.prompting import (
 from app.ai.zen import (
     ZenClient,
     chat_completions_payload,
+    extract_usage_from_payload,
     friendly_error_for_status,
     inference_request,
+    inference_response_usage,
+    merge_usage,
     parse_sse_tokens,
+    parse_sse_usage,
 )
 
 
@@ -271,6 +275,76 @@ def test_rendered_view_label_rejects_unknown_scope() -> None:
 
     with pytest.raises(ValueError, match="scope"):
         format_rendered_view_label("Room", "s-1", 1, [], "close-up")
+
+
+def test_usage_extraction_covers_all_api_families() -> None:
+    # OpenAI chat-completions shape.
+    assert extract_usage_from_payload(
+        {"usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}}
+    ) == {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+    # Anthropic messages shape (input/output vocabulary).
+    assert extract_usage_from_payload({"usage": {"input_tokens": 5, "output_tokens": 7}}) == {
+        "prompt_tokens": 5,
+        "completion_tokens": 7,
+    }
+    # Responses API nests usage under response.
+    assert extract_usage_from_payload(
+        {"response": {"usage": {"input_tokens": 3, "output_tokens": 4, "total_tokens": 7}}}
+    ) == {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7}
+    # Unknown shapes never throw, read as empty.
+    assert extract_usage_from_payload({"nope": True}) == {}
+    assert extract_usage_from_payload(None) == {}
+
+
+def test_usage_merge_last_wins_and_fills_total() -> None:
+    acc: dict[str, int] = {}
+    merge_usage(acc, {"prompt_tokens": 100})
+    merge_usage(acc, {"completion_tokens": 30})
+    assert acc == {"prompt_tokens": 100, "completion_tokens": 30, "total_tokens": 130}
+    merge_usage(acc, {"completion_tokens": 45, "total_tokens": 145})
+    assert acc["completion_tokens"] == 45
+    assert acc["total_tokens"] == 145
+
+
+def test_sse_usage_parsing_tolerates_nonstandard_chunks() -> None:
+    raw = (
+        'event: message_start\ndata: {"message": {"usage": {"input_tokens": 12, "output_tokens": 0}}}\n\n'
+        "event: weird\ndata: not-json\n\n"
+        'event: message_delta\ndata: {"usage": {"output_tokens": 34}}\n\n'
+    )
+    assert parse_sse_usage(raw) == {
+        "prompt_tokens": 12,
+        "completion_tokens": 34,
+        "total_tokens": 46,
+    }
+
+
+def test_non_streaming_usage_reads_response_body() -> None:
+    assert inference_response_usage(
+        {
+            "choices": [{"message": {"content": "hi"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+        }
+    ) == {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
+
+
+def test_streaming_payload_requests_usage_reporting() -> None:
+    payload = chat_completions_payload(
+        model="some-openai-model",
+        messages=[{"role": "user", "content": "hi"}],
+        temperature=0.7,
+        max_tokens=100,
+        stream=True,
+    )
+    assert payload["stream_options"] == {"include_usage": True}
+    payload_sync = chat_completions_payload(
+        model="some-openai-model",
+        messages=[{"role": "user", "content": "hi"}],
+        temperature=0.7,
+        max_tokens=100,
+        stream=False,
+    )
+    assert "stream_options" not in payload_sync
 
 
 def test_animation_text_states_visual_evidence_complements_structured_data() -> None:

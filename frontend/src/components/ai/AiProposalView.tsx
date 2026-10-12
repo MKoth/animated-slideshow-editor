@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   buildExecutableCommands,
-  computeProjectFingerprint,
   dryRunValidate,
   executeProposal,
   isStale,
   type AiCommandJson,
 } from '../../ai/proposals'
-import { useEngine, useEngineEvent } from '../../app/useEngine'
+import { useFingerprint } from '../../ai/proposalFingerprint'
+import { useEngine } from '../../app/useEngine'
 import { useAiStore } from '../../stores/aiStore'
 import type { AiProposal } from '../../api/aiApi'
 
@@ -48,8 +48,6 @@ function AiProposalLive({
   const [createError, setCreateError] = useState<string | null>(null)
 
   const { engine } = useEngine()
-  const [, setTick] = useState(0)
-  useEngineEvent(() => setTick((t) => t + 1))
 
   useEffect(() => {
     if (projectId) void store.loadProposals(projectId)
@@ -144,20 +142,7 @@ function AiProposalLive({
   )
 }
 
-function useFingerprint(engine: ReturnType<typeof useEngine>['engine']): string {
-  const [tick, setTick] = useState(0)
-  useEngineEvent(() => setTick((t) => t + 1))
-  return useMemo(() => {
-    void tick
-    try {
-      return computeProjectFingerprint(engine)
-    } catch {
-      return ''
-    }
-  }, [engine, tick])
-}
-
-function AiProposalDetail({
+export function AiProposalDetail({
   proposal,
   fingerprint,
 }: {

@@ -74,6 +74,37 @@ def test_chat_streams_tokens_and_persists_history(
     assert msgs[1]["content"] == "Hello world"
 
 
+def test_chat_persists_real_provider_usage(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+
+    def _stream_with_usage(self: ZenClient, **kwargs: Any) -> Iterator[str]:
+        usage = kwargs.get("usage")
+        assert isinstance(usage, dict)
+        usage.update({"prompt_tokens": 11, "completion_tokens": 22, "total_tokens": 33})
+        yield "Hi"
+
+    monkeypatch.setattr(ZenClient, "chat_stream", _stream_with_usage)
+
+    conv = client.post("/api/ai/conversations", json={"projectId": "p-1"}).json()
+    r = client.post(
+        "/api/ai/chat",
+        json={"conversationId": conv["id"], "message": "Hi", "mode": "send", "context": {}},
+    )
+    assert r.status_code == 200
+    assert '"usage"' in r.text
+
+    msgs = client.get(f"/api/ai/conversations/{conv['id']}/messages").json()
+    assert msgs[1]["promptTokens"] == 11
+    assert msgs[1]["completionTokens"] == 22
+    assert msgs[1]["totalTokens"] == 33
+    # User messages carry no usage.
+    assert msgs[0].get("promptTokens") is None
+
+
 def test_chat_regenerate_replaces_last_assistant_only(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

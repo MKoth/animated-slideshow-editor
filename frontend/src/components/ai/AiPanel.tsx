@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { buildContextSnapshot, filterConversations } from '../../ai/contextSnapshot'
 import { AiMarkdown } from '../../ai/markdown'
+import { formatTokenCount, sumConversationUsage } from '../../ai/tokens'
 import { useEngine } from '../../app/useEngine'
-import { useAiStore } from '../../stores/aiStore'
+import { conversationModeOf, normalizeAiMode, useAiStore } from '../../stores/aiStore'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useBackendStore } from '../../stores/backendStore'
 import { AiPlanView } from './AiPlanView'
-import { AiProposalView } from './AiProposalView'
+import { AiProposalModal, type ProposalModalState } from './AiProposalModal'
 import { AiAnimationView } from './AiAnimationView'
 import { AiBoardView } from './AiBoardView'
 import { AiCalibrationView } from './AiCalibrationView'
@@ -22,8 +23,6 @@ export function AiPanel() {
 
   const conversations = useAiStore((s) => s.conversations)
   const messagesById = useAiStore((s) => s.messagesById)
-  const activeByProject = useAiStore((s) => s.activeByProject)
-  const drafts = useAiStore((s) => s.drafts)
   const search = useAiStore((s) => s.search)
   const status = useAiStore((s) => s.status)
   const streamingConversationId = useAiStore((s) => s.streamingConversationId)
@@ -32,19 +31,46 @@ export function AiPanel() {
   const panelOpen = useAiStore((s) => s.panelOpen)
   const assistantMode = useAiStore((s) => s.assistantMode)
 
-  const activeId = projectId ? (activeByProject[projectId] ?? null) : null
-  const draft = projectId ? (drafts[projectId] ?? '') : ''
+  const activeId = useAiStore((s) =>
+    projectId ? (s.activeIdFor(projectId, s.assistantMode) ?? null) : null,
+  )
+  const draft = useAiStore((s) => {
+    if (!projectId) return ''
+    const mode = normalizeAiMode(s.assistantMode)
+    const key = `${projectId}:${mode}`
+    if (s.drafts[key] !== undefined) return s.drafts[key] ?? ''
+    if (mode === 'lesson' && s.drafts[projectId] !== undefined) {
+      return s.drafts[projectId] ?? ''
+    }
+    return ''
+  })
   const backendStatus = useBackendStore((s) => s.status)
 
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
+  const [proposalModal, setProposalModal] = useState<ProposalModalState | null>(null)
+  const [othersOpen, setOthersOpen] = useState(false)
+  const proposals = useAiStore((s) => s.proposals)
 
   const store = useAiStore.getState()
 
   useEffect(() => {
-    if (projectId) void store.loadConversations(projectId)
+    if (projectId) {
+      void store.loadConversations(projectId)
+      void store.loadProposals(projectId)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
+
+  useEffect(() => {
+    if (!projectId || activeId) return
+    const mode = normalizeAiMode(assistantMode)
+    const fallback = conversations.find(
+      (conv) => conv.projectId === projectId && conversationModeOf(conv) === mode,
+    )
+    if (fallback) void store.setActive(projectId, fallback.id, mode)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, assistantMode, conversations, activeId])
 
   useEffect(() => {
     if (activeId) void store.loadMessages(activeId)
@@ -71,24 +97,76 @@ export function AiPanel() {
     [engine, projectId, selectionKey, assetKey, audioKey],
   )
 
-  const visibleConversations = useMemo(
-    () => filterConversations(conversations, messagesById, search),
-    [conversations, messagesById, search],
-  )
+  const visibleConversations = useMemo(() => {
+    const inMode = conversations.filter(
+      (conv) => conversationModeOf(conv) === normalizeAiMode(assistantMode),
+    )
+    return filterConversations(inMode, messagesById, search)
+  }, [conversations, messagesById, search, assistantMode])
 
-  const messages = activeId ? (messagesById[activeId] ?? []) : []
+  const messages = useMemo(
+    () => (activeId ? (messagesById[activeId] ?? []) : []),
+    [messagesById, activeId],
+  )
+  const messageIds = useMemo(() => new Set(messages.map((m) => m.id)), [messages])
+  // Stage flows (narration/calibration/board) create proposals without a
+  // message link — they surface here, collapsed, instead of a bottom section.
+  const unattachedProposals = useMemo(
+    () =>
+      proposals.filter((p) => p.conversationId === activeId && !messageIds.has(p.messageId ?? '')),
+    [proposals, activeId, messageIds],
+  )
+  const usage = useMemo(() => sumConversationUsage(messages), [messages])
+  const usageText = useMemo(() => {
+    if (messages.length === 0) return 'No messages yet — usage will appear here.'
+    if (usage.trackedMessages === 0) {
+      return `Token usage not yet reported for this conversation (${messages.length} message(s), provider did not report usage).`
+    }
+    const base =
+      `Tokens in this conversation: ${formatTokenCount(usage.totalTokens)} total ` +
+      `(prompt ${formatTokenCount(usage.promptTokens)} · completion ${formatTokenCount(usage.completionTokens)})`
+    return usage.untrackedMessages > 0
+      ? `${base} · ${usage.untrackedMessages} older message(s) untracked`
+      : base
+  }, [messages, usage])
   const isStreaming = status === 'streaming' && streamingConversationId === activeId
   const unavailable = status === 'unavailable' || backendStatus === 'unavailable'
   const isAnimationMode = assistantMode === 'animation'
 
   const handleSend = () => {
     if (!projectId || !activeId || !draft.trim() || isStreaming || unavailable) return
-    void store.sendMessage(projectId, activeId, draft, context)
+    void store.sendMessage(projectId, activeId, draft, context, normalizeAiMode(assistantMode))
   }
 
   const handleRegenerate = () => {
     if (!projectId || !activeId || isStreaming || unavailable) return
-    void store.regenerate(projectId, activeId, context)
+    void store.regenerate(projectId, activeId, context, normalizeAiMode(assistantMode))
+  }
+
+  const [draftErrorByMessage, setDraftErrorByMessage] = useState<Record<string, string>>({})
+  const proposalBusy = useAiStore((s) => s.proposalBusy)
+
+  const handleDraft = (messageId: string) => {
+    if (!projectId || !activeId || proposalBusy || unavailable) return
+    setDraftErrorByMessage((prev) => {
+      if (!(messageId in prev)) return prev
+      const next = { ...prev }
+      delete next[messageId]
+      return next
+    })
+    void store
+      .draftProposal({ projectId, conversationId: activeId, messageId, context })
+      .then((created) => {
+        if (created) {
+          setProposalModal({ mode: 'review', proposalId: created.id })
+        } else {
+          const err = useAiStore.getState().proposalError
+          setDraftErrorByMessage((prev) => ({
+            ...prev,
+            [messageId]: err?.message ?? 'Drafting failed.',
+          }))
+        }
+      })
   }
 
   if (!panelOpen) return null
@@ -171,7 +249,6 @@ export function AiPanel() {
               />
             </>
           )}
-          <AiProposalView projectId={projectId} conversationId={activeId} disabled />
         </>
       ) : (
         <>
@@ -186,10 +263,11 @@ export function AiPanel() {
               data-testid="ai-new-conversation"
               disabled={!projectId}
               onClick={() => {
-                if (projectId) void store.createConversation(projectId)
+                if (projectId)
+                  void store.createConversation(projectId, normalizeAiMode(assistantMode))
               }}
             >
-              New conversation
+              New {isAnimationMode ? 'animation' : 'lesson'} conversation
             </button>
             <ul data-testid="ai-conversation-list">
               {visibleConversations.map((conv) => (
@@ -215,7 +293,10 @@ export function AiPanel() {
                   ) : (
                     <button
                       data-testid={`ai-switch-${conv.id}`}
-                      onClick={() => projectId && store.setActive(projectId, conv.id)}
+                      onClick={() =>
+                        projectId &&
+                        store.setActive(projectId, conv.id, normalizeAiMode(assistantMode))
+                      }
                       style={{ fontWeight: conv.id === activeId ? 'bold' : 'normal' }}
                     >
                       {conv.title}
@@ -242,6 +323,37 @@ export function AiPanel() {
           </div>
 
           <div className="ai-panel__messages" data-testid="ai-messages">
+            <div data-testid="ai-token-usage">{usageText}</div>
+            {unattachedProposals.length > 0 && (
+              <div>
+                <button
+                  data-testid="ai-proposals-others-toggle"
+                  aria-expanded={othersOpen}
+                  onClick={() => setOthersOpen((open) => !open)}
+                >
+                  {othersOpen ? 'Hide' : 'Show'} {unattachedProposals.length} other proposal(s) in
+                  this conversation
+                </button>
+                <div data-testid="ai-proposals-others" hidden={!othersOpen}>
+                  {unattachedProposals.map((proposal) => (
+                    <div key={proposal.id} data-testid={`ai-other-proposal-${proposal.id}`}>
+                      <span>
+                        Proposing: {proposal.title} ({proposal.commands.length} change(s),{' '}
+                        {proposal.status})
+                      </span>{' '}
+                      <button
+                        data-testid={`ai-other-proposal-view-${proposal.id}`}
+                        onClick={() =>
+                          setProposalModal({ mode: 'review', proposalId: proposal.id })
+                        }
+                      >
+                        View
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {messages.map((message) => (
               <div
                 key={message.id}
@@ -266,6 +378,50 @@ export function AiPanel() {
                       Retry
                     </button>
                   </div>
+                )}
+                {proposals
+                  .filter((p) => p.conversationId === activeId && p.messageId === message.id)
+                  .map((proposal) => (
+                    <div
+                      key={proposal.id}
+                      data-testid={`ai-message-proposal-${proposal.id}`}
+                      className="ai-message__proposal"
+                    >
+                      <span>
+                        Proposing: {proposal.title} ({proposal.commands.length} change(s),{' '}
+                        {proposal.status})
+                      </span>{' '}
+                      <button
+                        data-testid={`ai-message-proposal-view-${proposal.id}`}
+                        onClick={() =>
+                          setProposalModal({ mode: 'review', proposalId: proposal.id })
+                        }
+                      >
+                        View
+                      </button>
+                    </div>
+                  ))}
+                {message.role === 'assistant' && !message.errorCode && (
+                  <>
+                    <button
+                      data-testid={`ai-message-draft-${message.id}`}
+                      disabled={proposalBusy || unavailable}
+                      onClick={() => handleDraft(message.id)}
+                    >
+                      Draft for me
+                    </button>
+                    <button
+                      data-testid={`ai-message-propose-${message.id}`}
+                      onClick={() => setProposalModal({ mode: 'create', messageId: message.id })}
+                    >
+                      Propose edit
+                    </button>
+                    {draftErrorByMessage[message.id] && (
+                      <div data-testid={`ai-message-draft-error-${message.id}`}>
+                        {draftErrorByMessage[message.id]}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             ))}
@@ -292,7 +448,10 @@ export function AiPanel() {
               data-testid="ai-input"
               placeholder={isAnimationMode ? 'Describe the performance…' : 'Ask about your lesson…'}
               value={draft}
-              onChange={(e) => projectId && store.setDraft(projectId, e.target.value)}
+              onChange={(e) =>
+                projectId &&
+                store.setDraft(projectId, e.target.value, normalizeAiMode(assistantMode))
+              }
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
@@ -373,7 +532,15 @@ export function AiPanel() {
             </>
           )}
 
-          <AiProposalView projectId={projectId} conversationId={activeId} disabled={unavailable} />
+          {proposalModal && (
+            <AiProposalModal
+              projectId={projectId}
+              conversationId={activeId}
+              modal={proposalModal}
+              onClose={() => setProposalModal(null)}
+              onCreated={(proposalId) => setProposalModal({ mode: 'review', proposalId })}
+            />
+          )}
         </>
       )}
     </div>

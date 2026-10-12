@@ -13,6 +13,7 @@ function sampleProposal(overrides: Partial<AiProposal> = {}): AiProposal {
     id: 'prop-1',
     projectId: 'p-1',
     conversationId: 'c-1',
+    messageId: null,
     title: 'Middle fill',
     status: 'validated',
     commands: [

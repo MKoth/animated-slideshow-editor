@@ -21,10 +21,17 @@ export interface AiSettingsUpdate {
   apiKey?: string
 }
 
+export type AiAssistantMode = 'lesson' | 'animation'
+
+export function normalizeAssistantMode(mode: unknown): AiAssistantMode {
+  return mode === 'animation' ? 'animation' : 'lesson'
+}
+
 export interface AiConversationSummary {
   id: string
   projectId: string
   title: string
+  mode?: AiAssistantMode
   modified: string
 }
 
@@ -32,6 +39,7 @@ export interface AiConversation {
   id: string
   projectId: string
   title: string
+  mode?: AiAssistantMode
   created: string
   modified: string
 }
@@ -42,6 +50,9 @@ export interface AiMessage {
   content: string
   stopped: boolean
   errorCode: string | null
+  promptTokens?: number | null
+  completionTokens?: number | null
+  totalTokens?: number | null
   created: string
 }
 
@@ -59,6 +70,7 @@ export interface AiChatInput {
   mode: AiChatMode
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   context: any
+  assistantMode?: AiAssistantMode
 }
 
 export type AiPlanAssetClassification = 'existing' | 'missing' | 'optional'
@@ -526,6 +538,7 @@ export interface AiProposal {
   id: string
   projectId: string
   conversationId: string
+  messageId: string | null
   title: string
   status: AiProposalStatus
   commands: AiProposalCommand[]
@@ -543,6 +556,7 @@ export interface AiProposal {
 export interface AiProposalCreateInput {
   projectId: string
   conversationId: string
+  messageId?: string
   title?: string
   commands: AiProposalCommand[]
   projectFingerprint: string
@@ -567,17 +581,24 @@ export class AiApi {
     return this.client.get<AiModels>('/api/ai/models')
   }
 
-  async listConversations(projectId: string): Promise<AiConversationSummary[]> {
-    return this.client.get<AiConversationSummary[]>(
-      `/api/ai/conversations?projectId=${encodeURIComponent(projectId)}`,
-    )
+  async listConversations(
+    projectId: string,
+    mode?: AiAssistantMode,
+  ): Promise<AiConversationSummary[]> {
+    const params = new URLSearchParams({ projectId })
+    if (mode) params.set('mode', normalizeAssistantMode(mode))
+    return this.client.get<AiConversationSummary[]>(`/api/ai/conversations?${params.toString()}`)
   }
 
-  async createConversation(projectId: string, title?: string): Promise<AiConversation> {
-    return this.client.post<AiConversation>(
-      '/api/ai/conversations',
-      JSON.stringify(title ? { projectId, title } : { projectId }),
-    )
+  async createConversation(
+    projectId: string,
+    title?: string,
+    mode?: AiAssistantMode,
+  ): Promise<AiConversation> {
+    const body: Record<string, string> = { projectId }
+    if (title) body.title = title
+    if (mode) body.mode = normalizeAssistantMode(mode)
+    return this.client.post<AiConversation>('/api/ai/conversations', JSON.stringify(body))
   }
 
   async renameConversation(id: string, title: string): Promise<AiConversation> {
@@ -746,6 +767,17 @@ export class AiApi {
 
   async createProposal(input: AiProposalCreateInput): Promise<AiProposal> {
     return this.client.post<AiProposal>('/api/ai/proposals', JSON.stringify(input))
+  }
+
+  async draftProposal(input: {
+    projectId: string
+    conversationId: string
+    messageId: string
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    context: any
+    instruction?: string
+  }): Promise<AiProposal> {
+    return this.client.post<AiProposal>('/api/ai/proposals/draft', JSON.stringify(input))
   }
 
   async listProposals(projectId: string): Promise<AiProposal[]> {

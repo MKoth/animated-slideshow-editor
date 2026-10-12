@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { ContextSnapshot } from '../../ai/contextSnapshot'
 import {
   analyzeBeats,
@@ -100,6 +100,10 @@ export function AiAnimationView({
   approvedBeats = [],
   approvedDrafts = [],
 }: AiAnimationViewProps) {
+  // Collapsed by default: the live counts stay visible while the verbose
+  // read-only breakdown hides behind a toggle. Must sit before the disabled
+  // early return (rules-of-hooks). Children stay mounted so testids resolve.
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const analysis = useMemo(
     () => analyzeBeats(beats, toAnalysisSnapshot(context.animation)),
     [beats, context],
@@ -201,6 +205,13 @@ export function AiAnimationView({
     <div className="ai-animation" data-testid="ai-animation-section">
       <div className="ai-animation__header">
         <span>Animation assistant</span>
+        <button
+          data-testid="ai-animation-toggle"
+          aria-expanded={detailsOpen}
+          onClick={() => setDetailsOpen((open) => !open)}
+        >
+          {detailsOpen ? 'Hide details' : 'Show details'}
+        </button>
       </div>
       <div data-testid="ai-animation-project">
         Project: {context.projectName || 'No project'}
@@ -210,54 +221,61 @@ export function AiAnimationView({
         Slide: {context.activeSlideName ?? 'none'}
         {context.activeSlideDuration !== null ? ` (${context.activeSlideDuration}s)` : ''}
       </div>
-      {!conversationId && (
-        <div data-testid="ai-animation-no-conversation">
-          Start a conversation above to discuss this scene — analysis stays in chat until a proposal
-          is approved.
-        </div>
-      )}
+      <div data-testid="ai-animation-counts">
+        {animation.nodes.length} node(s) · {animation.clips.length} clip(s) ·{' '}
+        {animation.collections.length} collection(s) · {animation.timeline.totalKeyframes}{' '}
+        keyframe(s)
+      </div>
+      <div data-testid="ai-animation-details" hidden={!detailsOpen}>
+        {!conversationId && (
+          <div data-testid="ai-animation-no-conversation">
+            Start a conversation above to discuss this scene — analysis stays in chat until a
+            proposal is approved.
+          </div>
+        )}
 
-      <div data-testid="ai-animation-nodes">
-        Scene nodes ({animation.nodes.length}
-        {animation.truncated.nodes ? '+, truncated' : ''}):{' '}
-        {visibleNodes.map((node) => `${node.name} [${node.id}]`).join(', ') || 'none'}
+        <div data-testid="ai-animation-nodes">
+          Scene nodes ({animation.nodes.length}
+          {animation.truncated.nodes ? '+, truncated' : ''}):{' '}
+          {visibleNodes.map((node) => `${node.name} [${node.id}]`).join(', ') || 'none'}
+        </div>
+        <div data-testid="ai-animation-rig">
+          Rig: {animation.rig.boneCount} bone(s), {animation.rig.shapeInventory.length} shape
+          node(s), {animation.rig.morphBindings.length} morph binding(s),{' '}
+          {animation.rig.controls.length} control host(s)
+        </div>
+        <div data-testid="ai-animation-clips">
+          Clips ({animation.clips.length}
+          {animation.truncated.clips ? '+, truncated' : ''}):{' '}
+          {visibleClips.map((clip) => clip.name).join(', ') || 'none'}
+        </div>
+        <div data-testid="ai-animation-collections">
+          Clip Collections ({animation.collections.length}
+          {animation.truncated.collections ? '+, truncated' : ''}):{' '}
+          {visibleCollections.map((collection) => collection.name).join(', ') || 'none'}
+        </div>
+        <div data-testid="ai-animation-timeline">
+          Timeline: {animation.timeline.duration ?? '—'}s, {animation.timeline.totalKeyframes}{' '}
+          keyframe(s), {animation.timeline.clipInstanceCount} clip instance(s),{' '}
+          {animation.timeline.placementCount} placement(s)
+          {animation.timeline.hasAnimationScript ? ', animation script present' : ''}
+        </div>
+        <div data-testid="ai-animation-readonly-note">
+          Live-project context — reflects unsaved editor state. Summaries are bounded and read-only;
+          nothing here mutates the project.
+        </div>
+        <AiAnimationAnalysis analysis={analysis.beats} summary={analysis.summary} />
+        <AiShapeDrafts result={shapeDrafts} />
+        <AiRenderedViews views={rendered.views} truncated={rendered.truncated} />
+        <AiAnimationSequence draft={sequence} />
+        <AiAnimationRevalidation result={revalidation} />
+        <AiAnimationApply plan={applyPlan} />
+        <AiPilotVerification
+          requestedBeatIds={beats.map((beat) => beat.id)}
+          verification={pilot}
+          conditions={pilotConditions}
+        />
       </div>
-      <div data-testid="ai-animation-rig">
-        Rig: {animation.rig.boneCount} bone(s), {animation.rig.shapeInventory.length} shape node(s),{' '}
-        {animation.rig.morphBindings.length} morph binding(s), {animation.rig.controls.length}{' '}
-        control host(s)
-      </div>
-      <div data-testid="ai-animation-clips">
-        Clips ({animation.clips.length}
-        {animation.truncated.clips ? '+, truncated' : ''}):{' '}
-        {visibleClips.map((clip) => clip.name).join(', ') || 'none'}
-      </div>
-      <div data-testid="ai-animation-collections">
-        Clip Collections ({animation.collections.length}
-        {animation.truncated.collections ? '+, truncated' : ''}):{' '}
-        {visibleCollections.map((collection) => collection.name).join(', ') || 'none'}
-      </div>
-      <div data-testid="ai-animation-timeline">
-        Timeline: {animation.timeline.duration ?? '—'}s, {animation.timeline.totalKeyframes}{' '}
-        keyframe(s), {animation.timeline.clipInstanceCount} clip instance(s),{' '}
-        {animation.timeline.placementCount} placement(s)
-        {animation.timeline.hasAnimationScript ? ', animation script present' : ''}
-      </div>
-      <div data-testid="ai-animation-readonly-note">
-        Live-project context — reflects unsaved editor state. Summaries are bounded and read-only;
-        nothing here mutates the project.
-      </div>
-      <AiAnimationAnalysis analysis={analysis.beats} summary={analysis.summary} />
-      <AiShapeDrafts result={shapeDrafts} />
-      <AiRenderedViews views={rendered.views} truncated={rendered.truncated} />
-      <AiAnimationSequence draft={sequence} />
-      <AiAnimationRevalidation result={revalidation} />
-      <AiAnimationApply plan={applyPlan} />
-      <AiPilotVerification
-        requestedBeatIds={beats.map((beat) => beat.id)}
-        verification={pilot}
-        conditions={pilotConditions}
-      />
     </div>
   )
 }

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
+
+from app.ai.zen import ZenClient
 
 
 def _make_project(client: TestClient, pid: str = "p-prop") -> str:
@@ -31,6 +35,45 @@ def _make_project(client: TestClient, pid: str = "p-prop") -> str:
 def _make_conversation(client: TestClient, project_id: str) -> str:
     conv = client.post("/api/ai/conversations", json={"projectId": project_id}).json()
     return str(conv["id"])
+
+
+def _enable_key(client: TestClient, key: str = "sk-test-key-1234") -> None:
+    app_state: Any = client.app
+    settings = app_state.state.settings
+    settings.ai_secret_key = "test-secret-for-ai-proposals"
+    r = client.put("/api/ai/settings", json={"apiKey": key})
+    assert r.status_code == 200, r.text
+
+
+def _fake_models(monkeypatch: pytest.MonkeyPatch, models: list[str]) -> None:
+    def _list(self: ZenClient, http_client: Any = None) -> list[str]:
+        _ = (self, http_client)
+        return list(models)
+
+    monkeypatch.setattr(ZenClient, "list_models", _list)
+
+
+def _fake_draft(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]) -> None:
+    import app.api.ai as ai_api
+
+    def _gen(**kwargs: Any) -> dict[str, Any]:
+        _ = kwargs
+        loaded: Any = json.loads(json.dumps(payload))
+        assert isinstance(loaded, dict)
+        return dict(loaded)
+
+    monkeypatch.setattr(ai_api, "_generate_proposal_structured", _gen)
+
+
+def _assistant_message_id(client: TestClient, conv_id: str) -> str:
+    # Missing-key chat still persists user + assistant messages.
+    chat = client.post(
+        "/api/ai/chat",
+        json={"conversationId": conv_id, "message": "Hello", "mode": "send", "context": {}},
+    )
+    assert chat.status_code == 200, chat.text
+    msgs = client.get(f"/api/ai/conversations/{conv_id}/messages").json()
+    return str(next(m["id"] for m in msgs if m["role"] == "assistant"))
 
 
 VALID_COMMANDS = [
@@ -69,7 +112,131 @@ def test_create_valid_proposal_without_touching_project(client: TestClient) -> N
     assert data["validation"]["ok"] is True
     assert data["status"] == "validated"
     assert len(data["commands"]) == 2
+    assert data["messageId"] is None
     assert client.get("/api/projects/p-prop-1").text == before
+
+
+def test_proposal_attaches_to_conversation_message(client: TestClient) -> None:
+    _make_project(client, "p-prop-msg")
+    conv_id = _make_conversation(client, "p-prop-msg")
+    assistant_id = _assistant_message_id(client, conv_id)
+
+    r = client.post(
+        "/api/ai/proposals",
+        json={
+            "projectId": "p-prop-msg",
+            "conversationId": conv_id,
+            "messageId": assistant_id,
+            "title": "Attached",
+            "commands": VALID_COMMANDS[:1],
+            "projectFingerprint": "fp-1",
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["messageId"] == assistant_id
+
+    listing = client.get("/api/ai/proposals", params={"projectId": "p-prop-msg"}).json()
+    assert listing[0]["messageId"] == assistant_id
+
+    # Unknown message rejected.
+    bad = client.post(
+        "/api/ai/proposals",
+        json={
+            "projectId": "p-prop-msg",
+            "conversationId": conv_id,
+            "messageId": "no-such-message",
+            "title": "Bad",
+            "commands": VALID_COMMANDS[:1],
+            "projectFingerprint": "fp-1",
+        },
+    )
+    assert bad.status_code == 422, bad.text
+
+    # Message from another conversation rejected.
+    other_conv = _make_conversation(client, "p-prop-msg")
+    cross = client.post(
+        "/api/ai/proposals",
+        json={
+            "projectId": "p-prop-msg",
+            "conversationId": other_conv,
+            "messageId": assistant_id,
+            "title": "Cross",
+            "commands": VALID_COMMANDS[:1],
+            "projectFingerprint": "fp-1",
+        },
+    )
+    assert cross.status_code == 422, cross.text
+
+
+def test_draft_proposal_converts_message_into_attached_commands(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_project(client, "p-prop-draft")
+    conv_id = _make_conversation(client, "p-prop-draft")
+    assistant_id = _assistant_message_id(client, conv_id)
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+    _fake_draft(
+        monkeypatch,
+        {"title": "Drafted slide", "commands": [{"type": "CreateSlide", "name": "Middle 1"}]},
+    )
+
+    r = client.post(
+        "/api/ai/proposals/draft",
+        json={
+            "projectId": "p-prop-draft",
+            "conversationId": conv_id,
+            "messageId": assistant_id,
+            "context": {"projectName": "Lesson"},
+        },
+    )
+    assert r.status_code == 201, r.text
+    data = r.json()
+    assert data["messageId"] == assistant_id
+    assert data["title"] == "Drafted slide"
+    assert data["commands"] == [{"type": "CreateSlide", "name": "Middle 1"}]
+    assert data["validation"]["ok"] is True
+    # The project is untouched by drafting.
+    assert "Middle 1" not in client.get("/api/projects/p-prop-draft").text
+
+
+def test_draft_proposal_rejects_unknown_message(client: TestClient) -> None:
+    _make_project(client, "p-prop-draft-404")
+    conv_id = _make_conversation(client, "p-prop-draft-404")
+    r = client.post(
+        "/api/ai/proposals/draft",
+        json={
+            "projectId": "p-prop-draft-404",
+            "conversationId": conv_id,
+            "messageId": "no-such-message",
+            "context": {},
+        },
+    )
+    assert r.status_code == 404, r.text
+
+
+def test_draft_proposal_rejects_unusable_model_output(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_project(client, "p-prop-draft-502")
+    conv_id = _make_conversation(client, "p-prop-draft-502")
+    assistant_id = _assistant_message_id(client, conv_id)
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+    _fake_draft(monkeypatch, {"title": "No commands here"})
+
+    r = client.post(
+        "/api/ai/proposals/draft",
+        json={
+            "projectId": "p-prop-draft-502",
+            "conversationId": conv_id,
+            "messageId": assistant_id,
+            "context": {},
+        },
+    )
+    assert r.status_code == 502, r.text
 
 
 def test_invalid_type_blocked_with_fixable_message(client: TestClient) -> None:

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.model import Base
@@ -30,6 +30,7 @@ class AiConversationRow(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    mode: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
@@ -50,6 +51,9 @@ class AiMessageRow(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     stopped: Mapped[bool] = mapped_column(nullable=False, default=False)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
@@ -100,6 +104,7 @@ class AiProposalRow(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     conversation_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    message_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
     title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="draft")
     commands_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")

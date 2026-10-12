@@ -618,8 +618,8 @@ describe('AiPanel animation mode', () => {
     expect(screen.getByTestId('ai-animation-project')).toHaveTextContent('Live Unsaved Name')
     expect(screen.queryByTestId('ai-plan-section')).not.toBeInTheDocument()
     expect(screen.queryByTestId('ai-board-section')).not.toBeInTheDocument()
-    // Shared proposal lifecycle stays available in both modes.
-    expect(screen.getByTestId('ai-proposal-section')).toBeInTheDocument()
+    // Proposals live inline in the conversation now — no bottom section.
+    expect(screen.queryByTestId('ai-proposal-section')).not.toBeInTheDocument()
   })
 
   it('switches back to lesson mode', async () => {

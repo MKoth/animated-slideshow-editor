@@ -148,6 +148,10 @@ def chat_completions_payload(
         "max_tokens": max_tokens,
         "stream": stream,
     }
+    if stream:
+        # Ask streaming chat-completions providers to report usage; without
+        # this OpenAI-compatible streams omit the final usage chunk.
+        payload["stream_options"] = {"include_usage": True}
     if structured:
         payload["response_format"] = {
             "type": "json_schema",
@@ -157,6 +161,98 @@ def chat_completions_payload(
             },
         }
     return payload
+
+
+def _int_or_none(value: object) -> int | None:
+    return value if isinstance(value, int) and value >= 0 else None
+
+
+def extract_usage_from_payload(payload: object) -> dict[str, int]:
+    """Real provider token usage from one decoded SSE/JSON payload.
+
+    Handles the three API families without importing their SDKs:
+    - OpenAI chat: payload['usage'] = {prompt_tokens, completion_tokens, total_tokens}
+    - Anthropic messages: payload['message']['usage'] or payload['usage'] =
+      {input_tokens, output_tokens}; the final message_delta carries the totals
+    - Responses API: payload['response']['usage'] =
+      {input_tokens, output_tokens, total_tokens}
+    Unknown shapes read as no usage — never throws.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    candidates: list[object] = [
+        payload.get("usage"),
+        payload.get("response_usage"),
+    ]
+    message = payload.get("message")
+    if isinstance(message, dict):
+        candidates.append(message.get("usage"))
+    response = payload.get("response")
+    if isinstance(response, dict):
+        candidates.append(response.get("usage"))
+    merged: dict[str, int] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        prompt = _int_or_none(candidate.get("prompt_tokens"))
+        if prompt is None:
+            prompt = _int_or_none(candidate.get("input_tokens"))
+        completion = _int_or_none(candidate.get("completion_tokens"))
+        if completion is None:
+            completion = _int_or_none(candidate.get("output_tokens"))
+        total = _int_or_none(candidate.get("total_tokens"))
+        if prompt is not None:
+            merged["prompt_tokens"] = prompt
+        if completion is not None:
+            merged["completion_tokens"] = completion
+        if total is not None:
+            merged["total_tokens"] = total
+    return merged
+
+
+def merge_usage(acc: dict[str, int], update: dict[str, int]) -> dict[str, int]:
+    """Fold one streaming usage update into the accumulator (last wins).
+
+    Streaming sends incremental snapshots; the final chunk holds the totals,
+    so later values overwrite earlier ones. When the provider omits
+    total_tokens the parts are summed so the running total never goes stale.
+    """
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = update.get(key)
+        if isinstance(value, int) and value >= 0:
+            acc[key] = value
+    prompt = acc.get("prompt_tokens")
+    completion = acc.get("completion_tokens")
+    if update.get("total_tokens") is None and prompt is not None and completion is not None:
+        acc["total_tokens"] = prompt + completion
+    return acc
+
+
+def parse_sse_usage(raw: str) -> dict[str, int]:
+    """Collect real token usage from a raw SSE buffer; tolerant like parse_sse_tokens."""
+    acc: dict[str, int] = {}
+    for chunk in raw.split("\n\n"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        for line in chunk.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[len("data:") :].strip()
+            if data == "[DONE]":
+                continue
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            merge_usage(acc, extract_usage_from_payload(payload))
+    return acc
+
+
+def inference_response_usage(data: object) -> dict[str, int]:
+    """Real token usage from a non-streaming inference response body."""
+    return extract_usage_from_payload(data)
 
 
 def parse_sse_tokens(raw: str) -> list[str]:
@@ -255,8 +351,14 @@ class ZenClient:
         max_tokens: int,
         session_id: str | None = None,
         http_client: httpx.Client | None = None,
+        usage: dict[str, int] | None = None,
     ) -> Iterator[str]:
-        """Yield content deltas from a streaming chat/completions call."""
+        """Yield content deltas from a streaming chat/completions call.
+
+        When `usage` is provided it is mutated in place with the real provider
+        token counts parsed from the stream (last snapshot wins); absent or
+        unreported usage leaves it empty.
+        """
         path, payload = inference_request(
             model=model,
             messages=messages,
@@ -281,7 +383,10 @@ class ZenClient:
                     buffer += text
                     while "\n\n" in buffer:
                         chunk, buffer = buffer.split("\n\n", 1)
-                        yield from parse_sse_tokens(chunk + "\n\n")
+                        raw = chunk + "\n\n"
+                        if usage is not None:
+                            merge_usage(usage, parse_sse_usage(raw))
+                        yield from parse_sse_tokens(raw)
         finally:
             if close:
                 client.close()
@@ -295,6 +400,7 @@ class ZenClient:
         max_tokens: int,
         session_id: str | None = None,
         http_client: httpx.AsyncClient | None = None,
+        usage: dict[str, int] | None = None,
     ) -> AsyncIterator[str]:
         path, payload = inference_request(
             model=model,
@@ -320,7 +426,10 @@ class ZenClient:
                     buffer += text
                     while "\n\n" in buffer:
                         chunk, buffer = buffer.split("\n\n", 1)
-                        for token in parse_sse_tokens(chunk + "\n\n"):
+                        raw = chunk + "\n\n"
+                        if usage is not None:
+                            merge_usage(usage, parse_sse_usage(raw))
+                        for token in parse_sse_tokens(raw):
                             yield token
         finally:
             if close:

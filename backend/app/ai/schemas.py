@@ -18,6 +18,7 @@ class AiSettingsUpdate(BaseModel):
 class AiConversationCreate(BaseModel):
     projectId: str = Field(min_length=1)
     title: str | None = None
+    mode: Literal["lesson", "animation"] | None = None
 
 
 class AiConversationRename(BaseModel):
@@ -29,6 +30,7 @@ class AiChatRequest(BaseModel):
     message: str | None = None
     mode: Literal["send", "regenerate"] = "send"
     context: Any = None
+    assistantMode: Literal["lesson", "animation"] | None = None
 
 
 class AiPlanSlideAsset(BaseModel):
@@ -92,6 +94,15 @@ class AiProposalCreate(BaseModel):
     title: str = ""
     commands: list[dict[str, Any]] = Field(min_length=1)
     projectFingerprint: str = Field(min_length=1)
+    messageId: str | None = None
+
+
+class AiProposalDraft(BaseModel):
+    projectId: str = Field(min_length=1)
+    conversationId: str = Field(min_length=1)
+    messageId: str = Field(min_length=1)
+    context: Any = None
+    instruction: str = ""
 
 
 class AiProposalDryRun(BaseModel):

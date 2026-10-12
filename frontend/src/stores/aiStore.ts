@@ -31,6 +31,32 @@ export type AiBackendStatus = 'idle' | 'loading' | 'streaming' | 'unavailable'
 
 export type AiAssistantMode = 'lesson' | 'animation'
 
+export function normalizeAiMode(mode: unknown): AiAssistantMode {
+  return mode === 'animation' ? 'animation' : 'lesson'
+}
+
+export function aiActiveKey(projectId: string, mode: AiAssistantMode): string {
+  return `${projectId}:${normalizeAiMode(mode)}`
+}
+
+export function conversationModeOf(conv: Pick<AiConversationSummary, 'mode'>): AiAssistantMode {
+  return normalizeAiMode(conv.mode)
+}
+
+function readActiveId(
+  activeByProject: Record<string, string>,
+  projectId: string,
+  mode: AiAssistantMode,
+): string | null {
+  const key = aiActiveKey(projectId, mode)
+  if (activeByProject[key]) return activeByProject[key] ?? null
+  // Legacy persisted key (pre mode-split) holds the lesson conversation.
+  if (normalizeAiMode(mode) === 'lesson' && activeByProject[projectId]) {
+    return activeByProject[projectId] ?? null
+  }
+  return null
+}
+
 interface AiState {
   conversations: AiConversationSummary[]
   messagesById: Record<string, AiMessage[]>
@@ -88,14 +114,17 @@ interface AiState {
   setAssistantMode: (mode: AiAssistantMode) => void
   setSettingsOpen: (open: boolean) => void
   setSearch: (search: string) => void
-  setDraft: (projectId: string, draft: string) => void
-  setActive: (projectId: string, conversationId: string) => void
-  activeIdFor: (projectId: string) => string | null
+  setDraft: (projectId: string, draft: string, mode?: AiAssistantMode) => void
+  setActive: (projectId: string, conversationId: string, mode?: AiAssistantMode) => void
+  activeIdFor: (projectId: string, mode?: AiAssistantMode) => string | null
   setPlanRequest: (request: string) => void
   setActivePlan: (id: string | null) => void
 
-  loadConversations: (projectId: string) => Promise<void>
-  createConversation: (projectId: string) => Promise<AiConversationSummary | null>
+  loadConversations: (projectId: string, mode?: AiAssistantMode) => Promise<void>
+  createConversation: (
+    projectId: string,
+    mode?: AiAssistantMode,
+  ) => Promise<AiConversationSummary | null>
   renameConversation: (id: string, title: string) => Promise<void>
   deleteConversation: (projectId: string, id: string) => Promise<void>
   loadMessages: (conversationId: string) => Promise<void>
@@ -104,8 +133,14 @@ interface AiState {
     conversationId: string,
     text: string,
     context: unknown,
+    assistantMode?: AiAssistantMode,
   ) => Promise<void>
-  regenerate: (projectId: string, conversationId: string, context: unknown) => Promise<void>
+  regenerate: (
+    projectId: string,
+    conversationId: string,
+    context: unknown,
+    assistantMode?: AiAssistantMode,
+  ) => Promise<void>
   stopStreaming: () => void
   markUnavailable: () => void
 
@@ -224,6 +259,14 @@ interface AiState {
   setActiveProposal: (id: string | null) => void
   loadProposals: (projectId: string) => Promise<void>
   createProposal: (input: AiProposalCreateInput) => Promise<AiProposal | null>
+  draftProposal: (input: {
+    projectId: string
+    conversationId: string
+    messageId: string
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    context: any
+    instruction?: string
+  }) => Promise<AiProposal | null>
   loadProposal: (id: string) => Promise<void>
   reportDryRun: (
     id: string,
@@ -308,32 +351,59 @@ export const useAiStore = create<AiState>()(
       proposalError: null,
 
       setPanelOpen: (open) => set({ panelOpen: open }),
-      setAssistantMode: (mode) => set({ assistantMode: mode }),
+      setAssistantMode: (mode) => set({ assistantMode: normalizeAiMode(mode) }),
       setSettingsOpen: (open) => set({ settingsOpen: open }),
       setSearch: (search) => set({ search }),
-      setDraft: (projectId, draft) =>
-        set((state) => ({ drafts: { ...state.drafts, [projectId]: draft } })),
-      setActive: (projectId, conversationId) =>
+      setDraft: (projectId, draft, mode) => {
+        const wanted = normalizeAiMode(mode ?? get().assistantMode)
+        const key = aiActiveKey(projectId, wanted)
+        set((state) => ({ drafts: { ...state.drafts, [key]: draft } }))
+      },
+      setActive: (projectId, conversationId, mode) => {
+        const wanted = normalizeAiMode(mode ?? get().assistantMode)
+        const key = aiActiveKey(projectId, wanted)
         set((state) => ({
-          activeByProject: { ...state.activeByProject, [projectId]: conversationId },
-        })),
-      activeIdFor: (projectId) => get().activeByProject[projectId] ?? null,
+          activeByProject: { ...state.activeByProject, [key]: conversationId },
+        }))
+      },
+      activeIdFor: (projectId, mode) =>
+        readActiveId(
+          get().activeByProject,
+          projectId,
+          normalizeAiMode(mode ?? get().assistantMode),
+        ),
 
-      loadConversations: async (projectId) => {
+      loadConversations: async (projectId, mode) => {
         set({ status: 'loading' })
         try {
           const conversations = await get().api.listConversations(projectId)
+          const normalized = conversations.map((c) => ({
+            ...c,
+            mode: conversationModeOf(c),
+          }))
           set((state) => {
-            const active = state.activeByProject[projectId]
-            const stillThere = active && conversations.some((c) => c.id === active)
+            const wanted = normalizeAiMode(mode ?? state.assistantMode)
+            const inMode = normalized.filter((c) => conversationModeOf(c) === wanted)
+            const active = readActiveId(state.activeByProject, projectId, wanted)
+            const stillThere = active && normalized.some((c) => c.id === active)
+            const nextActive = { ...state.activeByProject }
+            if (!stillThere) {
+              // Prefer a conversation of the requested mode; fall back to any.
+              const pick = inMode[0] ?? normalized[0]
+              if (pick) nextActive[aiActiveKey(projectId, wanted)] = pick.id
+            }
+            // Backfill legacy lesson key so old persisted state keeps working.
+            if (
+              wanted === 'lesson' &&
+              nextActive[aiActiveKey(projectId, 'lesson')] &&
+              !nextActive[projectId]
+            ) {
+              nextActive[projectId] = nextActive[aiActiveKey(projectId, 'lesson')] as string
+            }
             return {
-              conversations,
+              conversations: normalized,
               status: 'idle' as const,
-              activeByProject: stillThere
-                ? state.activeByProject
-                : conversations[0]
-                  ? { ...state.activeByProject, [projectId]: conversations[0].id }
-                  : state.activeByProject,
+              activeByProject: nextActive,
             }
           })
         } catch (error) {
@@ -341,19 +411,24 @@ export const useAiStore = create<AiState>()(
         }
       },
 
-      createConversation: async (projectId) => {
+      createConversation: async (projectId, mode) => {
+        const wanted = normalizeAiMode(mode ?? get().assistantMode)
         try {
-          const created = await get().api.createConversation(projectId)
+          const created = await get().api.createConversation(projectId, undefined, wanted)
           const summary: AiConversationSummary = {
             id: created.id,
             projectId: created.projectId,
             title: created.title,
+            mode: conversationModeOf({ mode: created.mode ?? wanted }),
             modified: created.modified,
           }
           set((state) => ({
             conversations: [summary, ...state.conversations],
             messagesById: { ...state.messagesById, [summary.id]: [] },
-            activeByProject: { ...state.activeByProject, [projectId]: summary.id },
+            activeByProject: {
+              ...state.activeByProject,
+              [aiActiveKey(projectId, wanted)]: summary.id,
+            },
             status: 'idle' as const,
           }))
           return summary
@@ -370,7 +445,14 @@ export const useAiStore = create<AiState>()(
           const updated = await get().api.renameConversation(id, clean)
           set((state) => ({
             conversations: state.conversations.map((c) =>
-              c.id === id ? { ...c, title: updated.title, modified: updated.modified } : c,
+              c.id === id
+                ? {
+                    ...c,
+                    title: updated.title,
+                    modified: updated.modified,
+                    mode: conversationModeOf({ mode: updated.mode ?? c.mode }),
+                  }
+                : c,
             ),
           }))
         } catch (error) {
@@ -382,12 +464,33 @@ export const useAiStore = create<AiState>()(
         try {
           await get().api.deleteConversation(id)
           set((state) => {
+            const deleted = state.conversations.find((c) => c.id === id)
+            const deletedMode = deleted ? conversationModeOf(deleted) : null
             const conversations = state.conversations.filter((c) => c.id !== id)
             const messagesById = { ...state.messagesById }
             delete messagesById[id]
             const activeByProject = { ...state.activeByProject }
+            const modesToFix: AiAssistantMode[] = deletedMode
+              ? [deletedMode]
+              : (['lesson', 'animation'] as const)
+            for (const mode of modesToFix) {
+              const key = aiActiveKey(projectId, mode)
+              if (activeByProject[key] === id || (!deletedMode && activeByProject[key] === id)) {
+                const fallback =
+                  conversations.find(
+                    (c) => c.projectId === projectId && conversationModeOf(c) === mode,
+                  ) ?? conversations.find((c) => c.projectId === projectId)
+                if (fallback) activeByProject[key] = fallback.id
+                else delete activeByProject[key]
+              }
+            }
+            // Legacy lesson key cleanup.
             if (activeByProject[projectId] === id) {
-              if (conversations[0]) activeByProject[projectId] = conversations[0].id
+              const fallback =
+                conversations.find(
+                  (c) => c.projectId === projectId && conversationModeOf(c) === 'lesson',
+                ) ?? conversations.find((c) => c.projectId === projectId)
+              if (fallback) activeByProject[projectId] = fallback.id
               else delete activeByProject[projectId]
             }
             return { conversations, messagesById, activeByProject }
@@ -409,9 +512,13 @@ export const useAiStore = create<AiState>()(
         }
       },
 
-      sendMessage: async (projectId, conversationId, text, context) => {
+      sendMessage: async (projectId, conversationId, text, context, assistantMode) => {
         const clean = text.trim()
         if (!clean || get().status === 'streaming') return
+        const existing = get().conversations.find((c) => c.id === conversationId)
+        const wanted = normalizeAiMode(
+          assistantMode ?? (existing ? conversationModeOf(existing) : get().assistantMode),
+        )
         const aborter = new AbortController()
         set({
           status: 'streaming',
@@ -420,12 +527,12 @@ export const useAiStore = create<AiState>()(
           lastError: null,
           aborter,
         })
-        // Clear the draft for this project once sent.
-        set((state) => ({ drafts: { ...state.drafts, [projectId]: '' } }))
+        // Clear the draft for this project + mode once sent.
+        set((state) => ({ drafts: { ...state.drafts, [aiActiveKey(projectId, wanted)]: '' } }))
         let collected = ''
         try {
           await streamAiChat(
-            { conversationId, message: clean, mode: 'send', context },
+            { conversationId, message: clean, mode: 'send', context, assistantMode: wanted },
             {
               onToken: (delta) => {
                 collected += delta
@@ -484,8 +591,12 @@ export const useAiStore = create<AiState>()(
         set({ status: 'idle', streamingConversationId: null, streamingContent: '', aborter: null })
       },
 
-      regenerate: async (_projectId, conversationId, context) => {
+      regenerate: async (_projectId, conversationId, context, assistantMode) => {
         if (get().status === 'streaming') return
+        const existing = get().conversations.find((c) => c.id === conversationId)
+        const wanted = normalizeAiMode(
+          assistantMode ?? (existing ? conversationModeOf(existing) : get().assistantMode),
+        )
         const aborter = new AbortController()
         set({
           status: 'streaming',
@@ -497,7 +608,7 @@ export const useAiStore = create<AiState>()(
         let collected = ''
         try {
           await streamAiChat(
-            { conversationId, mode: 'regenerate', context },
+            { conversationId, mode: 'regenerate', context, assistantMode: wanted },
             {
               onToken: (delta) => {
                 collected += delta
@@ -1509,6 +1620,33 @@ export const useAiStore = create<AiState>()(
             proposalError: {
               code: 'proposal_create_failed',
               message: error instanceof Error ? error.message : 'Proposal creation failed.',
+            },
+          })
+          return null
+        } finally {
+          set({ proposalBusy: false })
+        }
+      },
+
+      draftProposal: async (input) => {
+        if (get().proposalBusy) return null
+        set({ proposalBusy: true, proposalError: null })
+        try {
+          const proposal = await get().api.draftProposal(input)
+          set((state) => ({
+            proposalById: { ...state.proposalById, [proposal.id]: proposal },
+            proposals: [proposal, ...state.proposals.filter((p) => p.id !== proposal.id)],
+          }))
+          return proposal
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return null
+          }
+          set({
+            proposalError: {
+              code: 'proposal_draft_failed',
+              message: error instanceof Error ? error.message : 'Proposal drafting failed.',
             },
           })
           return null
