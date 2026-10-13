@@ -1,5 +1,8 @@
 import type { BeatAnalysis } from './animationAnalysis'
 import type { RenderedView } from './renderedViews'
+import { buildAnimationSequenceRecipe } from './animationScriptRecipe'
+
+export { SEQUENCE_FROZEN_HOLD_DURATION } from './animationScriptRecipe'
 
 /**
  * Ordered Scene Animation Sequence composition (issues #442, #443).
@@ -39,8 +42,6 @@ export const SEQUENCE_LIMITS = {
 
 /** Default scene-travel tween duration (seconds) when the request omits it. */
 export const SEQUENCE_TRAVEL_DEFAULT_DURATION = 1
-/** Frozen-hold gap (seconds) for implicit between-beat holds and explicit poses. */
-export const SEQUENCE_FROZEN_HOLD_DURATION = 0.5
 /** Default explicit hold-transition duration (seconds). */
 export const SEQUENCE_TRANSITION_HOLD_DEFAULT = 0.5
 /** Default explicit move-transition duration (seconds). */
@@ -263,18 +264,6 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
-function formatTravelRecord(to: {
-  x: number
-  y: number
-  scaleX?: number
-  scaleY?: number
-}): string {
-  const parts = [`x: ${to.x}`, `y: ${to.y}`]
-  if (typeof to.scaleX === 'number') parts.push(`scaleX: ${to.scaleX}`)
-  if (typeof to.scaleY === 'number') parts.push(`scaleY: ${to.scaleY}`)
-  return `{ ${parts.join(', ')} }`
-}
-
 /** Bounded slice with a reviewable-batch warning when truncated. */
 function capRequests<T>(
   requests: readonly T[] | undefined | null,
@@ -290,33 +279,6 @@ function capRequests<T>(
 
 function formatTime(time: number): string {
   return Number(time.toFixed(2)).toString()
-}
-
-function escapeScriptString(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-}
-
-function toAliasBase(value: string): string {
-  const cleaned = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-  const base = cleaned || 'target'
-  return /^[0-9]/.test(base) ? `n_${base}` : base
-}
-
-function uniqueAlias(base: string, used: Set<string>): string {
-  const candidate = toAliasBase(base)
-  if (!used.has(candidate)) {
-    used.add(candidate)
-    return candidate
-  }
-  let index = 2
-  while (used.has(`${candidate}_${index}`)) index += 1
-  const unique = `${candidate}_${index}`
-  used.add(unique)
-  return unique
 }
 
 function beatTime(order: number, duration: number | null): number {
@@ -1113,137 +1075,11 @@ export function composeSequence(input: SequenceInput): SequenceDraft {
     })
   }
 
-  // Retained Animation Script recipe — ordinary timeline data on Run.
-  const lines: string[] = []
-  lines.push('script "Scene Animation Sequence" from 0')
-  lines.push(
-    '// Retained recipe - compiles to ordinary timeline keyframes, clip instances, and placements.',
-  )
-  lines.push(
-    '// Beat order is the approval order - placements are sequential; lane priority does not crossfade.',
-  )
-  lines.push(
-    '// Character-local motion comes from reusable Clip Collections; scene travel stays as separate scene-level raw keyframes.',
-  )
-  lines.push(
-    '// Frozen holds use hold interpolation between beats - pauses never reveal the default pose.',
-  )
-  const usedAliases = new Set<string>()
-  const targetAliasById = new Map<string, string>()
-  const collectionAliasByName = new Map<string, string>()
-  const travelNameById = new Map<string, string>()
-  for (const beat of draftable) {
-    for (const leg of beat.travel) {
-      if (!travelNameById.has(leg.targetNodeId))
-        travelNameById.set(leg.targetNodeId, leg.targetName)
-    }
-  }
-  const ensureTargetAlias = (id: string): string => {
-    const existing = targetAliasById.get(id)
-    if (existing) return existing
-    const sameBeat = draftable.find((beat) => beat.targetNodeIds.includes(id))
-    const baseName = sameBeat?.targetNames[id] ?? travelNameById.get(id) ?? nameById.get(id) ?? id
-    const alias = uniqueAlias(`target_${baseName}`, usedAliases)
-    targetAliasById.set(id, alias)
-    return alias
-  }
-  for (const beat of draftable) {
-    for (const id of beat.targetNodeIds) ensureTargetAlias(id)
-    for (const leg of beat.travel) ensureTargetAlias(leg.targetNodeId)
-    const collectionName = beat.collectionName ?? ''
-    if (collectionName && !collectionAliasByName.has(collectionName)) {
-      collectionAliasByName.set(
-        collectionName,
-        uniqueAlias(`motion_${collectionName}`, usedAliases),
-      )
-    }
-  }
-  for (const [id, alias] of targetAliasById) {
-    const name = nameById.get(id) ?? id
-    lines.push(`bind ${alias} = node("${escapeScriptString(name)}")`)
-  }
-  for (const [name, alias] of collectionAliasByName) {
-    lines.push(`bind ${alias} = collection("${escapeScriptString(name)}")`)
-  }
-  const explicitTransitionByPair = new Map<string, SequenceTransitionPlan>(
-    transitions
-      .filter((entry) => entry.explicit)
-      .map((entry) => [`${entry.fromBeatId}→${entry.toBeatId}`, entry]),
-  )
-  const jumpByBeatId = new Map<string, string[]>()
-  for (const beat of draftable) {
-    if (beat.jumps.length > 0) jumpByBeatId.set(beat.beatId, [...beat.jumps])
-  }
-  const draftableIds = new Set(draftable.map((beat) => beat.beatId))
-  let previousDraftable: SequenceBeatDraft | null = null
-  drafts.forEach((beat, index) => {
-    const position = `Beat ${index + 1}/${total} "${beat.label}"`
-    if (beat.status !== 'draftable' || beat.collectionName === null) {
-      const reason = beat.blockers[0] ?? `blocked (${beat.beatId})`
-      lines.push(`// ${position} omitted - blocked: ${reason}`)
-      for (const action of beat.actions) lines.push(`// Next step: ${action}`)
-      return
-    }
-    // Gap before this beat: explicit authored transition or implicit frozen hold.
-    if (previousDraftable !== null) {
-      const key = `${previousDraftable.beatId}→${beat.beatId}`
-      const explicit = explicitTransitionByPair.get(key)
-      if (explicit) {
-        if (explicit.kind === 'cut') {
-          lines.push(
-            `// explicit cut from "${previousDraftable.label}" to "${beat.label}" — placements are sequential; lane priority does not crossfade`,
-          )
-        } else if (explicit.kind === 'hold') {
-          lines.push(
-            `wait(${formatTime(explicit.duration)}s) // explicit hold transition from "${previousDraftable.label}" to "${beat.label}" — frozen hold with hold interpolation; lane priority does not crossfade`,
-          )
-        } else {
-          lines.push(
-            `wait(${formatTime(explicit.duration)}s) // explicit move transition from "${previousDraftable.label}" to "${beat.label}" — scene-level travel continues; placements are sequential and lane priority does not crossfade`,
-          )
-        }
-      } else if (draftableIds.has(beat.beatId) && draftableIds.has(previousDraftable.beatId)) {
-        lines.push('wait(0.5s) // frozen hold - coordinated pose holds before the next beat')
-      }
-      for (const jump of jumpByBeatId.get(beat.beatId) ?? []) {
-        lines.push(`// ${jump}`)
-      }
-    } else if (beat.frozenBefore) {
-      // Explicit frozen hold before the first drafted beat.
-      lines.push(
-        `wait(${formatTime(SEQUENCE_FROZEN_HOLD_DURATION)}s) // frozen pose hold before beat "${beat.label}" — coordinated pose holds with hold interpolation`,
-      )
-    }
-    const collectionAlias = collectionAliasByName.get(beat.collectionName) ?? 'motion'
-    const bindings =
-      beat.matchedSemantics.length > 0 ? ` (bindings: ${beat.matchedSemantics.join(', ')})` : ''
-    const targets = formatNodes(beat.targetNodeIds, beat.targetNames)
-    lines.push(`// ${position} - reusable ${beat.collectionName} on ${targets}${bindings}`)
-    for (const targetId of beat.targetNodeIds) {
-      const targetAlias = targetAliasById.get(targetId)
-      if (targetAlias) lines.push(`${targetAlias}.apply(${collectionAlias})`)
-    }
-    for (const leg of beat.travel) {
-      const travelAlias = targetAliasById.get(leg.targetNodeId)
-      if (!travelAlias) continue
-      lines.push(
-        `${travelAlias}.tween(${formatTravelRecord(leg.to)}, ${formatTime(leg.duration)}, ${leg.ease}) // scene-level travel for beat "${beat.label}" — separate from character-local "${beat.collectionName}"; never baked into reusable motion`,
-      )
-    }
-    const isLastDraftable =
-      draftable.length > 0 && draftable[draftable.length - 1].beatId === beat.beatId
-    if (isLastDraftable && beat.frozenAfter) {
-      lines.push(
-        `wait(${formatTime(SEQUENCE_FROZEN_HOLD_DURATION)}s) // frozen pose hold after beat "${beat.label}" — coordinated pose holds with hold interpolation`,
-      )
-    }
-    previousDraftable = beat
+  const scriptSource = buildAnimationSequenceRecipe({
+    beats: drafts,
+    transitions,
+    alignmentEffects,
   })
-  for (const effect of alignmentEffects) {
-    lines.push(
-      `// Proposed alignment offset for collection "${effect.collectionName}" semantic "${effect.semanticName}": (${effect.x}, ${effect.y}) — shared by all placements of "${effect.collectionName}" (${effect.affectedPlacements} in this draft plus existing timeline placements); preview across the collection before approval via SetClipCollectionAlignmentOffsets; never silently mutated.`,
-    )
-  }
 
   const warnings: string[] = [...requestWarnings]
   if (truncated) {
@@ -1275,7 +1111,7 @@ export function composeSequence(input: SequenceInput): SequenceDraft {
     transitions,
     frozen,
     alignmentEffects,
-    scriptSource: lines.join('\n'),
+    scriptSource,
     warnings,
     summary: {
       total: drafts.length,

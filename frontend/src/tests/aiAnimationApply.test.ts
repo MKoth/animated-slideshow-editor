@@ -247,6 +247,8 @@ describe('planAnimationApply (issue #446)', () => {
     expect(plan.appliableBeatIds).toEqual([])
     const skipped = plan.skippedBeats.find((s) => s.beatId === 'b-sit')!
     expect(skipped.reason.toLowerCase()).toMatch(/dependenc/)
+    expect(plan.subsetScriptSource).toMatch(/^script "Scene Animation Sequence" from 0/m)
+    expect(plan.subsetScriptSource).toMatch(/No beats approved in this batch/)
     expect(plan.subsetScriptSource).not.toMatch(/\.apply\(/)
   })
 

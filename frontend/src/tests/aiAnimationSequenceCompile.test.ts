@@ -13,6 +13,7 @@ import {
 import { checkAnimationScript } from '../engine/animationScriptCheck'
 import { runAnimationScript } from '../engine/animationScriptRun'
 import { composeSequence } from '../ai/animationSequence'
+import { buildAnimationSequenceRecipe } from '../ai/animationScriptRecipe'
 import type { BeatAnalysis } from '../ai/animationAnalysis'
 
 describe('animation sequence retained script compiles to ordinary timeline data (issue #442)', () => {
@@ -234,5 +235,80 @@ describe('animation sequence retained script compiles to ordinary timeline data 
     const xKeys = system.engine.getKeyframes(catId, 'positionX')
     expect(xKeys.length).toBeGreaterThan(0)
     expect(system.dispatcher.undo()).toBe(true)
+  })
+
+  it('keeps selected recipe behavior aligned with the full sequence and follows sequence order', () => {
+    const { system, slideId, catId } = setup()
+    const cat = system.engine.getNode(catId)
+    const second: BeatAnalysis = {
+      ...readyBeat(),
+      beatId: 'b-sit',
+      label: 'Sit by the blackboard',
+    }
+    const draft = composeSequence({
+      beats: [
+        { ...readyBeat(), resolvedNodeIds: [catId] },
+        { ...second, resolvedNodeIds: [catId] },
+      ],
+      views: [],
+      snapshot: {
+        slideId,
+        slideName: 'Room',
+        duration: 12,
+        nodes: [{ id: catId, name: cat.name }],
+      },
+      travel: [{ beatId: 'b-walk', targetNodeId: catId, to: { x: 40, y: 20 }, duration: 1 }],
+      transitions: [{ fromBeatId: 'b-walk', toBeatId: 'b-sit', kind: 'hold', duration: 0.75 }],
+      frozenPoses: [
+        { beatId: 'b-walk', edge: 'before' },
+        { beatId: 'b-sit', edge: 'after' },
+      ],
+      alignmentOffsets: [{ collectionName: 'Walk Cycle', semanticName: 'paw', x: 2, y: -1 }],
+      collections: [{ name: 'Walk Cycle', bindings: { paw: 'clip-walk' }, placementCount: 0 }],
+    })
+
+    const allSelected = buildAnimationSequenceRecipe(draft, ['b-sit', 'b-walk'])
+    expect(allSelected.indexOf('Walk across the room')).toBeLessThan(
+      allSelected.indexOf('Sit by the blackboard'),
+    )
+    expect(checkAnimationScript(system.engine, slideId, allSelected).runnable).toBe(true)
+
+    const run = (source: string) => {
+      system.dispatcher.dispatch(new SetSlideAnimationScriptCommand({ slideId, source }) as never)
+      const result = runAnimationScript(
+        system.engine,
+        ((command: never) => system.dispatcher.dispatch(command as never)) as never,
+        slideId,
+        source,
+      )
+      expect(result.ran).toBe(true)
+      return {
+        placements: system.engine
+          .getCollectionPlacements(catId)
+          .map(({ collectionId, parentNodeId, startTime }) => ({
+            collectionId,
+            parentNodeId,
+            startTime,
+          })),
+        positionX: system.engine
+          .getKeyframes(catId, 'positionX')
+          .map(({ time, value, interpolation }) => ({ time, value, interpolation })),
+        positionY: system.engine
+          .getKeyframes(catId, 'positionY')
+          .map(({ time, value, interpolation }) => ({ time, value, interpolation })),
+      }
+    }
+
+    const fullSequencePlacements = run(draft.scriptSource)
+    expect(allSelected).toContain('Proposed alignment offset')
+    expect(run(allSelected)).toEqual(fullSequencePlacements)
+    const selectedRecipe = buildAnimationSequenceRecipe(draft, ['b-walk'])
+    expect(selectedRecipe).toMatch(/Sit by the blackboard.*omitted/s)
+    expect(selectedRecipe).toContain('Proposed alignment offset')
+    const selectedPlacements = run(selectedRecipe)
+
+    expect(selectedPlacements.placements).toEqual([fullSequencePlacements.placements[0]])
+    expect(selectedPlacements.positionX).toEqual(fullSequencePlacements.positionX)
+    expect(selectedPlacements.positionY).toEqual(fullSequencePlacements.positionY)
   })
 })
