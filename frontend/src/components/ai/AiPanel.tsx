@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { buildContextSnapshot, filterConversations } from '../../ai/contextSnapshot'
+import { animationAssetsFromConversationProposals } from '../../ai/animationAssetOperations'
 import { AiMarkdown } from '../../ai/markdown'
 import { extractLegacyScriptBlock, transpileLegacyScript } from '../../ai/legacyScript'
 import { extractScriptBlock, resolveScriptSlideId } from '../../ai/scriptBlock'
@@ -12,6 +13,7 @@ import { useSelectionStore } from '../../stores/selectionStore'
 import { useBackendStore } from '../../stores/backendStore'
 import { AiPlanView } from './AiPlanView'
 import { AiProposalModal, type ProposalModalState } from './AiProposalModal'
+import { AiProposalDetail } from './AiProposalView'
 import { AiAnimationView } from './AiAnimationView'
 import { AiBoardView } from './AiBoardView'
 import { AiCalibrationView } from './AiCalibrationView'
@@ -97,11 +99,21 @@ export function AiPanel() {
   const selectionKey = selection.join(',')
   const assetKey = assetNames.join(',')
   const audioKey = audioNames.join(',')
+  const conversationAssets = useMemo(
+    () => animationAssetsFromConversationProposals(proposals, activeId),
+    [proposals, activeId],
+  )
 
   const context = useMemo(
-    () => buildContextSnapshot(engine, { selection, assetNames, audioNames }),
+    () =>
+      buildContextSnapshot(engine, {
+        selection,
+        assetNames,
+        audioNames,
+        animationAssets: conversationAssets,
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [engine, projectId, selectionKey, assetKey, audioKey],
+    [engine, projectId, selectionKey, assetKey, audioKey, conversationAssets],
   )
 
   const visibleConversations = useMemo(() => {
@@ -200,7 +212,7 @@ export function AiPanel() {
       .draftProposal({ projectId, conversationId: activeId, messageId, context })
       .then((created) => {
         if (created) {
-          setProposalModal({ mode: 'review', proposalId: created.id })
+          if (!isAnimationMode) setProposalModal({ mode: 'review', proposalId: created.id })
         } else {
           setProposalModal(null)
           failDraft(messageId, 'Drafting failed.')
@@ -247,12 +259,18 @@ export function AiPanel() {
         conversationId: activeId,
         messageId,
         title: `Animation script for ${slideHint ?? 'slide'}`,
-        commands: [{ type: 'SetSlideAnimationScript', slideId, source }],
+        commands: [
+          {
+            type: isAnimationMode ? 'AiRunAnimationScript' : 'SetSlideAnimationScript',
+            slideId,
+            source,
+          },
+        ],
         projectFingerprint: fingerprint,
       })
       .then((created) => {
         if (created) {
-          setProposalModal({ mode: 'review', proposalId: created.id })
+          if (!isAnimationMode) setProposalModal({ mode: 'review', proposalId: created.id })
         } else {
           setProposalModal(null)
           failDraft(messageId, 'Drafting failed.')
@@ -519,18 +537,37 @@ export function AiPanel() {
                         data-testid={`ai-message-proposal-${proposal.id}`}
                         className="ai-message__proposal"
                       >
-                        <span>
-                          Proposing: {proposal.title} ({proposal.commands.length} change(s),{' '}
-                          {proposal.status})
-                        </span>{' '}
-                        <button
-                          data-testid={`ai-message-proposal-view-${proposal.id}`}
-                          onClick={() =>
-                            setProposalModal({ mode: 'review', proposalId: proposal.id })
-                          }
-                        >
-                          View
-                        </button>
+                        {isAnimationMode ? (
+                          <AiProposalDetail
+                            proposal={proposal}
+                            fingerprint={fingerprint}
+                            onDenyFeedback={(feedback) => {
+                              if (!projectId || !activeId) return
+                              void store.sendMessage(
+                                projectId,
+                                activeId,
+                                `I denied proposal ${proposal.id}. Please revise it using this feedback: ${feedback}`,
+                                context,
+                                'animation',
+                              )
+                            }}
+                          />
+                        ) : (
+                          <>
+                            <span>
+                              Proposing: {proposal.title} ({proposal.commands.length} change(s),{' '}
+                              {proposal.status})
+                            </span>{' '}
+                            <button
+                              data-testid={`ai-message-proposal-view-${proposal.id}`}
+                              onClick={() =>
+                                setProposalModal({ mode: 'review', proposalId: proposal.id })
+                              }
+                            >
+                              View
+                            </button>
+                          </>
+                        )}
                       </div>
                     ))}
                   {message.role === 'assistant' && !message.errorCode && (
@@ -552,12 +589,16 @@ export function AiPanel() {
                           Draft for me
                         </button>
                       )}
-                      <button
-                        data-testid={`ai-message-propose-${message.id}`}
-                        onClick={() => setProposalModal({ mode: 'create', messageId: message.id })}
-                      >
-                        Propose edit
-                      </button>
+                      {!isAnimationMode && (
+                        <button
+                          data-testid={`ai-message-propose-${message.id}`}
+                          onClick={() =>
+                            setProposalModal({ mode: 'create', messageId: message.id })
+                          }
+                        >
+                          Propose edit
+                        </button>
+                      )}
                       {draftErrorByMessage[message.id] && (
                         <div data-testid={`ai-message-draft-error-${message.id}`}>
                           {draftErrorByMessage[message.id]}

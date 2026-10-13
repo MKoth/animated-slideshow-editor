@@ -341,6 +341,7 @@ export type AiProposalStatus =
   | 'approved'
   | 'executed'
   | 'execution_failed'
+  | 'rejected'
 
 export type AiCalibrationStatus = 'draft' | 'accepted' | 'rejected'
 export type AiBoardStatus = 'draft' | 'accepted' | 'rejected'
@@ -548,6 +549,7 @@ export interface AiProposal {
   dryRun: { ok?: boolean; errors?: AiProposalValidationError[] }
   selectedIndexes: number[]
   executions: AiProposalExecution[]
+  rejectionFeedback?: string | null
   executableCommands?: AiProposalCommand[]
   created: string
   modified: string
@@ -822,6 +824,13 @@ export class AiApi {
     return this.client.post<AiProposal>(
       `/api/ai/proposals/${encodeURIComponent(id)}/execute`,
       JSON.stringify(input),
+    )
+  }
+
+  async rejectProposal(id: string, feedback: string): Promise<AiProposal> {
+    return this.client.post<AiProposal>(
+      `/api/ai/proposals/${encodeURIComponent(id)}/reject`,
+      JSON.stringify({ feedback }),
     )
   }
 

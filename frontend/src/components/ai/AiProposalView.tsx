@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   buildExecutableCommands,
   dryRunValidate,
@@ -11,6 +11,31 @@ import { useFingerprint } from '../../ai/proposalFingerprint'
 import { useEngine } from '../../app/useEngine'
 import { useAiStore } from '../../stores/aiStore'
 import type { AiProposal } from '../../api/aiApi'
+import type { AnimationAssetOperation } from '../../ai/animationAssetOperations'
+import { AiAnimationAssetPreview } from './AiAnimationAssetPreview'
+import { AiAnimationScriptPreview } from './AiAnimationScriptPreview'
+
+function animationOperationLabel(
+  operation: AnimationAssetOperation,
+  engine: import('../../engine').EnginePublic,
+): string {
+  switch (operation.kind) {
+    case 'upsertShape':
+      return `${operation.action} Shape “${operation.shape.name}” on ${operation.nodeId}`
+    case 'deleteShape':
+      return `delete Shape “${engine.getShapes(operation.nodeId).find((shape) => shape.id === operation.shapeId)?.name ?? operation.shapeId}”`
+    case 'upsertClip':
+      return `${operation.action} Clip “${operation.clip.name}”${operation.nodeId ? ` for ${operation.nodeId}` : ''}`
+    case 'deleteClip':
+      return `delete Clip “${engine.clips.find((clip) => clip.id === operation.clipId)?.name ?? operation.clipId}”`
+    case 'deleteClipInstance':
+      return `delete Clip Instance ${operation.instanceId} from ${operation.nodeId}`
+    case 'upsertCollection':
+      return `${operation.action} Clip Collection “${operation.collection.name}”`
+    case 'deleteCollection':
+      return `delete Clip Collection “${engine.clipCollections.find((collection) => collection.id === operation.collectionId)?.name ?? operation.collectionId}”`
+  }
+}
 
 interface AiProposalViewProps {
   projectId: string
@@ -146,9 +171,11 @@ function AiProposalLive({
 export function AiProposalDetail({
   proposal,
   fingerprint,
+  onDenyFeedback,
 }: {
   proposal: AiProposal
   fingerprint: string
+  onDenyFeedback?: (feedback: string) => void
 }) {
   const proposalBusy = useAiStore((s) => s.proposalBusy)
   const proposalError = useAiStore((s) => s.proposalError)
@@ -162,6 +189,35 @@ export function AiProposalDetail({
   )
   const [dryRunMessage, setDryRunMessage] = useState<string | null>(null)
   const [executeError, setExecuteError] = useState<string | null>(null)
+  const [denialFeedback, setDenialFeedback] = useState('')
+  const [denialError, setDenialError] = useState<string | null>(null)
+
+  const assetOperations = useMemo(() => {
+    const command = proposal.commands.find((entry) => entry.type === 'AiAnimationAssetBatch')
+    return Array.isArray(command?.operations)
+      ? (command.operations as AnimationAssetOperation[])
+      : null
+  }, [proposal.commands])
+  const animationScript = useMemo(() => {
+    const command = proposal.commands.find(
+      (entry) =>
+        entry.type === 'SetSlideAnimationScript' ||
+        entry.type === 'AiRunAnimationScript' ||
+        entry.type === 'AiDeleteAnimationScript',
+    )
+    if (!command || typeof command.slideId !== 'string') return null
+    if (command.type === 'AiDeleteAnimationScript') {
+      try {
+        const script = engine.getSlide(command.slideId).animationScript
+        return script ? { slideId: command.slideId, source: script.source, deleting: true } : null
+      } catch {
+        return null
+      }
+    }
+    return typeof command.source === 'string'
+      ? { slideId: command.slideId, source: command.source, deleting: false }
+      : null
+  }, [proposal.commands, engine])
 
   const stale = isStale(proposal.validatedFingerprint, fingerprint)
 
@@ -196,6 +252,57 @@ export function AiProposalDetail({
     void store.approveProposal(proposal.id, fingerprint, [...selected])
   }
 
+  const handleApproveAndApply = async () => {
+    setExecuteError(null)
+    if (stale) {
+      setExecuteError('The Project changed since preview. Refresh and review this proposal again.')
+      return
+    }
+    const dryRun = dryRunValidate(engine, proposal.commands as AiCommandJson[], selected)
+    await store.reportDryRun(proposal.id, {
+      projectFingerprint: dryRun.fingerprint,
+      ok: dryRun.ok,
+      errors: [...dryRun.errors],
+      validatedIndexes: [...selected],
+    })
+    if (!dryRun.ok) {
+      setExecuteError(dryRun.errors[0]?.message ?? 'Validation failed. No changes were made.')
+      return
+    }
+    const approved = await store.approveProposal(proposal.id, dryRun.fingerprint, [...selected])
+    if (approved?.status !== 'approved' || !dispatcher) return
+    const result = executeProposal(
+      { dispatcher, undoStack },
+      buildExecutableCommands(approved.commands as AiCommandJson[], approved.selectedIndexes),
+    )
+    if (!result.ok) {
+      setExecuteError(result.error ?? 'Execution failed. No changes were made.')
+      void store.recordExecution(proposal.id, {
+        historyEntryId: '',
+        executedIndexes: [...approved.selectedIndexes],
+        success: false,
+        error: result.error ?? 'Execution failed.',
+      })
+      return
+    }
+    void store.recordExecution(proposal.id, {
+      historyEntryId: result.historyEntryId ?? '',
+      executedIndexes: [...approved.selectedIndexes],
+      success: true,
+    })
+  }
+
+  const handleDeny = async () => {
+    const feedback = denialFeedback.trim()
+    if (!feedback) {
+      setDenialError('Add a short note so the assistant knows what to change.')
+      return
+    }
+    setDenialError(null)
+    const rejected = await store.rejectProposal(proposal.id, feedback)
+    if (rejected) onDenyFeedback?.(feedback)
+  }
+
   const handleExecute = () => {
     if (!dispatcher) return
     setExecuteError(null)
@@ -225,6 +332,39 @@ export function AiProposalDetail({
       <div data-testid="ai-proposal-status" className="ai-proposal__status">
         Status: {proposal.status}
       </div>
+      {assetOperations && (
+        <>
+          <div data-testid="ai-animation-asset-operations">
+            {assetOperations.map((operation, index) => (
+              <div key={`${operation.kind}-${index}`}>
+                {animationOperationLabel(operation, engine)}
+              </div>
+            ))}
+          </div>
+          <AiAnimationAssetPreview
+            engine={engine}
+            operations={assetOperations}
+            revision={`${proposal.modified}:${fingerprint}`}
+          />
+        </>
+      )}
+      {animationScript && (
+        <>
+          {animationScript.deleting && (
+            <div data-testid="ai-animation-script-delete-impact">
+              Deleting the retained Animation Script clears its compiled footprint on{' '}
+              {engine.getSlide(animationScript.slideId).name}: tracks, placements, instances, and
+              script-created objects recorded by that run.
+            </div>
+          )}
+          <AiAnimationScriptPreview
+            engine={engine}
+            slideId={animationScript.slideId}
+            source={animationScript.source}
+            revision={proposal.modified}
+          />
+        </>
+      )}
       {stale && proposal.status !== 'approved' && (
         <div data-testid="ai-proposal-stale" className="ai-proposal__warning">
           Stale — the project changed since validation. Re-run the dry-run, then approve again.
@@ -260,44 +400,83 @@ export function AiProposalDetail({
                 {command.type}
               </span>
             </span>
-            <CommandPayload command={command} />
+            {command.type === 'AiAnimationAssetBatch' ? (
+              <span>See the visual asset review above.</span>
+            ) : (
+              <CommandPayload command={command} />
+            )}
           </label>
         ))}
       </div>
-      <div className="ai-proposal__actions">
-        <button
-          data-testid="ai-proposal-dry-run"
-          disabled={proposalBusy || selected.length === 0}
-          onClick={handleDryRun}
-        >
-          Dry-run validate
-        </button>
-        <button
-          data-testid="ai-proposal-approve"
-          disabled={proposalBusy || selected.length === 0 || stale}
-          title={stale ? 'Re-run the dry-run first — the project moved.' : undefined}
-          onClick={handleApprove}
-        >
-          Approve subset
-        </button>
-        <button
-          data-testid="ai-proposal-execute"
-          disabled={proposalBusy || proposal.status !== 'approved' || stale}
-          title={
-            stale
-              ? 'Re-run the dry-run first — the project moved.'
-              : proposal.status !== 'approved'
-                ? 'Approve the subset first.'
-                : undefined
-          }
-          onClick={handleExecute}
-        >
-          Execute approved
-        </button>
-        <button data-testid="ai-proposal-undo" onClick={() => dispatcher?.undo()}>
-          Undo last
-        </button>
-      </div>
+      {proposal.status !== 'rejected' && proposal.status !== 'executed' && (
+        <div className="ai-proposal__actions">
+          <button
+            data-testid="ai-proposal-dry-run"
+            disabled={proposalBusy || selected.length === 0}
+            onClick={handleDryRun}
+          >
+            Dry-run validate
+          </button>
+          <button
+            data-testid="ai-proposal-approve"
+            disabled={proposalBusy || selected.length === 0 || stale}
+            title={stale ? 'Re-run the dry-run first — the project moved.' : undefined}
+            onClick={handleApprove}
+          >
+            Approve subset
+          </button>
+          <button
+            data-testid="ai-proposal-execute"
+            disabled={proposalBusy || proposal.status !== 'approved' || stale}
+            title={
+              stale
+                ? 'Re-run the dry-run first — the project moved.'
+                : proposal.status !== 'approved'
+                  ? 'Approve the subset first.'
+                  : undefined
+            }
+            onClick={handleExecute}
+          >
+            Execute approved
+          </button>
+          {(assetOperations || animationScript) && (
+            <button
+              data-testid="ai-proposal-approve-and-apply"
+              disabled={proposalBusy || selected.length === 0 || stale}
+              onClick={() => void handleApproveAndApply()}
+            >
+              Approve and apply
+            </button>
+          )}
+          <button data-testid="ai-proposal-undo" onClick={() => dispatcher?.undo()}>
+            Undo last
+          </button>
+        </div>
+      )}
+      {proposal.status === 'rejected' ? (
+        <div data-testid="ai-proposal-rejected">Denied — {proposal.rejectionFeedback}</div>
+      ) : (
+        proposal.status !== 'executed' && (
+          <div data-testid="ai-proposal-deny">
+            <label>
+              Feedback for the next draft
+              <textarea
+                data-testid="ai-proposal-denial-feedback"
+                value={denialFeedback}
+                onChange={(event) => setDenialFeedback(event.target.value)}
+              />
+            </label>
+            <button
+              data-testid="ai-proposal-deny-button"
+              disabled={proposalBusy}
+              onClick={() => void handleDeny()}
+            >
+              Deny and revise
+            </button>
+            {denialError && <div role="alert">{denialError}</div>}
+          </div>
+        )
+      )}
       {dryRunMessage && (
         <div data-testid="ai-proposal-dry-run-message" className="ai-proposal__notice">
           {dryRunMessage}

@@ -8,7 +8,14 @@ import {
   isStale,
   validateProposalSchema,
 } from '../ai/proposals'
-import { CreateProjectCommand, CreateSlideCommand, createCommandSystem } from '../engine/commands'
+import {
+  CommandDispatcher,
+  CreateProjectCommand,
+  CreateSlideCommand,
+  UndoStack,
+  createCommandSystem,
+} from '../engine/commands'
+import { createEngineInternal } from '../engine/internal'
 import { CreatePrompterPartCommand } from '../engine/commands/createPrompterPartCommand'
 
 function setup() {
@@ -51,6 +58,35 @@ describe('AI proposal schema (mirrors server first)', () => {
     expect(result.ok).toBe(false)
     expect(result.errors[0].message).toContain('DeleteEverything')
     expect(result.errors[0].message).toMatch(/Allowed|allowed/)
+  })
+
+  it('accepts a reviewed animation-asset operation with explicit create/update intent', () => {
+    const accepted = validateProposalSchema([
+      {
+        type: 'AiAnimationAssetBatch',
+        operations: [
+          {
+            kind: 'upsertShape',
+            action: 'create',
+            sourceShapeId: 'shape-rest',
+            nodeId: 'paw-node',
+            shape: { id: 'shape-new', name: 'Resting paw', vertices: [{ x: 0, y: 0 }] },
+          },
+        ],
+      },
+    ])
+    expect(accepted.ok).toBe(true)
+
+    const ambiguous = validateProposalSchema([
+      {
+        type: 'AiAnimationAssetBatch',
+        operations: [{ kind: 'upsertClip', nodeId: 'paw-node', clip: { id: 'clip-new' } }],
+      },
+    ])
+    expect(ambiguous.ok).toBe(false)
+    expect(ambiguous.errors.map((entry) => entry.message).join(' ')).toMatch(
+      /action.*create or update/i,
+    )
   })
 
   it('blocks missing fields and inline base64 asset refs', () => {
@@ -134,6 +170,48 @@ describe('AI proposal dry-run (client second, in order)', () => {
 })
 
 describe('AI proposal execution (one Transaction, one History Entry)', () => {
+  it('applies and undoes a reviewed Animation Script with replace-by-footprint semantics', () => {
+    const engine = createEngineInternal()
+    engine.createProject({ name: 'Paw animation' })
+    const slide = engine.createSlide('Room')
+    const paw = engine.createNode(slide.scene.id, slide.scene.root.id, 'Paw')
+    const undoStack = new UndoStack()
+    const dispatcher = new CommandDispatcher(engine, undoStack, () => undefined)
+    const system = { dispatcher, undoStack }
+    const historyBeforeApply = undoStack.entries.length
+    const source = [
+      'script "Paw tuck" from 0',
+      'bind paw = node("Paw")',
+      'paw.tween({ x: 10 }, 1)',
+    ].join('\n')
+    const proposal = [{ type: 'AiRunAnimationScript', slideId: slide.id, source }]
+    const before = computeProjectFingerprint(engine)
+
+    expect(dryRunValidate(engine, proposal).ok).toBe(true)
+    expect(computeProjectFingerprint(engine)).toBe(before)
+    const result = executeProposal(system, proposal)
+
+    expect(result.ok).toBe(true)
+    expect(undoStack.entries).toHaveLength(historyBeforeApply + 1)
+    expect(engine.getSlide(slide.id).animationScript?.source).toBe(source)
+    expect(engine.getKeyframes(paw.id, 'positionX')).toHaveLength(2)
+
+    undoStack.undo(engine)
+    expect(engine.getSlide(slide.id).animationScript).toBeNull()
+    expect(engine.getKeyframes(paw.id, 'positionX')).toHaveLength(0)
+    undoStack.redo(engine)
+    expect(engine.getSlide(slide.id).animationScript?.source).toBe(source)
+
+    const deletion = [{ type: 'AiDeleteAnimationScript', slideId: slide.id }]
+    expect(dryRunValidate(engine, deletion).ok).toBe(true)
+    expect(executeProposal(system, deletion).ok).toBe(true)
+    expect(engine.getSlide(slide.id).animationScript).toBeNull()
+    expect(engine.getKeyframes(paw.id, 'positionX')).toHaveLength(0)
+    undoStack.undo(engine)
+    expect(engine.getSlide(slide.id).animationScript?.source).toBe(source)
+    expect(engine.getKeyframes(paw.id, 'positionX')).toHaveLength(2)
+  })
+
   it('executes the chosen subset as one Transaction with one History Entry', () => {
     const { system, slideId, baseline } = setup()
     const commands = [

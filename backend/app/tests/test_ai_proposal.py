@@ -116,6 +116,51 @@ def test_create_valid_proposal_without_touching_project(client: TestClient) -> N
     assert client.get("/api/projects/p-prop-1").text == before
 
 
+def test_animation_asset_proposal_is_schema_valid_and_denial_feedback_persists(
+    client: TestClient,
+) -> None:
+    _make_project(client, "p-asset-proposal")
+    conv_id = _make_conversation(client, "p-asset-proposal")
+    proposal = client.post(
+        "/api/ai/proposals",
+        json={
+            "projectId": "p-asset-proposal",
+            "conversationId": conv_id,
+            "title": "Create a paw pose",
+            "commands": [
+                {
+                    "type": "AiAnimationAssetBatch",
+                    "operations": [
+                        {
+                            "kind": "upsertShape",
+                            "action": "create",
+                            "sourceShapeId": "rest-paw",
+                            "nodeId": "paw-node",
+                            "shape": {
+                                "id": "new-paw-pose",
+                                "name": "Resting paw",
+                                "vertices": [{"x": 0, "y": 0}],
+                            },
+                        }
+                    ],
+                }
+            ],
+            "projectFingerprint": "fp-asset",
+        },
+    )
+    assert proposal.status_code == 201, proposal.text
+    assert proposal.json()["validation"]["ok"] is True
+    assert proposal.json()["rejectionFeedback"] is None
+
+    rejected = client.post(
+        f"/api/ai/proposals/{proposal.json()['id']}/reject",
+        json={"feedback": "Keep the toes closer together."},
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["status"] == "rejected"
+    assert rejected.json()["rejectionFeedback"] == "Keep the toes closer together."
+
+
 def test_proposal_attaches_to_conversation_message(client: TestClient) -> None:
     _make_project(client, "p-prop-msg")
     conv_id = _make_conversation(client, "p-prop-msg")

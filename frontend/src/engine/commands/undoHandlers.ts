@@ -36,6 +36,20 @@ function restoreMergeSnapshot(
   engine.applyLessonSnapshot(snapshot, engine.activeSlideId)
 }
 
+function restoreAnimationAssetBatchSnapshot(
+  engine: Engine,
+  inverse: unknown,
+  key: 'before' | 'after',
+): void {
+  const snapshot = (inverse as Record<string, unknown> | null)?.[key] as
+    import('../json').LessonJSON | undefined
+  if (!snapshot || typeof snapshot !== 'object') {
+    throw new Error(`AiAnimationAssetBatch inverse is corrupt — cannot restore ${key} snapshot`)
+  }
+  const activeSlideId = (inverse as Record<string, unknown>).activeSlideId
+  engine.applyLessonSnapshot(snapshot, typeof activeSlideId === 'string' ? activeSlideId : null)
+}
+
 export function applyUndo(
   engine: Engine,
   type: string,
@@ -2122,6 +2136,18 @@ export function applyUndo(
       restoreMergeSnapshot(engine, inv, 'preMerge', 'undo')
       return
     }
+    case 'AiAnimationAssetBatch': {
+      restoreAnimationAssetBatchSnapshot(engine, inv, 'before')
+      return
+    }
+    case 'AiRunAnimationScript': {
+      restoreAnimationAssetBatchSnapshot(engine, inv, 'before')
+      return
+    }
+    case 'AiDeleteAnimationScript': {
+      restoreAnimationAssetBatchSnapshot(engine, inv, 'before')
+      return
+    }
     case 'CreateTable': {
       const tableNodeId = inv.tableNodeId as string
       try {
@@ -4158,6 +4184,18 @@ export function applyRedo(
       // Assembly merge redo: re-apply the stored post-merge snapshot,
       // keeping the ambient active slide when it still exists.
       restoreMergeSnapshot(engine, _inverse, 'postMerge', 'redo')
+      return
+    }
+    case 'AiAnimationAssetBatch': {
+      restoreAnimationAssetBatchSnapshot(engine, _inverse, 'after')
+      return
+    }
+    case 'AiRunAnimationScript': {
+      restoreAnimationAssetBatchSnapshot(engine, _inverse, 'after')
+      return
+    }
+    case 'AiDeleteAnimationScript': {
+      restoreAnimationAssetBatchSnapshot(engine, _inverse, 'after')
       return
     }
     case 'CreateTable': {

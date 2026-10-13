@@ -9,6 +9,12 @@ import { ReplacePrompterWordsCommand } from '../engine/commands/replacePrompterW
 import { SetPrompterPartAudioCommand } from '../engine/commands/setPrompterPartAudioCommand'
 import { SetSlideAnimationScriptCommand } from '../engine/commands/setSlideAnimationScriptCommand'
 import { ImportSlidesCommand } from '../engine/commands/importSlidesCommand'
+import { AiAnimationAssetBatchCommand } from '../engine/commands/aiAnimationAssetBatchCommand'
+import {
+  AiDeleteAnimationScriptCommand,
+  AiRunAnimationScriptCommand,
+} from '../engine/commands/aiRunAnimationScriptCommand'
+import type { AnimationAssetOperation } from './animationAssetOperations'
 import type { EnginePublic } from '../engine'
 
 /**
@@ -32,6 +38,9 @@ export const AI_COMMAND_ALLOWLIST: readonly string[] = [
   'AiSetControlValue',
   'AiPlaceMouthClip',
   'SetSlideAnimationScript',
+  'AiAnimationAssetBatch',
+  'AiRunAnimationScript',
+  'AiDeleteAnimationScript',
   'AiCreateBoardText',
   'AiCreateBoardTable',
   'AiImportSlides',
@@ -214,6 +223,102 @@ export function validateProposalSchema(commands: unknown): ProposalSchemaResult 
       }
     } else if (ctype === 'SetSlideAnimationScript')
       errors.push(...required(command, index, ctype, ['slideId', 'source']))
+    else if (ctype === 'AiAnimationAssetBatch') {
+      errors.push(...required(command, index, ctype, ['operations']))
+      if (!Array.isArray(command.operations) || command.operations.length === 0) {
+        errors.push(error(index, ctype, 'operations must be a non-empty array.'))
+      } else {
+        if (
+          command.operations.length > 1 &&
+          command.operations.some(
+            (entry) =>
+              typeof entry === 'object' &&
+              entry !== null &&
+              String((entry as Record<string, unknown>).kind ?? '').startsWith('upsert'),
+          )
+        ) {
+          errors.push(
+            error(
+              index,
+              ctype,
+              'create/update proposals must contain one operation per approval step.',
+            ),
+          )
+        }
+        const requiredByKind: Record<string, readonly string[]> = {
+          upsertShape: ['action', 'nodeId', 'shape'],
+          deleteShape: ['nodeId', 'shapeId'],
+          upsertClip: ['action', 'nodeId', 'clip'],
+          deleteClip: ['clipId'],
+          deleteClipInstance: ['nodeId', 'instanceId'],
+          upsertCollection: ['action', 'collection'],
+          deleteCollection: ['collectionId'],
+        }
+        command.operations.forEach((rawOperation, operationIndex) => {
+          if (
+            typeof rawOperation !== 'object' ||
+            rawOperation === null ||
+            Array.isArray(rawOperation)
+          ) {
+            errors.push(error(index, ctype, `operation #${operationIndex} must be an object.`))
+            return
+          }
+          const operation = rawOperation as Record<string, unknown>
+          const kind = operation.kind
+          const fields = typeof kind === 'string' ? requiredByKind[kind] : undefined
+          if (!fields) {
+            errors.push(error(index, ctype, `operation #${operationIndex} has unsupported kind.`))
+            return
+          }
+          for (const field of fields) {
+            const value = operation[field]
+            if (
+              value === undefined ||
+              value === null ||
+              (typeof value === 'string' && !value.trim())
+            ) {
+              errors.push(
+                error(index, ctype, `operation #${operationIndex} is missing '${field}'.`),
+              )
+            }
+          }
+          if (
+            ['upsertShape', 'upsertClip', 'upsertCollection'].includes(String(kind)) &&
+            operation.action !== 'create' &&
+            operation.action !== 'update'
+          ) {
+            errors.push(
+              error(index, ctype, `operation #${operationIndex} action must be create or update.`),
+            )
+          }
+          if (
+            ['upsertShape', 'upsertClip', 'upsertCollection'].includes(String(kind)) &&
+            operation.action === 'update' &&
+            (typeof operation.targetId !== 'string' || !operation.targetId.trim())
+          ) {
+            errors.push(
+              error(index, ctype, `operation #${operationIndex} update requires targetId.`),
+            )
+          }
+          if (
+            kind === 'upsertShape' &&
+            operation.action === 'create' &&
+            (typeof operation.sourceShapeId !== 'string' || !operation.sourceShapeId.trim())
+          ) {
+            errors.push(
+              error(
+                index,
+                ctype,
+                `operation #${operationIndex} Shape create requires sourceShapeId.`,
+              ),
+            )
+          }
+        })
+      }
+    } else if (ctype === 'AiRunAnimationScript')
+      errors.push(...required(command, index, ctype, ['slideId', 'source']))
+    else if (ctype === 'AiDeleteAnimationScript')
+      errors.push(...required(command, index, ctype, ['slideId']))
     else if (ctype === 'AiCreateBoardText')
       errors.push(...required(command, index, ctype, ['slideId', 'text']))
     else if (ctype === 'AiCreateBoardTable')
@@ -481,6 +586,19 @@ export function buildCommandFromJson(json: AiCommandJson): Command<unknown> {
       return new SetSlideAnimationScriptCommand({
         slideId: asString(params.slideId, 'slideId', ctype),
         source: params.source as string,
+      })
+    case 'AiAnimationAssetBatch':
+      return new AiAnimationAssetBatchCommand({
+        operations: params.operations as AnimationAssetOperation[],
+      })
+    case 'AiRunAnimationScript':
+      return new AiRunAnimationScriptCommand({
+        slideId: asString(params.slideId, 'slideId', ctype),
+        source: asString(params.source, 'source', ctype),
+      })
+    case 'AiDeleteAnimationScript':
+      return new AiDeleteAnimationScriptCommand({
+        slideId: asString(params.slideId, 'slideId', ctype),
       })
     case 'AiCommitTts':
       // Stage C real command (issue #425): binds an already-embedded voice

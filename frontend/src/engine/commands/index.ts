@@ -169,6 +169,19 @@ export type {
 export { SetKeyframeWrapCommand } from './setKeyframeWrapCommand'
 export type { SetKeyframeWrapInverse, SetKeyframeWrapParameters } from './setKeyframeWrapCommand'
 export { CreateClipCommand } from './createClipCommand'
+export { AiAnimationAssetBatchCommand } from './aiAnimationAssetBatchCommand'
+export {
+  AiRunAnimationScriptCommand,
+  AiDeleteAnimationScriptCommand,
+} from './aiRunAnimationScriptCommand'
+export type {
+  AiRunAnimationScriptInverse,
+  AiRunAnimationScriptParameters,
+} from './aiRunAnimationScriptCommand'
+export type {
+  AiAnimationAssetBatchInverse,
+  AiAnimationAssetBatchParameters,
+} from './aiAnimationAssetBatchCommand'
 export type { CreateClipInverse, CreateClipParameters } from './createClipCommand'
 export { DeleteClipCommand } from './deleteClipCommand'
 export type { DeleteClipInverse, DeleteClipParameters } from './deleteClipCommand'

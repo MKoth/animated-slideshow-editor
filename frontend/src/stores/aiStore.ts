@@ -287,6 +287,7 @@ interface AiState {
     id: string,
     input: { historyEntryId: string; executedIndexes: number[]; success: boolean; error?: string },
   ) => Promise<void>
+  rejectProposal: (id: string, feedback: string) => Promise<AiProposal | null>
 }
 
 function isBackendDown(error: unknown): boolean {
@@ -1733,6 +1734,31 @@ export const useAiStore = create<AiState>()(
           }))
         } catch (error) {
           if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+      rejectProposal: async (id, feedback) => {
+        set({ proposalBusy: true, proposalError: null })
+        try {
+          const proposal = await get().api.rejectProposal(id, feedback)
+          set((state) => ({
+            proposalById: { ...state.proposalById, [id]: proposal },
+            proposals: state.proposals.map((p) => (p.id === id ? proposal : p)),
+          }))
+          return proposal
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return null
+          }
+          set({
+            proposalError: {
+              code: 'proposal_reject_failed',
+              message: error instanceof Error ? error.message : 'Could not record denial feedback.',
+            },
+          })
+          return null
+        } finally {
+          set({ proposalBusy: false })
         }
       },
     }),

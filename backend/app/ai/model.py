@@ -115,6 +115,7 @@ class AiProposalRow(Base):
     )
     dry_run_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     selected_indexes_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    rejection_feedback: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 

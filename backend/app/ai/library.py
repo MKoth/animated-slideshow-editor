@@ -2280,6 +2280,8 @@ class AiLibrary:
             row = session.get(AiProposalRow, proposal_id)
             if row is None:
                 raise KeyError(proposal_id)
+            if row.status == "rejected":
+                raise ValueError("a rejected proposal cannot be revalidated")
             row.validated_fingerprint = project_fingerprint
             row.dry_run_json = _json.dumps(
                 {
@@ -2289,6 +2291,24 @@ class AiLibrary:
                 }
             )
             row.status = "dry_run_ok" if ok else "dry_run_failed"
+            row.updated_at = _now()
+            session.commit()
+        return self.get_proposal(proposal_id)
+
+    def reject_proposal(self, proposal_id: str, feedback: str) -> AiProposalRow:
+        clean = feedback.strip()
+        if not clean:
+            raise ValueError("rejection feedback must not be empty")
+        with self._database.session() as session:
+            row = session.get(AiProposalRow, proposal_id)
+            if row is None:
+                raise KeyError(proposal_id)
+            if row.status == "rejected":
+                raise ValueError("a rejected proposal cannot be approved")
+            if row.status in ("executed", "execution_failed"):
+                raise ValueError("an executed proposal cannot be rejected")
+            row.status = "rejected"
+            row.rejection_feedback = clean
             row.updated_at = _now()
             session.commit()
         return self.get_proposal(proposal_id)

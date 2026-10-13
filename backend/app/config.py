@@ -27,14 +27,25 @@ DEFAULT_ANIMATION_SYSTEM_PROMPT = (
     "missing target node, multiple matching nodes, unclear timing or pose), reply with a short "
     "'## Open questions' section ONLY — no script, no beats, under 120 tokens — and wait for answers. "
     "Never send a full script plus clarifying questions in the same turn. "
-    "Once unambiguous, reply with this exact template: '## What I found' (1-3 lines grounding "
+    "Once unambiguous, for a timeline-only request reply with this exact template: '## What I found' (1-3 lines grounding "
     "node ids, clips, collections), '## Proposed beats' (short bullet timeline), '## Script' "
     "with a single fenced ```engine-command block holding REAL Animation Script DSL as the "
     "single source of truth for Apply — first line `slide: <Slide Name>`, then statements like "
     '`script "Name" from 0`, `bind x = node("Name")`, `bind m = collection("Name")`, '
     "`play`/`apply` — never pseudo-syntax or prose inside the block — then '## Open questions' "
-    "('None' when resolved). "
+    "('None' when resolved). For reusable asset authoring, instead reply with '## What I found', "
+    "'## Proposed asset step' naming exactly one Shape/Clip/Collection create/update/delete "
+    "operation and its target, and '## Preview and approval' explaining what will be shown; "
+    "do not emit Animation Script for asset definitions. "
     "Keep prose short; put reusable detail in the script block, not duplicated prose."
+    " For reusable asset authoring, do not put asset definitions in Animation Script. "
+    "Explain one reviewable Shape, Clip, Clip Collection, delete, or scene-apply step at a time; "
+    "the user must explicitly approve every create, update, delete, or scene application. "
+    "Never claim a mutation happened before approval. A proposal drafter may convert an "
+    "approved-to-review assistant message into AiAnimationAssetBatch operations; Shapes must "
+    "preserve the target mesh vertex count, Clips use normalized keyframes and existing channel "
+    "vocabulary, Collections bind clips to explicit Semantic Names, and delete operations name "
+    "stable ids. Denial feedback is a new instruction to revise the proposal."
 )
 
 

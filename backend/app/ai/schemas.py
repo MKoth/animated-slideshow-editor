@@ -124,6 +124,10 @@ class AiProposalExecute(BaseModel):
     error: str = ""
 
 
+class AiProposalReject(BaseModel):
+    feedback: str = Field(min_length=1, max_length=4000)
+
+
 class AiScenarioStepIn(BaseModel):
     partTag: Literal["intro", "middle", "outro"]
     spokenLine: str = Field(min_length=1)

@@ -54,6 +54,7 @@ from app.ai.schemas import (
     AiProposalDraft,
     AiProposalDryRun,
     AiProposalExecute,
+    AiProposalReject,
     AiReconciliationCreate,
     AiReconciliationDecision,
     AiReconciliationUpdate,
@@ -2827,6 +2828,9 @@ PROPOSAL_COMMAND_TYPES: tuple[str, ...] = (
     "ReplacePrompterWords",
     "SetPrompterPartAudio",
     "SetSlideAnimationScript",
+    "AiAnimationAssetBatch",
+    "AiRunAnimationScript",
+    "AiDeleteAnimationScript",
     "AiCommitTts",
     "AiImportSlides",
 )
@@ -2929,7 +2933,37 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
         "a short title plus a JSON array of canonical engine commands that "
         "implement exactly what the message describes and nothing more. "
         f"Use only these command types: {', '.join(PROPOSAL_COMMAND_TYPES)}. "
-        "Reply as a single JSON object with title and commands."
+        + (
+            " For a reviewed timeline-only Animation Script, use AiRunAnimationScript so the "
+            "proposal both stores the source and runs its compiled timeline output with "
+            "replace-by-footprint semantics. For deleting a retained script and its output, "
+            "use AiDeleteAnimationScript. Do not use SetSlideAnimationScript for scene apply."
+            if effective_mode == "animation"
+            else ""
+        )
+        + " Reply as a single JSON object with title and commands."
+        + (
+            " For reusable Shape, Clip, or Clip Collection authoring, use one "
+            "AiAnimationAssetBatch command with exactly the reviewed operation(s). "
+            "Each upsert must state action=create or action=update; updates must set targetId "
+            "to an existing stable id supplied by context. Never invent an update target id. "
+            "Use context.animation.shapeGeometry as source vertex data; if geometry is "
+            "missing, ask for the target object to be selected and refreshed in context; if its "
+            "full vertices are still absent, ask for artist-authored geometry rather than "
+            "inventing coordinates. A Shape create must name sourceShapeId and provide every "
+            "vertex position at the target mesh's unchanged vertex count. "
+            "A Clip is a complete ClipJSON with normalized keyframe times, and may include "
+            "morphAnimation referring to the target node's Shape names. A Collection is a "
+            "ClipCollectionJSON whose bindings map explicit Semantic Names to existing or "
+            "proposed Clip ids and include sourceNodeId for whole-rig preview. Deletes use exact "
+            "stable ids from context. When a Clip delete has Collection bindings or scene "
+            "instances, list those dependents and include deleteCollection/deleteClipInstance "
+            "operations only when the user's request includes those dependent removals. "
+            "Do not combine "
+            "independent authoring stages; create/update one asset step at a time."
+            if effective_mode == "animation"
+            else ""
+        )
         + (f" Extra instruction: {hint}" if hint else "")
         + f"\n\nAssistant message:\n{message.content}"
     )
@@ -3102,6 +3136,7 @@ def _proposal_to_out(request: Request, proposal_id: str) -> dict[str, object]:
         "validatedFingerprint": row.validated_fingerprint,
         "dryRun": dry_run if isinstance(dry_run, dict) else {},
         "selectedIndexes": selected if isinstance(selected, list) else [],
+        "rejectionFeedback": getattr(row, "rejection_feedback", None),
         "executions": executions,
         "created": _iso(row.created_at),
         "modified": _iso(row.updated_at),
@@ -3185,6 +3220,20 @@ def post_ai_proposal_approve(
     out = _proposal_to_out(request, row.id)
     out["executableCommands"] = subset
     return out
+
+
+@router.post("/ai/proposals/{proposal_id}/reject")
+def post_ai_proposal_reject(
+    request: Request, proposal_id: str, body: AiProposalReject
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        row = library.reject_proposal(proposal_id, body.feedback)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="proposal not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _proposal_to_out(request, row.id)
 
 
 @router.post("/ai/proposals/{proposal_id}/execute")

@@ -45,7 +45,7 @@ const userMessage: AiMessage = {
   created: now(),
 }
 
-function attachedProposal(projectId: string) {
+function attachedProposal(projectId: string, mode = 'lesson') {
   return {
     id: 'prop-1',
     projectId,
@@ -53,7 +53,23 @@ function attachedProposal(projectId: string) {
     messageId: 'm-1',
     title: 'Middle fill',
     status: 'validated',
-    commands: [{ type: 'CreateSlide', name: 'Middle 1' }],
+    commands:
+      mode === 'animation'
+        ? [
+            {
+              type: 'AiAnimationAssetBatch',
+              operations: [
+                {
+                  kind: 'upsertShape',
+                  action: 'create',
+                  sourceShapeId: 'shape-rest',
+                  nodeId: 'n-paw',
+                  shape: { id: 'shape-pose', name: 'Resting paw', vertices: [] },
+                },
+              ],
+            },
+          ]
+        : [{ type: 'CreateSlide', name: 'Middle 1' }],
     validation: { ok: true, errors: [] },
     baseFingerprint: 'fp-base',
     validatedFingerprint: null,
@@ -74,10 +90,10 @@ function unattachedProposal(projectId: string) {
   }
 }
 
-function installFetch(projectId: string, draftFailure = false) {
-  const conv = { id: 'c-1', projectId, title: 'Chat', mode: 'lesson', modified: now() }
+function installFetch(projectId: string, draftFailure = false, mode = 'lesson') {
+  const conv = { id: 'c-1', projectId, title: 'Chat', mode, modified: now() }
   const messages = [userMessage, assistantMessage]
-  const proposals = [attachedProposal(projectId), unattachedProposal(projectId)]
+  const proposals = [attachedProposal(projectId, mode), unattachedProposal(projectId)]
   vi.mocked(fetch).mockImplementation(async (url: unknown, init?: unknown) => {
     const path = String(url)
     const method = (init as RequestInit | undefined)?.method ?? 'GET'
@@ -153,25 +169,25 @@ function installFetch(projectId: string, draftFailure = false) {
   })
 }
 
-function renderInline(draftFailure = false) {
+function renderInline(draftFailure = false, mode: 'lesson' | 'animation' = 'lesson') {
   const { value, projectId } = seedEngine()
-  installFetch(projectId, draftFailure)
+  installFetch(projectId, draftFailure, mode)
   useAiStore.setState({
-    conversations: [{ id: 'c-1', projectId, title: 'Chat', mode: 'lesson', modified: now() }],
+    conversations: [{ id: 'c-1', projectId, title: 'Chat', mode, modified: now() }],
     messagesById: { 'c-1': [userMessage, assistantMessage] },
-    activeByProject: { [`${projectId}:lesson`]: 'c-1' },
+    activeByProject: { [`${projectId}:${mode}`]: 'c-1' },
     drafts: {},
     search: '',
     panelOpen: true,
-    assistantMode: 'lesson',
+    assistantMode: mode as 'lesson' | 'animation',
     settingsOpen: false,
     status: 'idle',
     streamingConversationId: null,
     streamingContent: '',
     lastError: null,
-    proposals: [attachedProposal(projectId) as never, unattachedProposal(projectId) as never],
+    proposals: [attachedProposal(projectId, mode) as never, unattachedProposal(projectId) as never],
     proposalById: {
-      'prop-1': attachedProposal(projectId) as never,
+      'prop-1': attachedProposal(projectId, mode) as never,
       'prop-stage': unattachedProposal(projectId) as never,
     },
     activeProposalId: 'prop-1',
@@ -214,6 +230,17 @@ describe('AiPanel inline proposals', () => {
     // User messages get no propose affordance.
     expect(screen.queryByTestId('ai-message-propose-m-0')).not.toBeInTheDocument()
     expect(screen.getByTestId('ai-message-propose-m-1')).toBeInTheDocument()
+  })
+
+  it('keeps animation proposal previews and approvals inline in conversation history', async () => {
+    renderInline(false, 'animation')
+    const card = await screen.findByTestId('ai-message-proposal-prop-1')
+    expect(card).toHaveTextContent('create Shape “Resting paw”')
+    expect(within(card).getByTestId('ai-animation-asset-preview')).toBeInTheDocument()
+    expect(within(card).getByTestId('ai-proposal-approve-and-apply')).toBeInTheDocument()
+    expect(within(card).getByTestId('ai-proposal-denial-feedback')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-proposal-modal')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-message-propose-m-1')).not.toBeInTheDocument()
   })
 
   it('opens the review modal from the card and closes it', async () => {

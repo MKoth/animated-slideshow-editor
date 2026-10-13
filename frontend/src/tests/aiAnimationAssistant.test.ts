@@ -121,7 +121,12 @@ describe('animation-assistant context snapshot', () => {
     const snapshot = buildContextSnapshot(animationEngine())
     const animation = (snapshot as { animation?: AnimationAssistantSnapshot }).animation!
     expect(animation.rig.shapeInventory).toEqual([
-      { nodeId: 'n-cat', shapeCount: 1, shapeNames: ['Sit'] },
+      {
+        nodeId: 'n-cat',
+        shapeCount: 1,
+        shapeNames: ['Sit'],
+        shapeDetails: [{ id: expect.any(String), name: 'Sit', vertexCount: expect.any(Number) }],
+      },
     ])
     expect(animation.rig.morphBindings).toEqual([
       { nodeId: 'n-cat', fromShapeId: 'shape-a', toShapeId: 'shape-b' },

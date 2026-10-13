@@ -43,7 +43,12 @@ export interface ContextSnapshotCollectionSummary {
 export interface ContextSnapshotRigSummary {
   boneCount: number
   bones: { id: string; name: string }[]
-  shapeInventory: { nodeId: string; shapeCount: number; shapeNames: string[] }[]
+  shapeInventory: {
+    nodeId: string
+    shapeCount: number
+    shapeNames: string[]
+    shapeDetails?: { id: string; name: string; vertexCount: number }[]
+  }[]
   morphBindings: { nodeId: string; fromShapeId: string | null; toShapeId: string | null }[]
   controls: { hostNodeId: string; keys: string[] }[]
 }
@@ -53,6 +58,8 @@ export interface ContextSnapshotTimelineNodeSummary {
   keyframes: number
   clipInstances: number
   placements: number
+  clipInstanceRefs?: { id: string; clipId: string; startTime: number }[]
+  collectionPlacementRefs?: { id: string; collectionId: string }[]
 }
 
 export interface ContextSnapshotTimelineSummary {
@@ -74,6 +81,11 @@ export interface AnimationAssistantSnapshot {
   clips: ContextSnapshotClipSummary[]
   collections: ContextSnapshotCollectionSummary[]
   timeline: ContextSnapshotTimelineSummary
+  shapeGeometry?: {
+    nodeId: string
+    shapes: { id: string; name: string; vertices: { x: number; y: number }[] }[]
+  }[]
+  shapeGeometryTruncated?: boolean
   truncated: {
     nodes: boolean
     clips: boolean
@@ -92,6 +104,8 @@ export const ANIMATION_SNAPSHOT_LIMITS = {
   collections: 100,
   bindingsPerCollection: 50,
   timelineNodes: 150,
+  shapeGeometryVertices: 800,
+  timelineRefsPerNode: 40,
 } as const
 
 export interface ContextSnapshot {
@@ -113,12 +127,27 @@ export interface ContextSnapshot {
   scriptVerbs: string[]
   /** Bounded live-project scene/rig/animation/timeline digest (issue #438). */
   animation: AnimationAssistantSnapshot
+  /** Successfully applied reusable assets previously authored in this conversation. */
+  animationAssistantAssets?: {
+    kind: string
+    id: string
+    name: string
+    action: string
+    proposalId: string
+  }[]
 }
 
 export interface SnapshotSources {
   selection?: readonly string[]
   assetNames?: readonly string[]
   audioNames?: readonly string[]
+  animationAssets?: readonly {
+    kind: string
+    id: string
+    name: string
+    action: string
+    proposalId: string
+  }[]
 }
 
 /** Animatable surface mirrored from engine/animationProperties.ts (Stage B motion checks). */
@@ -206,7 +235,16 @@ export function buildContextSnapshot(
     embeddedAudio: readEmbeddedAudioNames(engine).slice(0, 200),
     animatableParams: [...SNAPSHOT_ANIMATABLE_PARAMS],
     scriptVerbs: [...SNAPSHOT_SCRIPT_VERBS],
-    animation: buildAnimationSnapshot(engine, active, collected, nodesTruncated),
+    animation: buildAnimationSnapshot(
+      engine,
+      active,
+      collected,
+      nodesTruncated,
+      sources.selection ?? [],
+    ),
+    ...(sources.animationAssets && sources.animationAssets.length > 0
+      ? { animationAssistantAssets: sources.animationAssets.map((asset) => ({ ...asset })) }
+      : {}),
   }
   const elapsed = performance.now() - started
   if (elapsed > 50) {
@@ -222,6 +260,7 @@ function buildAnimationSnapshot(
   active: Slide | null,
   collected: readonly { node: SceneNode; depth: number }[],
   nodesTruncated: boolean,
+  selection: readonly string[],
 ): AnimationAssistantSnapshot {
   const nodes: ContextSnapshotNodeSummary[] = []
   const bones: { id: string; name: string }[] = []
@@ -283,16 +322,34 @@ function buildAnimationSnapshot(
       // Engines without morph lanes read as empty.
     }
     let instances = 0
+    let clipInstanceRefs: NonNullable<ContextSnapshotTimelineNodeSummary['clipInstanceRefs']> = []
     try {
       const list = engine.getClipInstances(node.id)
-      if (Array.isArray(list)) instances = list.length
+      if (Array.isArray(list)) {
+        instances = list.length
+        clipInstanceRefs = list
+          .slice(0, ANIMATION_SNAPSHOT_LIMITS.timelineRefsPerNode)
+          .map((instance) => ({
+            id: instance.id,
+            clipId: instance.clipId,
+            startTime: instance.startTime,
+          }))
+      }
     } catch {
       // No instances.
     }
     let placements = 0
+    let collectionPlacementRefs: NonNullable<
+      ContextSnapshotTimelineNodeSummary['collectionPlacementRefs']
+    > = []
     try {
       const list = engine.getCollectionPlacements(node.id)
-      if (Array.isArray(list)) placements = list.length
+      if (Array.isArray(list)) {
+        placements = list.length
+        collectionPlacementRefs = list
+          .slice(0, ANIMATION_SNAPSHOT_LIMITS.timelineRefsPerNode)
+          .map((placement) => ({ id: placement.id, collectionId: placement.collectionId }))
+      }
     } catch {
       // No placements.
     }
@@ -300,13 +357,52 @@ function buildAnimationSnapshot(
     clipInstanceCount += instances
     placementCount += placements
     if (perNode.length < ANIMATION_SNAPSHOT_LIMITS.timelineNodes) {
-      perNode.push({ nodeId: node.id, keyframes, clipInstances: instances, placements })
+      perNode.push({
+        nodeId: node.id,
+        keyframes,
+        clipInstances: instances,
+        placements,
+        ...(clipInstanceRefs.length > 0 ? { clipInstanceRefs } : {}),
+        ...(collectionPlacementRefs.length > 0 ? { collectionPlacementRefs } : {}),
+      })
     }
   }
 
   const { summaries: clips, truncated: clipsTruncated } = readClipSummaries(engine)
   const { summaries: collections, truncated: collectionsTruncated } =
     readCollectionSummaries(engine)
+  const selectedIds = new Set(selection)
+  const geometryOrder = [...collected].sort(
+    (a, b) => Number(selectedIds.has(b.node.id)) - Number(selectedIds.has(a.node.id)),
+  )
+  const shapeGeometry: NonNullable<AnimationAssistantSnapshot['shapeGeometry']> = []
+  let remainingShapeVertices = ANIMATION_SNAPSHOT_LIMITS.shapeGeometryVertices
+  let shapeGeometryTruncated = false
+  for (const { node } of geometryOrder) {
+    if (remainingShapeVertices <= 0) {
+      shapeGeometryTruncated = true
+      break
+    }
+    try {
+      const shapes = engine.getShapes(node.id)
+      const rows: NonNullable<AnimationAssistantSnapshot['shapeGeometry']>[number]['shapes'] = []
+      for (const shape of shapes) {
+        if (shape.vertices.length > remainingShapeVertices) {
+          shapeGeometryTruncated = true
+          continue
+        }
+        rows.push({
+          id: shape.id,
+          name: shape.name,
+          vertices: shape.vertices.map((vertex) => ({ x: vertex.x, y: vertex.y })),
+        })
+        remainingShapeVertices -= shape.vertices.length
+      }
+      if (rows.length > 0) shapeGeometry.push({ nodeId: node.id, shapes: rows })
+    } catch {
+      // Non-mesh nodes do not carry Shape geometry.
+    }
+  }
   let hasAnimationScript = false
   try {
     hasAnimationScript = active?.animationScript != null
@@ -332,6 +428,8 @@ function buildAnimationSnapshot(
       controlHosts: controls.map((entry) => ({ nodeId: entry.hostNodeId, keys: entry.keys })),
       hasAnimationScript,
     },
+    shapeGeometry,
+    shapeGeometryTruncated,
     truncated: {
       nodes: nodesTruncated,
       clips: clipsTruncated,
@@ -432,15 +530,27 @@ function readWorldTransform(node: SceneNode): ContextSnapshotNodeSummary['worldT
 function readShapes(
   engine: EnginePublic,
   nodeId: string,
-): { shapeCount: number; shapeNames: string[] } | null {
+): {
+  shapeCount: number
+  shapeNames: string[]
+  shapeDetails: { id: string; name: string; vertexCount: number }[]
+} | null {
   try {
     const shapes = engine.getShapes(nodeId)
     if (!Array.isArray(shapes)) return null
     const names: string[] = []
+    const shapeDetails: { id: string; name: string; vertexCount: number }[] = []
     for (const shape of shapes.slice(0, ANIMATION_SNAPSHOT_LIMITS.shapesPerNode)) {
-      if (typeof shape?.name === 'string' && shape.name.trim()) names.push(shape.name.trim())
+      if (typeof shape?.name === 'string' && shape.name.trim()) {
+        names.push(shape.name.trim())
+        shapeDetails.push({
+          id: shape.id,
+          name: shape.name.trim(),
+          vertexCount: Array.isArray(shape.vertices) ? shape.vertices.length : 0,
+        })
+      }
     }
-    return { shapeCount: shapes.length, shapeNames: names }
+    return { shapeCount: shapes.length, shapeNames: names, shapeDetails }
   } catch {
     return null
   }

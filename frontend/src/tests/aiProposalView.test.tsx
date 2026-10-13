@@ -1,7 +1,7 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { AiProposalView } from '../components/ai/AiProposalView'
+import { AiProposalDetail, AiProposalView } from '../components/ai/AiProposalView'
 import { EngineContext, type EngineContextValue } from '../app/engineContext'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
@@ -51,6 +51,27 @@ function renderView() {
     </EngineContext.Provider>,
   )
   return { engine, dispatcher, undoStack }
+}
+
+function renderInlineProposal(proposal: AiProposal, onDenyFeedback = vi.fn()) {
+  const engine = createEngineInternal()
+  engine.createProject({ name: 'Demo' })
+  const undoStack = new UndoStack()
+  const dispatcher = new CommandDispatcher(engine, undoStack, () => undefined)
+  const value: EngineContextValue = {
+    engine: toReadOnly(engine),
+    undoStack,
+    dispatcher,
+    dispatch: ((command: never) =>
+      dispatcher.dispatch(command)) as unknown as EngineContextValue['dispatch'],
+    persistence: { save: vi.fn(), onCommandSucceeded: () => undefined, dispose: () => undefined },
+  }
+  render(
+    <EngineContext.Provider value={value}>
+      <AiProposalDetail proposal={proposal} fingerprint="fp-live" onDenyFeedback={onDenyFeedback} />
+    </EngineContext.Provider>,
+  )
+  return onDenyFeedback
 }
 
 beforeEach(() => {
@@ -201,5 +222,44 @@ describe('AiProposalView validate-dry-run-execute pipeline', () => {
     expect(screen.getByTestId('ai-proposal-command-0')).toHaveTextContent(
       'script "Scene Animation Sequence" from 0',
     )
+  })
+
+  it('records denial feedback and sends it back to the assistant for a revision', async () => {
+    const proposal = sampleProposal({
+      commands: [
+        {
+          type: 'AiAnimationAssetBatch',
+          operations: [
+            {
+              kind: 'upsertClip',
+              action: 'create',
+              nodeId: 'paw-node',
+              clip: { id: 'clip-paw', name: 'Paw tuck', duration: 6, channels: [], params: [] },
+            },
+          ],
+        },
+      ],
+    })
+    const onDenyFeedback = vi.fn()
+    renderInlineProposal(proposal, onDenyFeedback)
+    const user = userEvent.setup()
+    await user.type(screen.getByTestId('ai-proposal-denial-feedback'), 'Move more smoothly.')
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ...proposal,
+          status: 'rejected',
+          rejectionFeedback: 'Move more smoothly.',
+        }),
+        {
+          status: 200,
+        },
+      ),
+    )
+
+    await user.click(screen.getByTestId('ai-proposal-deny-button'))
+
+    await waitFor(() => expect(onDenyFeedback).toHaveBeenCalledWith('Move more smoothly.'))
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/reject'))).toBe(true)
   })
 })

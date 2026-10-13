@@ -33,6 +33,9 @@ ALLOWLIST: tuple[str, ...] = (
     "AiPlaceMouthClip",
     # Stage E: board content (real script command + placeholders landing in #427)
     "SetSlideAnimationScript",
+    "AiAnimationAssetBatch",
+    "AiRunAnimationScript",
+    "AiDeleteAnimationScript",
     "AiCreateBoardText",
     "AiCreateBoardTable",
     # Merge: cross-project import (ImportSlidesCommand, issue #428)
@@ -290,6 +293,189 @@ def _validate_fields(ctype: str, command: dict[str, Any], index: int) -> list[di
         req("slideId", "source")
         if command.get("source") is not None and not isinstance(command.get("source"), str):
             errors.append(_field_error(index, ctype, "source", "must be a string"))
+    elif ctype == "AiAnimationAssetBatch":
+        operations = command.get("operations")
+        if not isinstance(operations, list) or not operations:
+            errors.append(_field_error(index, ctype, "operations", "must be a non-empty list"))
+        elif len(operations) > 40:
+            errors.append(
+                _field_error(index, ctype, "operations", "must contain at most 40 operations")
+            )
+        elif len(operations) > 1 and any(
+            isinstance(operation, dict) and str(operation.get("kind", "")).startswith("upsert")
+            for operation in operations
+        ):
+            errors.append(
+                _field_error(
+                    index,
+                    ctype,
+                    "operations",
+                    "must contain one create/update operation per approval step",
+                )
+            )
+        else:
+            supported = {
+                "upsertShape": ("action", "nodeId", "shape"),
+                "deleteShape": ("nodeId", "shapeId"),
+                "upsertClip": ("action", "nodeId", "clip"),
+                "deleteClip": ("clipId",),
+                "deleteClipInstance": ("nodeId", "instanceId"),
+                "upsertCollection": ("action", "collection"),
+                "deleteCollection": ("collectionId",),
+            }
+            for operation_index, operation in enumerate(operations):
+                if not isinstance(operation, dict):
+                    errors.append(
+                        _field_error(
+                            index, ctype, f"operations[{operation_index}]", "must be an object"
+                        )
+                    )
+                    continue
+                kind = operation.get("kind")
+                fields = supported.get(kind) if isinstance(kind, str) else None
+                if fields is None:
+                    errors.append(
+                        _field_error(
+                            index, ctype, f"operations[{operation_index}].kind", "is unsupported"
+                        )
+                    )
+                    continue
+                if kind in ("upsertShape", "upsertClip", "upsertCollection") and operation.get(
+                    "action"
+                ) not in ("create", "update"):
+                    errors.append(
+                        _field_error(
+                            index,
+                            ctype,
+                            f"operations[{operation_index}].action",
+                            "must be create or update",
+                        )
+                    )
+                if (
+                    kind == "upsertShape"
+                    and operation.get("action") == "create"
+                    and not _is_non_empty_string(operation.get("sourceShapeId"))
+                ):
+                    errors.append(
+                        _field_error(
+                            index,
+                            ctype,
+                            f"operations[{operation_index}].sourceShapeId",
+                            "is required for a Shape draft",
+                        )
+                    )
+                if (
+                    kind in ("upsertShape", "upsertClip", "upsertCollection")
+                    and operation.get("action") == "update"
+                    and not _is_non_empty_string(operation.get("targetId"))
+                ):
+                    errors.append(
+                        _field_error(
+                            index,
+                            ctype,
+                            f"operations[{operation_index}].targetId",
+                            "is required for an update",
+                        )
+                    )
+                for field in fields:
+                    if operation.get(field) is None:
+                        errors.append(
+                            _field_error(
+                                index,
+                                ctype,
+                                f"operations[{operation_index}].{field}",
+                                "is required",
+                            )
+                        )
+                if kind == "upsertShape":
+                    shape = operation.get("shape")
+                    if not isinstance(shape, dict):
+                        errors.append(
+                            _field_error(
+                                index,
+                                ctype,
+                                f"operations[{operation_index}].shape",
+                                "must be an object",
+                            )
+                        )
+                    else:
+                        if not _is_non_empty_string(shape.get("id")) or not _is_non_empty_string(
+                            shape.get("name")
+                        ):
+                            errors.append(
+                                _field_error(
+                                    index,
+                                    ctype,
+                                    f"operations[{operation_index}].shape",
+                                    "must include a non-empty id and name",
+                                )
+                            )
+                        vertices = shape.get("vertices")
+                        if not isinstance(vertices, list) or not vertices or len(vertices) > 2000:
+                            errors.append(
+                                _field_error(
+                                    index,
+                                    ctype,
+                                    f"operations[{operation_index}].shape.vertices",
+                                    "must contain 1 to 2000 vertices",
+                                )
+                            )
+                        elif any(
+                            not isinstance(vertex, dict)
+                            or not _is_finite_number(vertex.get("x"))
+                            or not _is_finite_number(vertex.get("y"))
+                            for vertex in vertices
+                        ):
+                            errors.append(
+                                _field_error(
+                                    index,
+                                    ctype,
+                                    f"operations[{operation_index}].shape.vertices",
+                                    "must contain finite x/y positions",
+                                )
+                            )
+                elif kind == "upsertClip":
+                    clip = operation.get("clip")
+                    if (
+                        not isinstance(clip, dict)
+                        or not _is_non_empty_string(clip.get("id"))
+                        or not _is_non_empty_string(clip.get("name"))
+                        or not _is_finite_number(clip.get("duration"))
+                        or not isinstance(clip.get("channels"), list)
+                        or not isinstance(clip.get("params", []), list)
+                    ):
+                        errors.append(
+                            _field_error(
+                                index,
+                                ctype,
+                                f"operations[{operation_index}].clip",
+                                "must be a complete ClipJSON with id, name, duration, channels, and params",
+                            )
+                        )
+                elif kind == "upsertCollection":
+                    collection = operation.get("collection")
+                    if (
+                        not isinstance(collection, dict)
+                        or not _is_non_empty_string(collection.get("id"))
+                        or not _is_non_empty_string(collection.get("name"))
+                        or not _is_non_empty_string(collection.get("sourceNodeId"))
+                        or not isinstance(collection.get("bindings"), dict)
+                        or not collection.get("bindings")
+                    ):
+                        errors.append(
+                            _field_error(
+                                index,
+                                ctype,
+                                f"operations[{operation_index}].collection",
+                                "must include id, name, sourceNodeId, and non-empty semantic bindings",
+                            )
+                        )
+    elif ctype == "AiRunAnimationScript":
+        req("slideId", "source")
+        if command.get("source") is not None and not isinstance(command.get("source"), str):
+            errors.append(_field_error(index, ctype, "source", "must be a string"))
+    elif ctype == "AiDeleteAnimationScript":
+        req("slideId")
     elif ctype == "AiCreateBoardText":
         req("slideId", "text")
         num("x") if command.get("x") is not None else None
