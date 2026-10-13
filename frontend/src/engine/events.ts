@@ -15,6 +15,11 @@ export interface ProjectRenamed {
   readonly projectId: string
 }
 
+export interface ProjectChanged {
+  readonly type: 'ProjectChanged'
+  readonly projectId: string
+}
+
 export interface SlideCreated {
   readonly type: 'SlideCreated'
   readonly slideId: string
@@ -434,6 +439,7 @@ export type EngineEvent =
   | ProjectCreated
   | ProjectLoaded
   | ProjectRenamed
+  | ProjectChanged
   | SlideCreated
   | SlideRemoved
   | SlideActivated

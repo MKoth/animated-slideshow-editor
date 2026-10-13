@@ -418,7 +418,7 @@ export class Engine {
     this.#bus.emit({
       type: 'ProjectChanged',
       projectId: project.id,
-    } as unknown as import('./events').EngineEvent)
+    })
   }
 
   deleteScriptFunction(entryId: string): import('./scriptLibrary').ScriptLibraryEntry {
@@ -429,7 +429,7 @@ export class Engine {
     this.#bus.emit({
       type: 'ProjectChanged',
       projectId: project.id,
-    } as unknown as import('./events').EngineEvent)
+    })
     return removed
   }
 
@@ -6290,7 +6290,7 @@ export class Engine {
     this.#bus.emit({
       type: 'ProjectChanged',
       projectId: project.id,
-    } as unknown as import('./events').EngineEvent)
+    })
     if (active) {
       this.#bus.emit({ type: 'SlideActivated', slideId: active })
     }

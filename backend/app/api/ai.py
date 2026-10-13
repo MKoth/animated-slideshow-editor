@@ -2883,32 +2883,47 @@ def _proposal_asset_instructions(effective_mode: str) -> str:
         )
     if effective_mode == "collection":
         return (
-            " For Clip and Clip Collection authoring, use one AiAnimationAssetBatch command "
-            "with exactly the reviewed operation(s). A Clip is a complete ClipJSON with "
-            "normalized keyframe times, and may include morphAnimation referring to the target "
-            "node's Shape names. A Collection is a ClipCollectionJSON whose bindings map "
-            "explicit Semantic Names to existing or proposed Clip ids and include sourceNodeId "
-            "for whole-rig preview. Deletes use exact stable ids from context. When a Clip "
+            " For Clip and Clip Collection authoring, propose a batch: one "
+            "AiAnimationAssetBatch command per asset step, each command carrying exactly "
+            "one create/update operation (multiple deletes allowed in one command only "
+            "when removing dependents together). A batch proposal may carry several such "
+            "single-operation commands — e.g. seven Clip creates, one per rig part — "
+            "reviewed and approved together, executed in order as one Transaction. A Clip is "
+            "a complete ClipJSON with normalized keyframe times, and may include "
+            "morphAnimation referring to the target node's Shape names. A Collection is a "
+            "ClipCollectionJSON whose bindings map explicit Semantic Names to Clip "
+            "ids and include sourceNodeId for whole-rig preview. A batch may close with "
+            "one Collection command that binds the batch's own new Clip ids — put it last, "
+            "one Semantic Name per step, since the dry-run validates and applies commands "
+            "in order on an isolated copy. A Collection referencing clips outside the batch "
+            "must name existing Clip ids from context. "
+            "Deletes use exact stable ids from context. When a Clip "
             "delete has Collection bindings or scene instances, list those dependents and "
             "include deleteCollection/deleteClipInstance operations only when the user's "
             "request includes those dependent removals. Do not emit Shape vertex edits or "
             "animation scripts in this mode; those belong to the Shapes and Animation "
-            "assistants. Create/update one asset step at a time. "
-            "Emit exactly this envelope — flat fields are invalid: "
-            '{"type": "AiAnimationAssetBatch", "operations": [{"kind": "upsertClip", '
-            '"action": "create", "clip": {"id": "<new unique clip id>", "name": "<clip name>", '
-            '"duration": 1, "channels": [...], "params": []}}, '
-            '{"kind": "upsertCollection", "action": "create", '
+            "assistants. One asset step per command, one batch per proposal. "
+            "Emit exactly one of these envelopes — flat fields are invalid: "
+            'Clip: {"type": "AiAnimationAssetBatch", "operations": [{"kind": "upsertClip", '
+            '"action": "create", "nodeId": "<target node id from context>", '
+            '"clip": {"id": "<new unique clip id>", "name": "<clip name>", '
+            '"duration": 1, "channels": [...], "params": []}}]}. '
+            'Collection: {"type": "AiAnimationAssetBatch", "operations": '
+            '[{"kind": "upsertCollection", "action": "create", '
             '"collection": {"id": "<new unique collection id>", "name": "<collection name>", '
             '"sourceNodeId": "<rig root node id from context>", '
-            '"bindings": {"<Semantic Name>": "<clip id>"}}}]}. '
+            '"bindings": {"<Semantic Name>": "<existing clip id>"}}}]}. '
             "A Clip needs id, name, duration, channels, and params; a Collection needs id, "
             "name, sourceNodeId, and non-empty semantic bindings."
         )
     if effective_mode == "animation":
         return (
-            " For reusable Shape, Clip, or Clip Collection authoring, use one "
-            "AiAnimationAssetBatch command with exactly the reviewed operation(s). "
+            " For reusable Shape, Clip, or Clip Collection authoring, propose a batch: one "
+            "AiAnimationAssetBatch command per asset step, each command carrying exactly "
+            "one reviewed create/update operation (multiple deletes allowed in one command "
+            "only when removing dependents together). A batch proposal may carry several "
+            "such single-operation commands, reviewed and approved together and executed "
+            "in order as one Transaction. "
             "Each upsert must state action=create or action=update; updates must set targetId "
             "to an existing stable id supplied by context. Never invent an update target id. "
             "Use context.animation.shapeGeometry as source vertex data; if geometry is "
@@ -2918,8 +2933,11 @@ def _proposal_asset_instructions(effective_mode: str) -> str:
             "vertex position at the target mesh's unchanged vertex count. "
             "A Clip is a complete ClipJSON with normalized keyframe times, and may include "
             "morphAnimation referring to the target node's Shape names. A Collection is a "
-            "ClipCollectionJSON whose bindings map explicit Semantic Names to existing or "
-            "proposed Clip ids and include sourceNodeId for whole-rig preview. Deletes use exact "
+            "ClipCollectionJSON whose bindings map explicit Semantic Names to "
+            "Clip ids and include sourceNodeId for whole-rig preview. A batch may close with "
+            "one Collection command binding the batch's own new Clip ids — put it last, since "
+            "the dry-run validates and applies commands in order on an isolated copy. "
+            "Deletes use exact "
             "stable ids from context. When a Clip delete has Collection bindings or scene "
             "instances, list those dependents and include deleteCollection/deleteClipInstance "
             "operations only when the user's request includes those dependent removals. "

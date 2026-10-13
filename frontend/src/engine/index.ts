@@ -2,7 +2,12 @@ import { createBlankProject, createEngine } from './engine'
 import type { EnginePublic, BlankProjectResult } from './engine'
 
 export { createEngine, createBlankProject }
-export { createIsolatedPreviewEngine, createAnimationScriptPreview } from './aiPreview'
+export {
+  createIsolatedPreviewEngine,
+  createAnimationScriptPreview,
+  validateAndApplyInOrder,
+} from './aiPreview'
+export type { ScratchDryRunFailure } from './aiPreview'
 export type { EnginePublic, BlankProjectResult }
 export type { EngineEvent } from './events'
 export type { SlideActivated } from './events'

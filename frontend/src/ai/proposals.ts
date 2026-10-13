@@ -15,12 +15,13 @@ import {
   AiRunAnimationScriptCommand,
 } from '../engine/commands/aiRunAnimationScriptCommand'
 import type { AnimationAssetOperation } from './animationAssetOperations'
-import type { EnginePublic } from '../engine'
+import { type EnginePublic, validateAndApplyInOrder } from '../engine'
+import type { LessonJSON } from '../engine/json'
 
 /**
  * Canonical AI Edit Proposal allowlist (issue #422). Server schema validation
- * runs first; the client dry-run validate() against the live engine runs
- * second, in order. Stage D placeholders carry typed params here;
+ * runs first; the client dry-run (validate + apply in order on an isolated
+ * scratch copy, live engine untouched) runs second. Stage D placeholders carry typed params here;
  * AiCommitTts landed as a real Stage C command (#425), Stage E boards execute
  * as SetSlideAnimationScript (create-then-reveal inside the script, #427) —
  * AiCreateBoardText/Table stay schema-valid placeholders that never execute
@@ -124,6 +125,129 @@ function mouthScope(
   ) {
     out.push(error(index, ctype, `command #${index} (${ctype}): camera rotation is never written.`))
   }
+  return out
+}
+
+const CLIP_KEYFRAME_MAPS = [
+  'materialChannelAnimations',
+  'circleChannelAnimations',
+  'tableChannelAnimations',
+  'shadowChannelAnimations',
+] as const
+
+const CLIP_SINGLE_ANIMATIONS = [
+  'morphAnimation',
+  'visibleAnimation',
+  'zIndexAnimation',
+  'symmetryAnimation',
+] as const
+
+function keyframesOf(value: unknown): Record<string, unknown>[] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return []
+  const keyframes = (value as Record<string, unknown>).keyframes
+  if (!Array.isArray(keyframes)) return []
+  return keyframes.filter(
+    (entry): entry is Record<string, unknown> =>
+      typeof entry === 'object' && entry !== null && !Array.isArray(entry),
+  )
+}
+
+/** channelAnimations-style maps hold one animation per property — collect across all of them. */
+function keyframesOfGrouped(value: unknown): Record<string, unknown>[] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return []
+  const out: Record<string, unknown>[] = []
+  for (const anim of Object.values(value as Record<string, unknown>)) {
+    out.push(...keyframesOf(anim))
+  }
+  return out
+}
+
+/**
+ * Client mirror of the server clip gate: canonical ClipJSON shape only.
+ * `channels` holds property definitions (never nested keyframes); keyframes
+ * live in the animation maps with normalized times. Rejects the invented
+ * dialect that otherwise parses lossily into empty clips.
+ */
+function validateClipChannels(
+  clip: Record<string, unknown>,
+  index: number,
+  ctype: string,
+  operationIndex: number,
+): ProposalValidationError[] {
+  const out: ProposalValidationError[] = []
+  const prefix = `operation #${operationIndex} clip`
+  const channels = clip.channels
+  if (!Array.isArray(channels)) {
+    out.push(error(index, ctype, `${prefix} must contain a channels list.`))
+    return out
+  }
+  channels.forEach((entry, position) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      out.push(error(index, ctype, `${prefix} channels[${position}] must be an object.`))
+      return
+    }
+    const def = entry as Record<string, unknown>
+    if (typeof def.property !== 'string' || !def.property.trim()) {
+      out.push(
+        error(index, ctype, `${prefix} channels[${position}] must define a non-empty 'property'.`),
+      )
+    } else if ('keyframes' in def) {
+      out.push(
+        error(
+          index,
+          ctype,
+          `${prefix} channels[${position}] must not nest 'keyframes' — keyframes live in the animation maps (channelAnimations, morphAnimation, ...) keyed by property.`,
+        ),
+      )
+    }
+  })
+  const found: Record<string, unknown>[] = [...keyframesOfGrouped(clip.channelAnimations)]
+  let implicit = 0
+  for (const key of CLIP_SINGLE_ANIMATIONS) {
+    const bucket = keyframesOf(clip[key])
+    implicit += bucket.length
+    found.push(...bucket)
+  }
+  for (const key of CLIP_KEYFRAME_MAPS) {
+    const bucket = keyframesOfGrouped(clip[key])
+    implicit += bucket.length
+    found.push(...bucket)
+  }
+  if (found.length === 0) {
+    out.push(
+      error(
+        index,
+        ctype,
+        `${prefix} must carry at least one keyframe — empty Clips are rejected, extract keyframes from the live timeline instead of inventing them.`,
+      ),
+    )
+    return out
+  }
+  if (channels.length === 0 && implicit === 0) {
+    out.push(
+      error(
+        index,
+        ctype,
+        `${prefix} must define a 'property' for every animated channel — empty channels are only valid for implicit-track clips (morph, visible, ...).`,
+      ),
+    )
+    return out
+  }
+  found.forEach((keyframe, position) => {
+    const time = keyframe.time
+    if (typeof time !== 'number' || !Number.isFinite(time) || time < -1e-9 || time > 1 + 1e-9) {
+      out.push(
+        error(
+          index,
+          ctype,
+          `${prefix} keyframes[${position}].time must be a finite normalized time in [0, 1].`,
+        ),
+      )
+    }
+    if (keyframe.value === undefined) {
+      out.push(error(index, ctype, `${prefix} keyframes[${position}].value is required.`))
+    }
+  })
   return out
 }
 
@@ -241,7 +365,7 @@ export function validateProposalSchema(commands: unknown): ProposalSchemaResult 
             error(
               index,
               ctype,
-              'create/update proposals must contain one operation per approval step.',
+              'create/update commands must contain exactly one operation per command (a batch proposal carries one such single-operation command per asset step).',
             ),
           )
         }
@@ -310,6 +434,20 @@ export function validateProposalSchema(commands: unknown): ProposalSchemaResult 
                 index,
                 ctype,
                 `operation #${operationIndex} Shape create requires sourceShapeId.`,
+              ),
+            )
+          }
+          if (
+            kind === 'upsertClip' &&
+            typeof operation.clip === 'object' &&
+            operation.clip !== null
+          ) {
+            errors.push(
+              ...validateClipChannels(
+                operation.clip as Record<string, unknown>,
+                index,
+                ctype,
+                operationIndex,
               ),
             )
           }
@@ -667,8 +805,11 @@ export interface DryRunResult {
 }
 
 /**
- * Client dry-run: validate() each command in order against the live engine.
- * Never executes — the engine is untouched on both success and failure.
+ * Client dry-run: validate() each command in order against an isolated
+ * scratch engine seeded from the live project, executing each validated
+ * command there so later steps see earlier ones — a batch of clip creates
+ * closed by a collection validates exactly as it will execute.
+ * Never touches the live engine on success or failure.
  */
 export function dryRunValidate(
   engine: EnginePublic,
@@ -686,9 +827,10 @@ export function dryRunValidate(
     // Remap schema error indexes back to proposal indexes where possible.
     return { ok: false, errors: schema.errors, fingerprint }
   }
-  const internal = engine as unknown as import('../engine/internal').Engine
   // Schema first per proposal index (mirrors the server gate, keeping proposal
-  // indexes intact for fixable messages), then live validate() in order.
+  // indexes intact for fixable messages), collecting the commands that survive
+  // it. Live validation then runs cumulatively through the engine-owned seam.
+  const built: { proposalIndex: number; order: number; command: Command<unknown> }[] = []
   indexes.forEach((proposalIndex, order) => {
     const json = commands[proposalIndex]
     if (json === undefined) {
@@ -709,19 +851,35 @@ export function dryRunValidate(
       return
     }
     try {
-      const command = buildCommandFromJson(json)
-      command.validate(internal)
+      built.push({ proposalIndex, order, command: buildCommandFromJson(json) })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       errors.push(
         error(
           proposalIndex,
           json.type,
-          `command #${proposalIndex} (${json.type}) failed dry-run validate() at position ${order}: ${message} Fix it and re-validate before anything executes.`,
+          `command #${proposalIndex} (${json.type}) failed dry-run at position ${order}: ${message} Fix it and re-validate before anything executes.`,
         ),
       )
     }
   })
+  if (built.length > 0) {
+    const result = validateAndApplyInOrder(
+      structuredClone(engine.toJSON()) as LessonJSON,
+      built.map((entry) => entry.command),
+    )
+    if (!result.ok) {
+      const failed = built[result.failure.failedStep]!
+      const json = commands[failed.proposalIndex]!
+      errors.push(
+        error(
+          failed.proposalIndex,
+          json.type,
+          `command #${failed.proposalIndex} (${json.type}) failed dry-run ${result.failure.phase} at position ${failed.order}: ${result.failure.message} Fix it and re-validate before anything executes.`,
+        ),
+      )
+    }
+  }
   return { ok: errors.length === 0, errors, fingerprint }
 }
 

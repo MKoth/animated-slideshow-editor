@@ -263,8 +263,18 @@ export function CollectionSilhouettePreview({
   const frame = selectedFrame === null ? null : preview.frames[selectedFrame]
   return (
     <div ref={previewRef} data-testid={`collection-silhouette-${collectionId}`}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontSize: 11, color: 'var(--color-text-muted, #777)' }}>Pose steps</span>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          overflowX: 'auto',
+          paddingBottom: 4,
+        }}
+      >
+        <span style={{ fontSize: 11, color: 'var(--color-text-muted, #777)', flexShrink: 0 }}>
+          Pose steps
+        </span>
         {preview.frames.map((pose, index) => (
           <button
             key={index}
@@ -275,20 +285,36 @@ export function CollectionSilhouettePreview({
             onClick={() => setSelectedFrame(index)}
             style={{
               width: 58,
-              height: 42,
+              height: 60,
               padding: 3,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'stretch',
+              flexShrink: 0,
               border: '1px solid var(--color-border, #ddd)',
               borderRadius: 4,
               background: 'var(--color-bg, #fafafa)',
               cursor: 'pointer',
+              boxSizing: 'border-box',
             }}
           >
-            <svg width="100%" height="100%" viewBox={pose.viewBox} aria-hidden="true">
-              {pose.paths.map((path, pathIndex) => (
-                <path key={pathIndex} d={path} fill="currentColor" />
-              ))}
-            </svg>
-            <span style={{ fontSize: 9, color: 'var(--color-text-muted, #666)' }}>
+            <span style={{ display: 'block', flex: '1 1 auto', minHeight: 0, width: '100%' }}>
+              <svg width="100%" height="100%" viewBox={pose.viewBox} aria-hidden="true">
+                {pose.paths.map((path, pathIndex) => (
+                  <path key={pathIndex} d={path} fill="currentColor" />
+                ))}
+              </svg>
+            </span>
+            <span
+              style={{
+                fontSize: 9,
+                lineHeight: '12px',
+                paddingTop: 2,
+                textAlign: 'center',
+                color: 'var(--color-text-muted, #666)',
+                whiteSpace: 'nowrap',
+              }}
+            >
               {pose.time.toFixed(2)}s
             </span>
           </button>

@@ -310,7 +310,8 @@ def _validate_fields(ctype: str, command: dict[str, Any], index: int) -> list[di
                     index,
                     ctype,
                     "operations",
-                    "must contain one create/update operation per approval step",
+                    "must contain exactly one create/update operation per command "
+                    "(a batch proposal carries one such single-operation command per asset step)",
                 )
             )
         else:
@@ -452,6 +453,9 @@ def _validate_fields(ctype: str, command: dict[str, Any], index: int) -> list[di
                                 "must be a complete ClipJSON with id, name, duration, channels, and params",
                             )
                         )
+                    else:
+                        assert isinstance(clip, dict)
+                        errors.extend(_validate_clip_channels(clip, index, ctype, operation_index))
                 elif kind == "upsertCollection":
                     collection = operation.get("collection")
                     if (
@@ -551,6 +555,89 @@ def _validate_fields(ctype: str, command: dict[str, Any], index: int) -> list[di
                         _field_error(index, ctype, f"{field}[{order}].name", "is required")
                     )
         ints("targetIndex") if command.get("targetIndex") is not None else None
+    return errors
+
+
+_CLIP_KEYFRAME_MAPS = (
+    "channelAnimations",
+    "materialChannelAnimations",
+    "circleChannelAnimations",
+    "tableChannelAnimations",
+    "shadowChannelAnimations",
+)
+
+
+def _validate_clip_channels(
+    clip: dict[str, Any], index: int, ctype: str, operation_index: int
+) -> list[dict[str, Any]]:
+    """Reject empty or wrong-dialect Clips before anything executes.
+
+    Clips must use the canonical ClipJSON shape: `channels` holds property
+    definitions (`{"property": ...}`, never nested keyframes) and keyframes
+    live in the animation maps (`channelAnimations`, `morphAnimation`, ...).
+    Keyframe times are normalized to [0, 1]. Without this gate, invented
+    channel data parses lossily and persists as empty clips.
+    """
+    errors: list[dict[str, Any]] = []
+    prefix = f"operations[{operation_index}].clip"
+
+    def fail(field: str, why: str) -> None:
+        errors.append(_field_error(index, ctype, f"{prefix}.{field}", why))
+
+    channels = clip.get("channels")
+    assert isinstance(channels, list)
+    for position, entry in enumerate(channels):
+        if not isinstance(entry, dict) or not _is_non_empty_string(entry.get("property")):
+            fail(f"channels[{position}]", "must define a non-empty 'property'")
+        elif "keyframes" in entry:
+            fail(
+                f"channels[{position}]",
+                "must not nest 'keyframes' — keyframes live in the animation maps "
+                "(channelAnimations, morphAnimation, ...) keyed by property",
+            )
+
+    keyframes: list[Any] = []
+    implicit = 0
+    animations = clip.get("channelAnimations")
+    if isinstance(animations, dict):
+        for anim in animations.values():
+            if isinstance(anim, dict) and isinstance(anim.get("keyframes"), list):
+                keyframes.extend(anim["keyframes"])
+    for single in ("morphAnimation", "visibleAnimation", "zIndexAnimation", "symmetryAnimation"):
+        anim = clip.get(single)
+        if isinstance(anim, dict) and isinstance(anim.get("keyframes"), list):
+            implicit += len(anim["keyframes"])
+            keyframes.extend(anim["keyframes"])
+    for maps in _CLIP_KEYFRAME_MAPS[1:]:
+        grouped = clip.get(maps)
+        if isinstance(grouped, dict):
+            for anim in grouped.values():
+                if isinstance(anim, dict) and isinstance(anim.get("keyframes"), list):
+                    implicit += len(anim["keyframes"])
+                    keyframes.extend(anim["keyframes"])
+    if not keyframes:
+        fail(
+            "channelAnimations",
+            "must carry at least one keyframe — empty Clips are rejected, "
+            "extract keyframes from the live timeline instead of inventing them",
+        )
+        return errors
+    if not channels and implicit == 0:
+        fail(
+            "channels",
+            "must define a 'property' for every animated channel — "
+            "empty channels are only valid for implicit-track clips (morph, visible, ...)",
+        )
+        return errors
+    for position, keyframe in enumerate(keyframes):
+        if not isinstance(keyframe, dict):
+            fail(f"keyframes[{position}]", "must be an object")
+            continue
+        time = keyframe.get("time")
+        if not _is_finite_number(time) or not -1e-9 <= float(time) <= 1 + 1e-9:  # type: ignore[arg-type]
+            fail(f"keyframes[{position}].time", "must be a finite normalized time in [0, 1]")
+        if keyframe.get("value") is None:
+            fail(f"keyframes[{position}].value", "is required")
     return errors
 
 

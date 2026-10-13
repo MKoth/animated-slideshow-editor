@@ -58,6 +58,7 @@ export function AnimationsPanel() {
   useEngineEvent((event) => {
     if (
       event.type === 'ProjectLoaded' ||
+      event.type === 'ProjectChanged' ||
       event.type === 'ClipCreated' ||
       event.type === 'ClipRemoved' ||
       event.type === 'ClipRenamed' ||
@@ -103,6 +104,7 @@ export function AnimationsPanel() {
   const openLibraryBrowser = useClipLibraryStore((state) => state.openLibraryBrowser)
 
   const [search, setSearch] = useState('')
+  const [section, setSection] = useState<'clips' | 'collections'>('clips')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saveConfirm, setSaveConfirm] = useState<{
     clipId: string
@@ -469,620 +471,670 @@ export function AnimationsPanel() {
 
   return (
     <div className="animations-panel">
-      <div className="animations-toolbar">
-        <div className="animations-toolbar__row">
-          <button className="animations-toolbar__create" onClick={handleCreate}>
-            Create Clip
-          </button>
-          <button
-            className="animations-toolbar__create"
-            onClick={() => openLibraryBrowser()}
-            data-testid="clips-browse-button"
-          >
-            Browse Library
-          </button>
-        </div>
-        <div className="animations-toolbar__row">
-          <input
-            className="animations-toolbar__search"
-            type="search"
-            aria-label="Search clips"
-            placeholder="Search by name"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </div>
+      <div className="animations-tabs" role="tablist" aria-label="Animations sections">
+        <button
+          type="button"
+          role="tab"
+          data-testid="animations-tab-clips"
+          aria-selected={section === 'clips'}
+          className="animations-tabs__tab"
+          onClick={() => setSection('clips')}
+        >
+          Clips ({definitions.length})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          data-testid="animations-tab-collections"
+          aria-selected={section === 'collections'}
+          className="animations-tabs__tab"
+          onClick={() => setSection('collections')}
+        >
+          Collections ({collections.length})
+        </button>
       </div>
-      {error && (
-        <div className="panel-status panel-status--error" role="alert">
-          <p>{error}</p>
-          <button aria-label="Dismiss error" onClick={clearError}>
-            Dismiss
-          </button>
-        </div>
-      )}
-      {definitions.length === 0 ? (
-        <div className="panel-empty-state">
-          <p>No clips created. Create one to get started.</p>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="panel-empty-state">
-          <p>No clips match your search.</p>
+      {section === 'clips' ? (
+        <div
+          className="animations-tabpanel"
+          role="tabpanel"
+          aria-label="Clips"
+          data-testid="animations-panel-clips"
+        >
+          <div className="animations-toolbar">
+            <div className="animations-toolbar__row">
+              <button className="animations-toolbar__create" onClick={handleCreate}>
+                Create Clip
+              </button>
+              <button
+                className="animations-toolbar__create"
+                onClick={() => openLibraryBrowser()}
+                data-testid="clips-browse-button"
+              >
+                Browse Library
+              </button>
+            </div>
+            <div className="animations-toolbar__row">
+              <input
+                className="animations-toolbar__search"
+                type="search"
+                aria-label="Search clips"
+                placeholder="Search by name"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </div>
+          </div>
+          {error && (
+            <div className="panel-status panel-status--error" role="alert">
+              <p>{error}</p>
+              <button aria-label="Dismiss error" onClick={clearError}>
+                Dismiss
+              </button>
+            </div>
+          )}
+          {definitions.length === 0 ? (
+            <div className="panel-empty-state">
+              <p>No clips created. Create one to get started.</p>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="panel-empty-state">
+              <p>No clips match your search.</p>
+            </div>
+          ) : (
+            <ul className="animation-grid">
+              {filtered.map((clip) => {
+                const editing = editingId === clip.id
+                return (
+                  <li key={clip.id} className="animation-grid__item">
+                    {editing ? (
+                      <input
+                        className="animation-cell__rename"
+                        aria-label="Clip name"
+                        defaultValue={clip.name}
+                        autoFocus
+                        onFocus={(event) => event.target.select()}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            commitRename(clip.id, event.currentTarget.value)
+                          } else if (event.key === 'Escape') {
+                            setEditingId(null)
+                          }
+                        }}
+                        onBlur={(event) => {
+                          if (editingId === clip.id) {
+                            commitRename(clip.id, event.target.value)
+                          }
+                        }}
+                      />
+                    ) : (
+                      <button
+                        className="animation-cell"
+                        aria-label={`Select ${clip.name}`}
+                        onClick={() => selectClip(clip.id)}
+                      >
+                        <span className="animation-cell__thumbnail" aria-hidden="true" />
+                        <span className="animation-cell__name">{clip.name}</span>
+                        <span className="animation-cell__duration">
+                          {formatDuration(clip.duration)}
+                        </span>
+                        {clip.category && (
+                          <span className="animation-cell__category">{clip.category}</span>
+                        )}
+                      </button>
+                    )}
+                    {!editing && (
+                      <div className="animation-cell__actions">
+                        <button
+                          aria-label={`Rename ${clip.name}`}
+                          title={`Rename ${clip.name}`}
+                          onClick={() => setEditingId(clip.id)}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          aria-label={`Duplicate ${clip.name}`}
+                          title={`Duplicate ${clip.name}`}
+                          onClick={() =>
+                            duplicateClip(clip.id, uniqueClipName(clip.name, definitions))
+                          }
+                        >
+                          Duplicate
+                        </button>
+                        <button
+                          aria-label={`Delete ${clip.name}`}
+                          title={`Delete ${clip.name}`}
+                          onClick={() => handleDelete(clip.id)}
+                        >
+                          Delete
+                        </button>
+                        <button
+                          aria-label={`Save ${clip.name} to Library`}
+                          title={`Save ${clip.name} to Library`}
+                          onClick={() => handleSaveToLibrary(clip.id)}
+                        >
+                          Save to Library
+                        </button>
+                        <button
+                          aria-label={`Edit ${clip.name}`}
+                          title={`Edit ${clip.name}`}
+                          onClick={() => handleEdit(clip.id)}
+                        >
+                          Edit
+                        </button>
+                        <div style={{ position: 'relative', display: 'inline-block' }}>
+                          <button
+                            aria-label={`More options for ${clip.name}`}
+                            title="More options"
+                            onClick={() =>
+                              setClipOverflowId(clipOverflowId === clip.id ? null : clip.id)
+                            }
+                            data-testid={`clip-ellipsis-${clip.id}`}
+                            style={{ padding: '2px 6px' }}
+                          >
+                            ⋯
+                          </button>
+                          {clipOverflowId === clip.id && (
+                            <div
+                              role="menu"
+                              data-testid={`clip-ellipsis-menu-${clip.id}`}
+                              style={{
+                                position: 'absolute',
+                                right: 0,
+                                top: '100%',
+                                background: 'var(--color-bg, #fff)',
+                                border: '1px solid var(--color-border, #ddd)',
+                                borderRadius: 6,
+                                padding: 4,
+                                zIndex: 10,
+                                minWidth: 160,
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                              }}
+                            >
+                              <button
+                                role="menuitem"
+                                data-testid={`clip-reverse-${clip.id}`}
+                                style={{
+                                  display: 'block',
+                                  width: '100%',
+                                  textAlign: 'left',
+                                  padding: '6px 10px',
+                                  border: 'none',
+                                  background: 'transparent',
+                                  cursor: 'pointer',
+                                  fontSize: 12,
+                                }}
+                                onClick={() => {
+                                  const defaultName = `${clip.name} Reversed`
+                                  setReverseNameDraft(defaultName)
+                                  setReverseClipPrompt({ clipId: clip.id, defaultName })
+                                  setClipOverflowId(null)
+                                }}
+                              >
+                                Reverse and Save As…
+                              </button>
+                              <button
+                                role="menuitem"
+                                data-testid={`clip-mirror-${clip.id}`}
+                                style={{
+                                  display: 'block',
+                                  width: '100%',
+                                  textAlign: 'left',
+                                  padding: '6px 10px',
+                                  border: 'none',
+                                  background: 'transparent',
+                                  cursor: 'pointer',
+                                  fontSize: 12,
+                                }}
+                                onClick={() => {
+                                  const axis: MirrorAxis = 'X'
+                                  const defaultName = mirrorClipDefaultName(clip.name, axis)
+                                  setMirrorAxis(axis)
+                                  setMirrorNameDraft(defaultName)
+                                  setMirrorClipPrompt({ clipId: clip.id, defaultName })
+                                  setClipOverflowId(null)
+                                }}
+                              >
+                                Mirror and Save As…
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
         </div>
       ) : (
-        <ul className="animation-grid">
-          {filtered.map((clip) => {
-            const editing = editingId === clip.id
-            return (
-              <li key={clip.id} className="animation-grid__item">
-                {editing ? (
-                  <input
-                    className="animation-cell__rename"
-                    aria-label="Clip name"
-                    defaultValue={clip.name}
-                    autoFocus
-                    onFocus={(event) => event.target.select()}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        commitRename(clip.id, event.currentTarget.value)
-                      } else if (event.key === 'Escape') {
-                        setEditingId(null)
-                      }
-                    }}
-                    onBlur={(event) => {
-                      if (editingId === clip.id) {
-                        commitRename(clip.id, event.target.value)
-                      }
-                    }}
-                  />
-                ) : (
-                  <button
-                    className="animation-cell"
-                    aria-label={`Select ${clip.name}`}
-                    onClick={() => selectClip(clip.id)}
-                  >
-                    <span className="animation-cell__thumbnail" aria-hidden="true" />
-                    <span className="animation-cell__name">{clip.name}</span>
-                    <span className="animation-cell__duration">
-                      {formatDuration(clip.duration)}
-                    </span>
-                    {clip.category && (
-                      <span className="animation-cell__category">{clip.category}</span>
-                    )}
-                  </button>
-                )}
-                {!editing && (
-                  <div className="animation-cell__actions">
-                    <button
-                      aria-label={`Rename ${clip.name}`}
-                      title={`Rename ${clip.name}`}
-                      onClick={() => setEditingId(clip.id)}
-                    >
-                      Rename
-                    </button>
-                    <button
-                      aria-label={`Duplicate ${clip.name}`}
-                      title={`Duplicate ${clip.name}`}
-                      onClick={() => duplicateClip(clip.id, uniqueClipName(clip.name, definitions))}
-                    >
-                      Duplicate
-                    </button>
-                    <button
-                      aria-label={`Delete ${clip.name}`}
-                      title={`Delete ${clip.name}`}
-                      onClick={() => handleDelete(clip.id)}
-                    >
-                      Delete
-                    </button>
-                    <button
-                      aria-label={`Save ${clip.name} to Library`}
-                      title={`Save ${clip.name} to Library`}
-                      onClick={() => handleSaveToLibrary(clip.id)}
-                    >
-                      Save to Library
-                    </button>
-                    <button
-                      aria-label={`Edit ${clip.name}`}
-                      title={`Edit ${clip.name}`}
-                      onClick={() => handleEdit(clip.id)}
-                    >
-                      Edit
-                    </button>
-                    <div style={{ position: 'relative', display: 'inline-block' }}>
-                      <button
-                        aria-label={`More options for ${clip.name}`}
-                        title="More options"
-                        onClick={() =>
-                          setClipOverflowId(clipOverflowId === clip.id ? null : clip.id)
-                        }
-                        data-testid={`clip-ellipsis-${clip.id}`}
-                        style={{ padding: '2px 6px' }}
-                      >
-                        ⋯
-                      </button>
-                      {clipOverflowId === clip.id && (
-                        <div
-                          role="menu"
-                          data-testid={`clip-ellipsis-menu-${clip.id}`}
-                          style={{
-                            position: 'absolute',
-                            right: 0,
-                            top: '100%',
-                            background: 'var(--color-bg, #fff)',
-                            border: '1px solid var(--color-border, #ddd)',
-                            borderRadius: 6,
-                            padding: 4,
-                            zIndex: 10,
-                            minWidth: 160,
-                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                          }}
-                        >
-                          <button
-                            role="menuitem"
-                            data-testid={`clip-reverse-${clip.id}`}
-                            style={{
-                              display: 'block',
-                              width: '100%',
-                              textAlign: 'left',
-                              padding: '6px 10px',
-                              border: 'none',
-                              background: 'transparent',
-                              cursor: 'pointer',
-                              fontSize: 12,
-                            }}
-                            onClick={() => {
-                              const defaultName = `${clip.name} Reversed`
-                              setReverseNameDraft(defaultName)
-                              setReverseClipPrompt({ clipId: clip.id, defaultName })
-                              setClipOverflowId(null)
-                            }}
-                          >
-                            Reverse and Save As…
-                          </button>
-                          <button
-                            role="menuitem"
-                            data-testid={`clip-mirror-${clip.id}`}
-                            style={{
-                              display: 'block',
-                              width: '100%',
-                              textAlign: 'left',
-                              padding: '6px 10px',
-                              border: 'none',
-                              background: 'transparent',
-                              cursor: 'pointer',
-                              fontSize: 12,
-                            }}
-                            onClick={() => {
-                              const axis: MirrorAxis = 'X'
-                              const defaultName = mirrorClipDefaultName(clip.name, axis)
-                              setMirrorAxis(axis)
-                              setMirrorNameDraft(defaultName)
-                              setMirrorClipPrompt({ clipId: clip.id, defaultName })
-                              setClipOverflowId(null)
-                            }}
-                          >
-                            Mirror and Save As…
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </li>
-            )
-          })}
-        </ul>
-      )}
-      <section
-        className="clip-collections"
-        aria-label="Clip Collections"
-        style={{ marginTop: 16, borderTop: '1px solid var(--color-border)', paddingTop: 12 }}
-      >
-        <header
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: 8,
-          }}
+        <div
+          className="animations-tabpanel"
+          role="tabpanel"
+          aria-label="Clip Collections"
+          data-testid="animations-panel-collections"
         >
-          <h3 style={{ margin: 0, fontSize: 13 }}>Clip Collections</h3>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <select
-              value={collectionCategoryFilter}
-              onChange={(e) => setCollectionCategoryFilter(e.target.value)}
-              data-testid="collections-category-filter"
-              title="Filter collections by category"
-              style={{ fontSize: 11, padding: '4px 6px', borderRadius: 4 }}
-            >
-              <option value={ALL_COLLECTION_CATEGORIES}>All categories</option>
-              <option value="">Uncategorized</option>
-              {allCollectionCategories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={() => collectionFileInputRef.current?.click()}
-              style={{
-                fontSize: 11,
-                padding: '4px 8px',
-                borderRadius: 4,
-                border: '1px solid var(--color-border)',
-                background: 'var(--color-bg)',
-              }}
-              data-testid="collections-import-file-button"
-            >
-              Import File
-            </button>
-            <button
-              onClick={() => setBrowseCollectionsOpen(true)}
-              style={{
-                fontSize: 11,
-                padding: '4px 8px',
-                borderRadius: 4,
-                border: '1px solid var(--color-border)',
-                background: 'var(--color-bg)',
-              }}
-              data-testid="collections-browse-button"
-            >
-              Browse Library
-            </button>
-            <button
-              onClick={() => setExportCollectionOpen(true)}
-              style={{
-                fontSize: 11,
-                padding: '4px 8px',
-                borderRadius: 4,
-                border: '1px solid var(--color-border)',
-                background: 'var(--color-bg-elevated)',
-              }}
-              data-testid="collections-export-button"
-              title="Export collection from Scene hierarchy (right-click a node for context menu)"
-            >
-              Export Collection…
-            </button>
-          </div>
-        </header>
-        <p style={{ fontSize: 11, color: 'var(--color-text-muted)', margin: '0 0 8px' }}>
-          Map semanticName → clip. Export from Scene tree (right-click parent), then Apply to target
-          hierarchy. Blocking if any clipped node lacks Semantic Name. Saved to{' '}
-          <strong>Library</strong> persists across projects — use <em>Save to Library</em> then{' '}
-          <em>Browse Library → Import</em> in another project.
-        </p>
-        {collectionLibraryError && (
-          <div
-            className="panel-status panel-status--error"
-            role="alert"
-            style={{ marginBottom: 8 }}
+          <section
+            className="clip-collections"
+            aria-label="Clip Collections"
+            style={{ padding: '12px 8px' }}
           >
-            <p>{collectionLibraryError}</p>
-            <button aria-label="Dismiss error" onClick={clearCollectionLibraryError}>
-              Dismiss
-            </button>
-          </div>
-        )}
-        {collections.length === 0 ? (
-          <div className="panel-empty-state" style={{ padding: 12 }}>
-            <p style={{ fontSize: 12 }}>
-              No collections in this project. Right-click a parent in Scene → Export Clip
-              Collection…
-            </p>
-            {collectionLibraryLoaded && collectionLibraryDefs.length > 0 && (
-              <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 6 }}>
-                You have {collectionLibraryDefs.length} saved in Library — click{' '}
-                <em>Browse Library</em> to import.
-              </p>
-            )}
-            {collectionLibraryLoaded && collectionLibraryDefs.length === 0 && (
-              <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 6 }}>
-                Library is empty. Export a collection then <em>Save to Library</em> to make it
-                available in other projects.
-              </p>
-            )}
-          </div>
-        ) : visibleCollections.length === 0 ? (
-          <div className="panel-empty-state" style={{ padding: 12 }}>
-            <p style={{ fontSize: 12 }}>
-              No collections in {collectionCategoryLabel(collectionCategoryFilter)}. Select All
-              categories to see everything.
-            </p>
-          </div>
-        ) : (
-          <ul
-            style={{
-              listStyle: 'none',
-              padding: 0,
-              margin: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 6,
-            }}
-          >
-            {visibleCollections.map((col) => {
-              const bindings = [...col.bindings.entries()]
-              const editing = editingCollectionId === col.id
-              return (
-                <li
-                  key={col.id}
-                  style={{
-                    border: '1px solid var(--color-border)',
-                    borderRadius: 6,
-                    padding: 8,
-                    background: 'var(--color-bg-elevated, #fafafa)',
-                  }}
-                  data-testid={`collection-${col.id}`}
+            <header
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 8,
+              }}
+            >
+              <h3 style={{ margin: 0, fontSize: 13 }}>Clip Collections</h3>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <select
+                  value={collectionCategoryFilter}
+                  onChange={(e) => setCollectionCategoryFilter(e.target.value)}
+                  data-testid="collections-category-filter"
+                  title="Filter collections by category"
+                  style={{ fontSize: 11, padding: '4px 6px', borderRadius: 4 }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {editing ? (
-                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <input
-                          aria-label="Collection name"
-                          defaultValue={col.name}
-                          autoFocus
-                          onFocus={(e) => e.target.select()}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter')
-                              commitRenameCollection(col.id, e.currentTarget.value)
-                            else if (e.key === 'Escape') setEditingCollectionId(null)
-                          }}
-                          onBlur={(e) => {
-                            if (editingCollectionId === col.id)
-                              commitRenameCollection(col.id, e.target.value)
-                          }}
-                          style={{
-                            flex: 1,
-                            padding: '4px 6px',
-                            borderRadius: 4,
-                            border: '1px solid var(--color-border)',
-                          }}
-                          data-testid={`collection-rename-input-${col.id}`}
-                        />
-                        <input
-                          aria-label="Collection category"
-                          defaultValue={col.category}
-                          placeholder="Category (blank = Uncategorized)"
-                          list={`collection-category-list-${col.id}`}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter')
-                              commitCollectionCategory(col.id, e.currentTarget.value)
-                            else if (e.key === 'Escape') setEditingCollectionId(null)
-                          }}
-                          onBlur={(e) => {
-                            commitCollectionCategory(col.id, e.target.value)
-                          }}
-                          style={{
-                            flex: 1,
-                            padding: '4px 6px',
-                            borderRadius: 4,
-                            border: '1px solid var(--color-border)',
-                            fontSize: 11,
-                          }}
-                          data-testid={`collection-category-input-${col.id}`}
-                        />
-                        <datalist id={`collection-category-list-${col.id}`}>
-                          {allCollectionCategories.map((cat) => (
-                            <option key={cat} value={cat} />
-                          ))}
-                        </datalist>
-                      </div>
-                    ) : (
-                      <strong style={{ flex: 1, fontSize: 12 }} title={col.id}>
-                        {col.name}
-                      </strong>
-                    )}
-                    <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                      {bindings.length} binding(s)
-                    </span>
-                    <span
-                      style={{ fontSize: 11, color: 'var(--color-text-muted)' }}
-                      data-testid={`collection-category-${col.id}`}
-                      title="Collection category"
+                  <option value={ALL_COLLECTION_CATEGORIES}>All categories</option>
+                  <option value="">Uncategorized</option>
+                  {allCollectionCategories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => collectionFileInputRef.current?.click()}
+                  style={{
+                    fontSize: 11,
+                    padding: '4px 8px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                  }}
+                  data-testid="collections-import-file-button"
+                >
+                  Import File
+                </button>
+                <button
+                  onClick={() => setBrowseCollectionsOpen(true)}
+                  style={{
+                    fontSize: 11,
+                    padding: '4px 8px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                  }}
+                  data-testid="collections-browse-button"
+                >
+                  Browse Library
+                </button>
+                <button
+                  onClick={() => setExportCollectionOpen(true)}
+                  style={{
+                    fontSize: 11,
+                    padding: '4px 8px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg-elevated)',
+                  }}
+                  data-testid="collections-export-button"
+                  title="Export collection from Scene hierarchy (right-click a node for context menu)"
+                >
+                  Export Collection…
+                </button>
+              </div>
+            </header>
+            <p style={{ fontSize: 11, color: 'var(--color-text-muted)', margin: '0 0 8px' }}>
+              Map semanticName → clip. Export from Scene tree (right-click parent), then Apply to
+              target hierarchy. Blocking if any clipped node lacks Semantic Name. Saved to{' '}
+              <strong>Library</strong> persists across projects — use <em>Save to Library</em> then{' '}
+              <em>Browse Library → Import</em> in another project.
+            </p>
+            {collectionLibraryError && (
+              <div
+                className="panel-status panel-status--error"
+                role="alert"
+                style={{ marginBottom: 8 }}
+              >
+                <p>{collectionLibraryError}</p>
+                <button aria-label="Dismiss error" onClick={clearCollectionLibraryError}>
+                  Dismiss
+                </button>
+              </div>
+            )}
+            {collections.length === 0 ? (
+              <div className="panel-empty-state" style={{ padding: 12 }}>
+                <p style={{ fontSize: 12 }}>
+                  No collections in this project. Right-click a parent in Scene → Export Clip
+                  Collection…
+                </p>
+                {collectionLibraryLoaded && collectionLibraryDefs.length > 0 && (
+                  <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 6 }}>
+                    You have {collectionLibraryDefs.length} saved in Library — click{' '}
+                    <em>Browse Library</em> to import.
+                  </p>
+                )}
+                {collectionLibraryLoaded && collectionLibraryDefs.length === 0 && (
+                  <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 6 }}>
+                    Library is empty. Export a collection then <em>Save to Library</em> to make it
+                    available in other projects.
+                  </p>
+                )}
+              </div>
+            ) : visibleCollections.length === 0 ? (
+              <div className="panel-empty-state" style={{ padding: 12 }}>
+                <p style={{ fontSize: 12 }}>
+                  No collections in {collectionCategoryLabel(collectionCategoryFilter)}. Select All
+                  categories to see everything.
+                </p>
+              </div>
+            ) : (
+              <ul
+                style={{
+                  listStyle: 'none',
+                  padding: 0,
+                  margin: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}
+              >
+                {visibleCollections.map((col) => {
+                  const bindings = [...col.bindings.entries()]
+                  const editing = editingCollectionId === col.id
+                  return (
+                    <li
+                      key={col.id}
+                      style={{
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 6,
+                        padding: 8,
+                        background: 'var(--color-bg-elevated, #fafafa)',
+                      }}
+                      data-testid={`collection-${col.id}`}
                     >
-                      {col.category !== '' ? `[${col.category}]` : 'Uncategorized'}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
-                    {bindings.length === 0 ? (
-                      <em>empty</em>
-                    ) : (
-                      bindings.map(([sem, clipId]) => {
-                        let clipName = clipId
-                        try {
-                          clipName = engine.getClip(clipId).name
-                        } catch {
-                          // missing
-                        }
-                        return (
-                          <span
-                            key={sem}
-                            style={{
-                              display: 'inline-block',
-                              marginRight: 8,
-                              fontFamily: 'monospace',
-                              background: 'var(--color-bg)',
-                              border: '1px solid var(--color-border)',
-                              borderRadius: 4,
-                              padding: '1px 4px',
-                            }}
-                            title={`${sem} → ${clipName}`}
-                          >
-                            {sem} → {clipName}
-                          </span>
-                        )
-                      })
-                    )}
-                  </div>
-                  {col.sourceNodeId && (
-                    <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>
-                      source:{' '}
-                      {(() => {
-                        try {
-                          return engine.getNode(col.sourceNodeId!).name
-                        } catch {
-                          return col.sourceNodeId
-                        }
-                      })()}
-                    </div>
-                  )}
-                  {!editing && (
-                    <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
-                      <button
-                        onClick={() => setApplyCollectionId(col.id)}
-                        style={{ fontSize: 11, padding: '2px 6px' }}
-                        data-testid={`collection-apply-${col.id}`}
-                      >
-                        Apply…
-                      </button>
-                      <button
-                        onClick={() => setEditingCollectionId(col.id)}
-                        style={{ fontSize: 11, padding: '2px 6px' }}
-                        data-testid={`collection-rename-${col.id}`}
-                      >
-                        Rename
-                      </button>
-                      <button
-                        onClick={() => handleSaveCollectionToLibrary(col.id)}
-                        style={{ fontSize: 11, padding: '2px 6px' }}
-                        data-testid={`collection-save-${col.id}`}
-                        title="Save to shared library (persists across projects)"
-                      >
-                        Save Collection to Library
-                      </button>
-                      <button
-                        onClick={() => downloadCollectionFile(col.id)}
-                        style={{ fontSize: 11, padding: '2px 6px' }}
-                        data-testid={`collection-export-file-${col.id}`}
-                        title="Export collection and referenced clips as a portable file"
-                      >
-                        Export File
-                      </button>
-                      <button
-                        onClick={() => handleDeleteCollection(col.id)}
-                        style={{ fontSize: 11, padding: '2px 6px' }}
-                        data-testid={`collection-delete-${col.id}`}
-                      >
-                        Delete
-                      </button>
-                      <div style={{ position: 'relative', display: 'inline-block' }}>
-                        <button
-                          aria-label={`More options for ${col.name}`}
-                          onClick={() =>
-                            setCollectionOverflowId(collectionOverflowId === col.id ? null : col.id)
-                          }
-                          data-testid={`collection-ellipsis-${col.id}`}
-                          style={{ fontSize: 11, padding: '2px 6px' }}
-                        >
-                          ⋯
-                        </button>
-                        {collectionOverflowId === col.id && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {editing ? (
                           <div
-                            role="menu"
-                            data-testid={`collection-ellipsis-menu-${col.id}`}
-                            style={{
-                              position: 'absolute',
-                              right: 0,
-                              top: '100%',
-                              background: 'var(--color-bg, #fff)',
-                              border: '1px solid var(--color-border, #ddd)',
-                              borderRadius: 6,
-                              padding: 4,
-                              zIndex: 10,
-                              minWidth: 160,
-                              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                            }}
+                            style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}
                           >
-                            <button
-                              role="menuitem"
-                              data-testid={`collection-reverse-${col.id}`}
+                            <input
+                              aria-label="Collection name"
+                              defaultValue={col.name}
+                              autoFocus
+                              onFocus={(e) => e.target.select()}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter')
+                                  commitRenameCollection(col.id, e.currentTarget.value)
+                                else if (e.key === 'Escape') setEditingCollectionId(null)
+                              }}
+                              onBlur={(e) => {
+                                if (editingCollectionId === col.id)
+                                  commitRenameCollection(col.id, e.target.value)
+                              }}
                               style={{
-                                display: 'block',
-                                width: '100%',
-                                textAlign: 'left',
-                                padding: '6px 10px',
-                                border: 'none',
-                                background: 'transparent',
-                                cursor: 'pointer',
-                                fontSize: 12,
+                                flex: 1,
+                                padding: '4px 6px',
+                                borderRadius: 4,
+                                border: '1px solid var(--color-border)',
                               }}
-                              onClick={() => {
-                                const defaultName = `${col.name} Reversed`
-                                setReverseNameDraft(defaultName)
-                                setReverseCollectionPrompt({ collectionId: col.id, defaultName })
-                                setCollectionOverflowId(null)
+                              data-testid={`collection-rename-input-${col.id}`}
+                            />
+                            <input
+                              aria-label="Collection category"
+                              defaultValue={col.category}
+                              placeholder="Category (blank = Uncategorized)"
+                              list={`collection-category-list-${col.id}`}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter')
+                                  commitCollectionCategory(col.id, e.currentTarget.value)
+                                else if (e.key === 'Escape') setEditingCollectionId(null)
                               }}
-                            >
-                              Reverse and Save As…
-                            </button>
-                            <button
-                              role="menuitem"
-                              data-testid={`collection-mirror-${col.id}`}
+                              onBlur={(e) => {
+                                commitCollectionCategory(col.id, e.target.value)
+                              }}
                               style={{
-                                display: 'block',
-                                width: '100%',
-                                textAlign: 'left',
-                                padding: '6px 10px',
-                                border: 'none',
-                                background: 'transparent',
-                                cursor: 'pointer',
-                                fontSize: 12,
+                                flex: 1,
+                                padding: '4px 6px',
+                                borderRadius: 4,
+                                border: '1px solid var(--color-border)',
+                                fontSize: 11,
                               }}
-                              onClick={() => {
-                                const axis: MirrorAxis = 'X'
-                                const defaultName = mirrorCollectionDefaultName(col.name, axis)
-                                setMirrorCollectionAxis(axis)
-                                setMirrorCollectionNameDraft(defaultName)
-                                setMirrorCollectionPrompt({
-                                  collectionId: col.id,
-                                  defaultName,
-                                })
-                                setCollectionOverflowId(null)
-                              }}
-                            >
-                              Mirror and Save As…
-                            </button>
-                            <button
-                              role="menuitem"
-                              data-testid={`collection-reverse-mirror-${col.id}`}
-                              style={{
-                                display: 'block',
-                                width: '100%',
-                                textAlign: 'left',
-                                padding: '6px 10px',
-                                border: 'none',
-                                background: 'transparent',
-                                cursor: 'pointer',
-                                fontSize: 12,
-                              }}
-                              onClick={() => {
-                                const axis: MirrorAxis = 'X'
-                                const defaultName = reverseMirrorCollectionDefaultName(
-                                  col.name,
-                                  axis,
-                                )
-                                setReverseMirrorCollectionAxis(axis)
-                                setReverseMirrorCollectionNameDraft(defaultName)
-                                setReverseMirrorCollectionPrompt({
-                                  collectionId: col.id,
-                                  defaultName,
-                                })
-                                setCollectionOverflowId(null)
-                              }}
-                            >
-                              Reverse + Mirror and Save As…
-                            </button>
+                              data-testid={`collection-category-input-${col.id}`}
+                            />
+                            <datalist id={`collection-category-list-${col.id}`}>
+                              {allCollectionCategories.map((cat) => (
+                                <option key={cat} value={cat} />
+                              ))}
+                            </datalist>
                           </div>
+                        ) : (
+                          <strong style={{ flex: 1, fontSize: 12 }} title={col.id}>
+                            {col.name}
+                          </strong>
+                        )}
+                        <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                          {bindings.length} binding(s)
+                        </span>
+                        <span
+                          style={{ fontSize: 11, color: 'var(--color-text-muted)' }}
+                          data-testid={`collection-category-${col.id}`}
+                          title="Collection category"
+                        >
+                          {col.category !== '' ? `[${col.category}]` : 'Uncategorized'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
+                        {bindings.length === 0 ? (
+                          <em>empty</em>
+                        ) : (
+                          bindings.map(([sem, clipId]) => {
+                            let clipName = clipId
+                            try {
+                              clipName = engine.getClip(clipId).name
+                            } catch {
+                              // missing
+                            }
+                            return (
+                              <span
+                                key={sem}
+                                style={{
+                                  display: 'inline-block',
+                                  marginRight: 8,
+                                  fontFamily: 'monospace',
+                                  background: 'var(--color-bg)',
+                                  border: '1px solid var(--color-border)',
+                                  borderRadius: 4,
+                                  padding: '1px 4px',
+                                }}
+                                title={`${sem} → ${clipName}`}
+                              >
+                                {sem} → {clipName}
+                              </span>
+                            )
+                          })
                         )}
                       </div>
-                    </div>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </section>
+                      {col.sourceNodeId && (
+                        <div
+                          style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}
+                        >
+                          source:{' '}
+                          {(() => {
+                            try {
+                              return engine.getNode(col.sourceNodeId!).name
+                            } catch {
+                              return col.sourceNodeId
+                            }
+                          })()}
+                        </div>
+                      )}
+                      {!editing && (
+                        <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                          <button
+                            onClick={() => setApplyCollectionId(col.id)}
+                            style={{ fontSize: 11, padding: '2px 6px' }}
+                            data-testid={`collection-apply-${col.id}`}
+                          >
+                            Apply…
+                          </button>
+                          <button
+                            onClick={() => setEditingCollectionId(col.id)}
+                            style={{ fontSize: 11, padding: '2px 6px' }}
+                            data-testid={`collection-rename-${col.id}`}
+                          >
+                            Rename
+                          </button>
+                          <button
+                            onClick={() => handleSaveCollectionToLibrary(col.id)}
+                            style={{ fontSize: 11, padding: '2px 6px' }}
+                            data-testid={`collection-save-${col.id}`}
+                            title="Save to shared library (persists across projects)"
+                          >
+                            Save Collection to Library
+                          </button>
+                          <button
+                            onClick={() => downloadCollectionFile(col.id)}
+                            style={{ fontSize: 11, padding: '2px 6px' }}
+                            data-testid={`collection-export-file-${col.id}`}
+                            title="Export collection and referenced clips as a portable file"
+                          >
+                            Export File
+                          </button>
+                          <button
+                            onClick={() => handleDeleteCollection(col.id)}
+                            style={{ fontSize: 11, padding: '2px 6px' }}
+                            data-testid={`collection-delete-${col.id}`}
+                          >
+                            Delete
+                          </button>
+                          <div style={{ position: 'relative', display: 'inline-block' }}>
+                            <button
+                              aria-label={`More options for ${col.name}`}
+                              onClick={() =>
+                                setCollectionOverflowId(
+                                  collectionOverflowId === col.id ? null : col.id,
+                                )
+                              }
+                              data-testid={`collection-ellipsis-${col.id}`}
+                              style={{ fontSize: 11, padding: '2px 6px' }}
+                            >
+                              ⋯
+                            </button>
+                            {collectionOverflowId === col.id && (
+                              <div
+                                role="menu"
+                                data-testid={`collection-ellipsis-menu-${col.id}`}
+                                style={{
+                                  position: 'absolute',
+                                  right: 0,
+                                  top: '100%',
+                                  background: 'var(--color-bg, #fff)',
+                                  border: '1px solid var(--color-border, #ddd)',
+                                  borderRadius: 6,
+                                  padding: 4,
+                                  zIndex: 10,
+                                  minWidth: 160,
+                                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                                }}
+                              >
+                                <button
+                                  role="menuitem"
+                                  data-testid={`collection-reverse-${col.id}`}
+                                  style={{
+                                    display: 'block',
+                                    width: '100%',
+                                    textAlign: 'left',
+                                    padding: '6px 10px',
+                                    border: 'none',
+                                    background: 'transparent',
+                                    cursor: 'pointer',
+                                    fontSize: 12,
+                                  }}
+                                  onClick={() => {
+                                    const defaultName = `${col.name} Reversed`
+                                    setReverseNameDraft(defaultName)
+                                    setReverseCollectionPrompt({
+                                      collectionId: col.id,
+                                      defaultName,
+                                    })
+                                    setCollectionOverflowId(null)
+                                  }}
+                                >
+                                  Reverse and Save As…
+                                </button>
+                                <button
+                                  role="menuitem"
+                                  data-testid={`collection-mirror-${col.id}`}
+                                  style={{
+                                    display: 'block',
+                                    width: '100%',
+                                    textAlign: 'left',
+                                    padding: '6px 10px',
+                                    border: 'none',
+                                    background: 'transparent',
+                                    cursor: 'pointer',
+                                    fontSize: 12,
+                                  }}
+                                  onClick={() => {
+                                    const axis: MirrorAxis = 'X'
+                                    const defaultName = mirrorCollectionDefaultName(col.name, axis)
+                                    setMirrorCollectionAxis(axis)
+                                    setMirrorCollectionNameDraft(defaultName)
+                                    setMirrorCollectionPrompt({
+                                      collectionId: col.id,
+                                      defaultName,
+                                    })
+                                    setCollectionOverflowId(null)
+                                  }}
+                                >
+                                  Mirror and Save As…
+                                </button>
+                                <button
+                                  role="menuitem"
+                                  data-testid={`collection-reverse-mirror-${col.id}`}
+                                  style={{
+                                    display: 'block',
+                                    width: '100%',
+                                    textAlign: 'left',
+                                    padding: '6px 10px',
+                                    border: 'none',
+                                    background: 'transparent',
+                                    cursor: 'pointer',
+                                    fontSize: 12,
+                                  }}
+                                  onClick={() => {
+                                    const axis: MirrorAxis = 'X'
+                                    const defaultName = reverseMirrorCollectionDefaultName(
+                                      col.name,
+                                      axis,
+                                    )
+                                    setReverseMirrorCollectionAxis(axis)
+                                    setReverseMirrorCollectionNameDraft(defaultName)
+                                    setReverseMirrorCollectionPrompt({
+                                      collectionId: col.id,
+                                      defaultName,
+                                    })
+                                    setCollectionOverflowId(null)
+                                  }}
+                                >
+                                  Reverse + Mirror and Save As…
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </section>
+        </div>
+      )}
 
       {selected && (
         <section className="clip-detail" aria-label="Clip detail">

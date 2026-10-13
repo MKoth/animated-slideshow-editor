@@ -54,6 +54,11 @@ def test_collection_prompt_scopes_to_clips_and_collections() -> None:
     assert "semantic name" in prompt
     assert "normalized keyframe" in prompt or "normalized clip" in prompt or "normalize" in prompt
     assert "shape" in prompt  # named only to forbid vertex edits
+    # Exact track vocabulary — rotation is plain rotation, never rotationX/Y/Z.
+    assert "positiony" in prompt.replace(" ", "")
+    assert "rotation" in prompt
+    assert "rotationx" in prompt.replace(" ", "")  # named only to forbid the spelling
+    assert "clip-batch" in prompt
 
 
 def test_custom_prompt_wins_for_shape_and_collection_modes() -> None:

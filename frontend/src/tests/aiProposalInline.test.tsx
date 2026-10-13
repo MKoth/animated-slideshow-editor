@@ -482,6 +482,133 @@ describe('AiPanel instant shape draft', () => {
     expect(within(card).getByTestId('ai-proposal-approve-and-apply')).toBeInTheDocument()
   })
 
+  describe('AiPanel clip-batch fix-and-resubmit', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', vi.fn())
+      useAiStore.setState({
+        conversations: [],
+        messagesById: {},
+        activeByProject: {},
+        drafts: {},
+        search: '',
+        panelOpen: true,
+        assistantMode: 'collection',
+        settingsOpen: false,
+        status: 'idle',
+        streamingConversationId: null,
+        streamingContent: '',
+        lastError: null,
+        proposals: [],
+        proposalById: {},
+        activeProposalId: null,
+      })
+      useBackendStore.setState({ status: 'available' })
+    })
+
+    function renderBatchPanel() {
+      const engine = createEngineInternal()
+      engine.createProject({ name: 'Demo' })
+      const slide = engine.createSlide('Room')
+      const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'paw')
+      const projectId = engine.project?.id ?? 'p-1'
+      const batchMessage: AiMessage = {
+        id: 'm-batch',
+        role: 'assistant',
+        content: [
+          'Clip batch with a bad track name.',
+          '',
+          '```clip-batch',
+          'window: 0 - 4',
+          'clip: paw move | node: paw | semantic: paw',
+          'keys: rotationZ = 90@0, 0@4',
+          '```',
+        ].join('\n'),
+        stopped: false,
+        errorCode: null,
+        created: now(),
+      }
+      const seen: { chatBodies: unknown[] } = { chatBodies: [] }
+      vi.mocked(fetch).mockImplementation(async (url: unknown, init?: unknown) => {
+        const path = String(url)
+        const method = (init as RequestInit | undefined)?.method ?? 'GET'
+        if (method === 'POST' && path === '/api/ai/chat') {
+          seen.chatBodies.push(JSON.parse(String((init as RequestInit)?.body ?? '{}')))
+          return new Response('event: done\ndata: {"content":"fixed"}\n\n', { status: 200 })
+        }
+        if (method === 'POST' && path === '/api/ai/proposals') {
+          return new Response(JSON.stringify({ detail: 'unexpected proposal call' }), {
+            status: 500,
+          })
+        }
+        if (path.includes('/api/ai/proposals'))
+          return new Response(JSON.stringify([]), { status: 200 })
+        if (path.includes('/api/ai/conversations?'))
+          return new Response(
+            JSON.stringify([
+              { id: 'c-1', projectId, title: 'Chat', mode: 'collection', modified: now() },
+            ]),
+            { status: 200 },
+          )
+        if (path.endsWith('/messages'))
+          return new Response(JSON.stringify([userMessage, batchMessage]), { status: 200 })
+        return new Response(JSON.stringify([]), { status: 200 })
+      })
+      useAiStore.setState({
+        conversations: [
+          { id: 'c-1', projectId, title: 'Chat', mode: 'collection', modified: now() },
+        ],
+        messagesById: { 'c-1': [userMessage, batchMessage] },
+        activeByProject: { [`${projectId}:collection`]: 'c-1' },
+        proposals: [],
+        proposalById: {},
+        activeProposalId: null,
+      })
+      const undoStack = new UndoStack()
+      const dispatcher = new CommandDispatcher(engine, undoStack, () => undefined)
+      const value: EngineContextValue = {
+        engine: toReadOnly(engine),
+        undoStack,
+        dispatch: (command) => dispatcher.dispatch(command),
+        persistence: {
+          save: vi.fn(),
+          onCommandSucceeded: () => undefined,
+          dispose: () => undefined,
+        },
+      }
+      render(
+        <EngineContext.Provider value={value}>
+          <AiPanel />
+        </EngineContext.Provider>,
+      )
+      return { node, seen }
+    }
+
+    it('shows the local build error with a fix button that resubmits to the assistant', async () => {
+      const { seen } = renderBatchPanel()
+      const user = userEvent.setup()
+      const draftButton = await screen.findByTestId('ai-message-draft-clip-batch-m-batch')
+      expect(draftButton).toHaveTextContent('Draft clip batch (1 clips from timeline)')
+      await user.click(draftButton)
+      // Local build fails — no proposal POST, error names the bad track.
+      const errorBox = await screen.findByTestId('ai-message-draft-error-m-batch')
+      expect(errorBox).toHaveTextContent('rotationz')
+      const fixButton = within(errorBox).getByTestId('ai-message-fix-batch-m-batch')
+      expect(fixButton).toHaveTextContent('Send fix to assistant')
+      await user.click(fixButton)
+      // Fix resubmits the failure to the LLM as a new message (history appends,
+      // nothing is deleted) carrying the error plus the valid vocabulary.
+      await vi.waitFor(() => expect(seen.chatBodies).toHaveLength(1))
+      const sent = String((seen.chatBodies[0] as { message?: unknown }).message ?? '')
+      expect(sent).toMatch(/rotationz/)
+      expect(sent).toMatch(/plain rotation/)
+      expect(sent).toMatch(/clip-batch/)
+      await vi.waitFor(() =>
+        expect(screen.queryByTestId('ai-message-draft-error-m-batch')).not.toBeInTheDocument(),
+      )
+      expect(screen.queryByTestId('ai-message-fix-batch-m-batch')).not.toBeInTheDocument()
+    })
+  })
+
   it('applies a rotate transform locally with the same vertex count', async () => {
     const { source, seen } = renderShapePanel(
       (nodeId) => [

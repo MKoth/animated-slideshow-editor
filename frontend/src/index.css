@@ -688,6 +688,50 @@ button:disabled {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
+}
+
+.animations-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 8px 0;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.animations-tabs__tab {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.animations-tabs__tab[aria-selected='true'] {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border-color: var(--color-border);
+  font-weight: 600;
+}
+
+.animations-tabpanel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.clip-collections {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .animations-toolbar {
@@ -751,6 +795,9 @@ button:disabled {
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 8px;
   overflow: auto;
+  flex: 1;
+  min-height: 0;
+  align-content: start;
 }
 
 .animation-grid__item {
@@ -4624,6 +4671,39 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.ai-proposal__deny {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-proposal__deny-label {
+  display: block;
+  min-width: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.ai-proposal__deny-input {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.ai-proposal__deny-button {
+  align-self: flex-start;
 }
 
 .ai-proposal-modal__create {

@@ -5,6 +5,7 @@ import { AiMarkdown } from '../../ai/markdown'
 import { extractLegacyScriptBlock, transpileLegacyScript } from '../../ai/legacyScript'
 import { extractScriptBlock, resolveScriptSlideId } from '../../ai/scriptBlock'
 import { buildShapeStepOperation, extractShapeStepBlock } from '../../ai/shapeStep'
+import { buildClipBatchOperations, extractClipBatchBlock } from '../../ai/clipBatch'
 import { useFingerprint } from '../../ai/proposalFingerprint'
 import { formatTokenCount, sumConversationUsage } from '../../ai/tokens'
 import { useEngine } from '../../app/useEngine'
@@ -350,6 +351,71 @@ export function AiPanel() {
       })
   }
 
+  // Instant clip-batch path: the message already carries an appliable
+  // clip-batch block, so every Clip is extracted locally from live timeline
+  // orphans — real keyframes, normalized to duration 1, canonical ClipJSON.
+  // No second AI call (which cannot see orphan data and invents channels),
+  // only a fast POST with one single-operation command per step.
+  const handleDraftCollection = (messageId: string) => {
+    if (!projectId || !activeId || proposalBusy || unavailable) return
+    const message = messages.find((m) => m.id === messageId)
+    const plan = message ? extractClipBatchBlock(message.content) : null
+    if (!plan) return
+    const built = buildClipBatchOperations({ engine, nodes: context.animation.nodes, plan })
+    if (!built.ok) {
+      setDraftErrorByMessage((prev) => ({ ...prev, [messageId]: built.error }))
+      return
+    }
+    clearDraftError(messageId)
+    setProposalModal({ mode: 'drafting', messageId })
+    const title =
+      `Clip batch — ${built.build.steps.length} clips ` +
+      `from timeline ${built.build.from}–${built.build.to}s: ${built.build.summary}`
+    void store
+      .createProposal({
+        projectId,
+        conversationId: activeId,
+        messageId,
+        title,
+        commands: built.build.operations.map((operation) => ({
+          type: 'AiAnimationAssetBatch',
+          operations: [operation],
+        })),
+        projectFingerprint: fingerprint,
+      })
+      .then((created) => {
+        if (created) {
+          if (isLessonMode) setProposalModal({ mode: 'review', proposalId: created.id })
+          else setProposalModal(null)
+        } else {
+          setProposalModal(null)
+          failDraft(messageId, 'Drafting failed.')
+        }
+      })
+  }
+
+  // Fix-and-resubmit: a clip-batch block failed local drafting (unknown node,
+  // unknown shape, bad track...). Sends the failure back to the assistant so it
+  // replies with a corrected block — the fix arrives as a new message that
+  // supersedes the broken one (history stays append-only: proposals link to
+  // their messages, so the old message is never deleted).
+  const handleFixBatch = (messageId: string) => {
+    if (!projectId || !activeId || isStreaming || unavailable) return
+    const err = draftErrorByMessage[messageId] ?? 'unknown drafting error'
+    clearDraftError(messageId)
+    void store.sendMessage(
+      projectId,
+      activeId,
+      `The clip batch in your previous message failed to draft: ${err}\n\n` +
+        `Fix the \`\`\`clip-batch block and reply with a corrected block (same steps, corrected). ` +
+        `Valid tracks are positionX, positionY, rotation, scaleX, scaleY, opacity, morph, ` +
+        `visible, zIndex, circle.<prop> — rotation is plain rotation, never rotationX/Y/Z. ` +
+        `Do not claim anything was created.`,
+      context,
+      normalizeAiMode(assistantMode),
+    )
+  }
+
   if (!panelOpen) return null
 
   return (
@@ -594,6 +660,10 @@ export function AiPanel() {
                 message.role === 'assistant' && !scriptBlock
                   ? extractShapeStepBlock(message.content)
                   : null
+              const clipBatch =
+                message.role === 'assistant' && !scriptBlock && !shapeStep
+                  ? extractClipBatchBlock(message.content)
+                  : null
               return (
                 <div
                   key={message.id}
@@ -670,6 +740,14 @@ export function AiPanel() {
                         >
                           Draft this shape
                         </button>
+                      ) : clipBatch ? (
+                        <button
+                          data-testid={`ai-message-draft-clip-batch-${message.id}`}
+                          disabled={proposalBusy || unavailable}
+                          onClick={() => handleDraftCollection(message.id)}
+                        >
+                          Draft clip batch ({clipBatch.steps.length} clips from timeline)
+                        </button>
                       ) : scriptBlock ? (
                         <button
                           data-testid={`ai-message-draft-script-${message.id}`}
@@ -704,6 +782,15 @@ export function AiPanel() {
                       {draftErrorByMessage[message.id] && (
                         <div data-testid={`ai-message-draft-error-${message.id}`}>
                           {draftErrorByMessage[message.id]}
+                          {clipBatch && (
+                            <button
+                              data-testid={`ai-message-fix-batch-${message.id}`}
+                              disabled={isStreaming || unavailable}
+                              onClick={() => handleFixBatch(message.id)}
+                            >
+                              Send fix to assistant
+                            </button>
+                          )}
                         </div>
                       )}
                     </>

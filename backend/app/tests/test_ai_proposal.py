@@ -647,6 +647,114 @@ def test_proposal_isolation_and_cascade(client: TestClient) -> None:
     assert client.get(f"/api/ai/proposals/{r.json()['id']}").status_code == 404
 
 
+def _clip_batch(client: TestClient, pid: str, clip: dict[str, Any]) -> dict[str, Any]:
+    _make_project(client, pid)
+    conv_id = _make_conversation(client, pid)
+    r = client.post(
+        "/api/ai/proposals",
+        json={
+            "projectId": pid,
+            "conversationId": conv_id,
+            "title": "Clip check",
+            "commands": [
+                {
+                    "type": "AiAnimationAssetBatch",
+                    "operations": [
+                        {"kind": "upsertClip", "action": "create", "nodeId": "n1", "clip": clip}
+                    ],
+                }
+            ],
+            "projectFingerprint": "fp-1",
+        },
+    )
+    assert r.status_code == 201, r.text
+    return dict(r.json())
+
+
+def _good_clip() -> dict[str, Any]:
+    return {
+        "id": "c-good",
+        "name": "Good",
+        "duration": 1,
+        "channels": [{"property": "positionY"}],
+        "params": [],
+        "channelAnimations": {
+            "positionY": {
+                "keyframes": [
+                    {"id": "k1", "time": 0, "value": 10, "interpolation": "linear"},
+                    {"id": "k2", "time": 1, "value": 30, "interpolation": "linear"},
+                ]
+            }
+        },
+    }
+
+
+def test_clip_gate_rejects_invented_dialect_and_empty_clips(client: TestClient) -> None:
+    # Wrong dialect: keyframes nested inside channels[] (what the LLM drafter emits).
+    bad = _good_clip()
+    bad["channels"] = [
+        {
+            "keyframes": [{"time": 0, "value": 0}],
+            "nodeId": "n1",
+            "property": "positionY",
+        }
+    ]
+    del bad["channelAnimations"]
+    data = _clip_batch(client, "p-clip-dialect", bad)
+    assert data["validation"]["ok"] is False
+    assert any("must not nest 'keyframes'" in e["message"] for e in data["validation"]["errors"])
+
+    # Empty channels, no keyframes anywhere.
+    data = _clip_batch(
+        client,
+        "p-clip-empty",
+        {"id": "c-e", "name": "E", "duration": 1, "channels": [], "params": []},
+    )
+    assert data["validation"]["ok"] is False
+
+    # Channel definitions but zero keyframes.
+    data = _clip_batch(
+        client,
+        "p-clip-nokeys",
+        {
+            "id": "c-n",
+            "name": "N",
+            "duration": 1,
+            "channels": [{"property": "positionY"}],
+            "params": [],
+        },
+    )
+    assert data["validation"]["ok"] is False
+    assert any("at least one keyframe" in e["message"] for e in data["validation"]["errors"])
+
+    # Canonical clip with real keyframes passes.
+    assert _clip_batch(client, "p-clip-good", _good_clip())["validation"]["ok"] is True
+
+    # Morph-only clips legitimately carry empty channels.
+    morph = {
+        "id": "c-m",
+        "name": "M",
+        "duration": 1,
+        "channels": [],
+        "params": [],
+        "morphAnimation": {
+            "keyframes": [
+                {
+                    "id": "k1",
+                    "time": 0,
+                    "value": {"fromShapeName": "a", "toShapeName": "b", "coefficient": 0},
+                },
+                {
+                    "id": "k2",
+                    "time": 1,
+                    "value": {"fromShapeName": "a", "toShapeName": "b", "coefficient": 1},
+                },
+            ]
+        },
+    }
+    assert _clip_batch(client, "p-clip-morph", morph)["validation"]["ok"] is True
+
+
 def test_rejected_server_invalid_cannot_approve(client: TestClient) -> None:
     _make_project(client, "p-prop-9")
     conv_id = _make_conversation(client, "p-prop-9")

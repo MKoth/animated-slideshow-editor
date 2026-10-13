@@ -193,10 +193,11 @@ export function AiProposalDetail({
   const [denialError, setDenialError] = useState<string | null>(null)
 
   const assetOperations = useMemo(() => {
-    const command = proposal.commands.find((entry) => entry.type === 'AiAnimationAssetBatch')
-    return Array.isArray(command?.operations)
-      ? (command.operations as AnimationAssetOperation[])
-      : null
+    const commands = proposal.commands.filter((entry) => entry.type === 'AiAnimationAssetBatch')
+    const operations = commands.flatMap((command) =>
+      Array.isArray(command?.operations) ? (command.operations as AnimationAssetOperation[]) : [],
+    )
+    return operations.length > 0 ? operations : null
   }, [proposal.commands])
   const animationScript = useMemo(() => {
     const command = proposal.commands.find(
@@ -465,16 +466,18 @@ export function AiProposalDetail({
         <div data-testid="ai-proposal-rejected">Denied — {proposal.rejectionFeedback}</div>
       ) : (
         proposal.status !== 'executed' && (
-          <div data-testid="ai-proposal-deny">
-            <label>
+          <div data-testid="ai-proposal-deny" className="ai-proposal__deny">
+            <label className="ai-proposal__deny-label">
               Feedback for the next draft
               <textarea
+                className="ai-proposal__deny-input"
                 data-testid="ai-proposal-denial-feedback"
                 value={denialFeedback}
                 onChange={(event) => setDenialFeedback(event.target.value)}
               />
             </label>
             <button
+              className="ai-proposal__deny-button"
               data-testid="ai-proposal-deny-button"
               disabled={proposalBusy}
               onClick={() => void handleDeny()}
