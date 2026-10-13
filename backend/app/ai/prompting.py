@@ -14,6 +14,22 @@ from typing import Any
 
 CHARS_PER_TOKEN = 4
 
+ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS = (
+    "Conversation continuity and request coverage are mandatory: treat every user message in the "
+    "conversation as an active requirement unless the user explicitly changes or cancels it. "
+    "A later clarification narrows or adds to the original request; it does not replace earlier "
+    "requested actions. Before answering, privately account for every requested starting pose, "
+    "hold/duration, transition, intermediate action, and final pose/direction. Every requirement "
+    "must appear in both the proposed beats and the script, or be explicitly identified as "
+    "unsupported or approximated. A requested clip or collection is one part of the sequence, "
+    "not a substitute for the rest of the request. Never silently omit an action or start the "
+    "requested ending animation at time 0 when earlier beats were requested. If scene resources "
+    "cannot represent a requested pose or transition, state that limitation and either propose a "
+    "clearly labelled closest supported approximation or ask a concise question; do not present an "
+    "incomplete sequence as if it satisfies the request. Before sending, cross-check the script "
+    "timeline against every proposed beat and the full conversation."
+)
+
 
 def estimate_tokens(text: str) -> int:
     if not text:

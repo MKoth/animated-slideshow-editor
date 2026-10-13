@@ -26,7 +26,13 @@ from app.ai.plans import (
     build_plan_user_text,
     parse_and_validate_plan,
 )
-from app.ai.prompting import ChatMessage, compose_messages, context_to_text, estimate_tokens
+from app.ai.prompting import (
+    ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS,
+    ChatMessage,
+    compose_messages,
+    context_to_text,
+    estimate_tokens,
+)
 from app.ai.schemas import (
     AiBoardCompile,
     AiBoardCreate,
@@ -288,8 +294,10 @@ def _system_prompt_for_mode(stored_prompt: str, effective_mode: str) -> str:
     if effective_mode != "animation":
         return stored_prompt
     if stored_prompt.strip() and stored_prompt.strip() != DEFAULT_SYSTEM_PROMPT.strip():
-        return stored_prompt
-    return DEFAULT_ANIMATION_SYSTEM_PROMPT
+        animation_prompt = stored_prompt
+    else:
+        animation_prompt = DEFAULT_ANIMATION_SYSTEM_PROMPT
+    return f"{animation_prompt}\n\n{ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS}"
 
 
 @router.post("/ai/chat")
