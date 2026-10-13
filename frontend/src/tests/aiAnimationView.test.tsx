@@ -632,6 +632,19 @@ describe('AiPanel animation mode', () => {
     expect(screen.queryByTestId('ai-animation-section')).not.toBeInTheDocument()
     expect(screen.getByTestId('ai-plan-section')).toBeInTheDocument()
   })
+
+  it('switches to dedicated shapes and collections modes sharing the asset chrome', async () => {
+    renderPanel()
+    const user = userEvent.setup()
+
+    await user.click(screen.getByTestId('ai-mode-shape'))
+    expect(screen.getByTestId('ai-animation-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-plan-section')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('ai-mode-collection'))
+    expect(screen.getByTestId('ai-animation-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-plan-section')).not.toBeInTheDocument()
+  })
 })
 
 describe('AiAnimationView apply (issue #446)', () => {

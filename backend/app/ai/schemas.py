@@ -18,7 +18,7 @@ class AiSettingsUpdate(BaseModel):
 class AiConversationCreate(BaseModel):
     projectId: str = Field(min_length=1)
     title: str | None = None
-    mode: Literal["lesson", "animation"] | None = None
+    mode: Literal["lesson", "animation", "shape", "collection"] | None = None
 
 
 class AiConversationRename(BaseModel):
@@ -30,7 +30,7 @@ class AiChatRequest(BaseModel):
     message: str | None = None
     mode: Literal["send", "regenerate"] = "send"
     context: Any = None
-    assistantMode: Literal["lesson", "animation"] | None = None
+    assistantMode: Literal["lesson", "animation", "shape", "collection"] | None = None
 
 
 class AiPlanSlideAsset(BaseModel):

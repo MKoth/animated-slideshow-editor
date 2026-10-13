@@ -184,8 +184,10 @@ class AiLibrary:
 
     @staticmethod
     def normalize_conversation_mode(mode: object) -> str:
-        """Lesson/animation split: unknown or missing reads as lesson for old rows."""
-        return "animation" if mode == "animation" else "lesson"
+        """Lesson/animation/shape/collection split: unknown or missing reads as lesson for old rows."""
+        if mode in ("animation", "shape", "collection"):
+            return str(mode)
+        return "lesson"
 
     def list_conversations(
         self, project_id: str, mode: str | None = None

@@ -220,6 +220,9 @@ export function AiProposalDetail({
   }, [proposal.commands, engine])
 
   const stale = isStale(proposal.validatedFingerprint, fingerprint)
+  // A fresh draft has no validation yet — that is not project drift, so it
+  // gets its own notice instead of the stale warning.
+  const neverValidated = proposal.validatedFingerprint == null
 
   const toggleSelected = (index: number) => {
     setSelected((prev) =>
@@ -365,7 +368,12 @@ export function AiProposalDetail({
           />
         </>
       )}
-      {stale && proposal.status !== 'approved' && (
+      {neverValidated && proposal.status !== 'approved' && (
+        <div data-testid="ai-proposal-unvalidated" className="ai-proposal__warning">
+          Not yet validated — run Dry-run validate first, then approve.
+        </div>
+      )}
+      {stale && !neverValidated && proposal.status !== 'approved' && (
         <div data-testid="ai-proposal-stale" className="ai-proposal__warning">
           Stale — the project changed since validation. Re-run the dry-run, then approve again.
         </div>

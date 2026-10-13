@@ -73,7 +73,12 @@ from app.ai.zen import (
     model_api_family,
     opencode_headers,
 )
-from app.config import DEFAULT_ANIMATION_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT
+from app.config import (
+    DEFAULT_ANIMATION_SYSTEM_PROMPT,
+    DEFAULT_COLLECTION_SYSTEM_PROMPT,
+    DEFAULT_SHAPE_SYSTEM_PROMPT,
+    DEFAULT_SYSTEM_PROMPT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -284,21 +289,29 @@ def _resolve_live_models(
 
 
 def _effective_assistant_mode(requested: str | None, conversation_mode: object) -> str:
-    """Lesson/animation split: explicit request wins, else stored conversation mode."""
-    if requested == "animation" or requested == "lesson":
-        return requested
+    """Lesson/animation/shape/collection split: explicit request wins, else stored conversation mode."""
+    if requested in ("animation", "lesson", "shape", "collection"):
+        return str(requested)
     return AiLibrary.normalize_conversation_mode(conversation_mode)
 
 
 def _system_prompt_for_mode(stored_prompt: str, effective_mode: str) -> str:
-    """Mode-aware prompt: custom user prompt wins for both modes, else mode default."""
-    if effective_mode != "animation":
-        return stored_prompt
-    if stored_prompt.strip() and stored_prompt.strip() != DEFAULT_SYSTEM_PROMPT.strip():
-        animation_prompt = stored_prompt
-    else:
-        animation_prompt = DEFAULT_ANIMATION_SYSTEM_PROMPT
-    return f"{animation_prompt}\n\n{ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS}"
+    """Mode-aware prompt: custom user prompt wins for every mode, else the mode default."""
+    if effective_mode == "animation":
+        if stored_prompt.strip() and stored_prompt.strip() != DEFAULT_SYSTEM_PROMPT.strip():
+            animation_prompt = stored_prompt
+        else:
+            animation_prompt = DEFAULT_ANIMATION_SYSTEM_PROMPT
+        return f"{animation_prompt}\n\n{ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS}"
+    if effective_mode == "shape":
+        if stored_prompt.strip() and stored_prompt.strip() != DEFAULT_SYSTEM_PROMPT.strip():
+            return stored_prompt
+        return DEFAULT_SHAPE_SYSTEM_PROMPT
+    if effective_mode == "collection":
+        if stored_prompt.strip() and stored_prompt.strip() != DEFAULT_SYSTEM_PROMPT.strip():
+            return stored_prompt
+        return DEFAULT_COLLECTION_SYSTEM_PROMPT
+    return stored_prompt
 
 
 @router.post("/ai/chat")
@@ -401,8 +414,9 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
         stream_diag: dict[str, Any] = {}
         try:
             if row.streaming:
-                # Generous time-to-first-token: large scene prompts can keep a
-                # reasoning model silent for a while (seen: >15s stalls).
+                # Generous time-to-first-token: large scene prompts plus
+                # high-reasoning / large max_output_tokens can keep a
+                # reasoning model silent for minutes (seen: >120s stalls).
                 for token in zen.chat_stream(
                     model=row.model,
                     messages=zen_messages,
@@ -411,7 +425,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                     session_id=body.conversationId,
                     usage=reported_usage,
                     diagnostics=stream_diag,
-                    timeout_s=120.0,
+                    timeout_s=300.0,
                 ):
                     collected.append(token)
                     yield _sse("token", {"delta": token, "messageId": assistant_id})
@@ -2836,6 +2850,85 @@ PROPOSAL_COMMAND_TYPES: tuple[str, ...] = (
 )
 
 
+def _proposal_asset_instructions(effective_mode: str) -> str:
+    """Mode-scoped AiAnimationAssetBatch guidance for the proposal drafter.
+
+    Lesson mode has no asset authoring; animation keeps the full combined
+    guidance; shape/collection modes get narrowed variants so the drafter
+    only emits operations that belong to the active tab.
+    """
+    if effective_mode == "shape":
+        return (
+            " For Shape authoring, use one AiAnimationAssetBatch command with exactly "
+            "the reviewed Shape operation (action=create or action=update, or a delete). "
+            "Updates must set targetId to an existing stable id supplied by context. "
+            "Never invent an update target id. Use context.animation.shapeGeometry as source "
+            "vertex data; if geometry is missing, ask for the target object to be selected and "
+            "refreshed in context; if its full vertices are still absent, ask for "
+            "artist-authored geometry rather than inventing coordinates. A Shape create must "
+            "name sourceShapeId and provide every vertex position at the target mesh's "
+            "unchanged vertex count. Do not emit Clip, Collection, or animation-script "
+            "operations in this mode; those belong to the Collections and Animation "
+            "assistants. Create/update one asset step at a time. "
+            "Emit exactly this envelope — flat fields like targetStableId or "
+            'action:"shape.create" are invalid: {"type": "AiAnimationAssetBatch", '
+            '"operations": [{"kind": "upsertShape", "action": "create", '
+            '"nodeId": "<target node id from context>", '
+            '"sourceShapeId": "<closest-fit shape id from context>", '
+            '"shape": {"id": "<new unique shape id>", "name": "<new shape name>", '
+            '"vertices": [{"x": 0.0, "y": 0.0}, ...]}}]}. '
+            "The vertices array must hold every vertex position from "
+            "context.animation.shapeGeometry (same count, finite x/y each) — never invent "
+            "coordinates or truncate the list."
+        )
+    if effective_mode == "collection":
+        return (
+            " For Clip and Clip Collection authoring, use one AiAnimationAssetBatch command "
+            "with exactly the reviewed operation(s). A Clip is a complete ClipJSON with "
+            "normalized keyframe times, and may include morphAnimation referring to the target "
+            "node's Shape names. A Collection is a ClipCollectionJSON whose bindings map "
+            "explicit Semantic Names to existing or proposed Clip ids and include sourceNodeId "
+            "for whole-rig preview. Deletes use exact stable ids from context. When a Clip "
+            "delete has Collection bindings or scene instances, list those dependents and "
+            "include deleteCollection/deleteClipInstance operations only when the user's "
+            "request includes those dependent removals. Do not emit Shape vertex edits or "
+            "animation scripts in this mode; those belong to the Shapes and Animation "
+            "assistants. Create/update one asset step at a time. "
+            "Emit exactly this envelope — flat fields are invalid: "
+            '{"type": "AiAnimationAssetBatch", "operations": [{"kind": "upsertClip", '
+            '"action": "create", "clip": {"id": "<new unique clip id>", "name": "<clip name>", '
+            '"duration": 1, "channels": [...], "params": []}}, '
+            '{"kind": "upsertCollection", "action": "create", '
+            '"collection": {"id": "<new unique collection id>", "name": "<collection name>", '
+            '"sourceNodeId": "<rig root node id from context>", '
+            '"bindings": {"<Semantic Name>": "<clip id>"}}}]}. '
+            "A Clip needs id, name, duration, channels, and params; a Collection needs id, "
+            "name, sourceNodeId, and non-empty semantic bindings."
+        )
+    if effective_mode == "animation":
+        return (
+            " For reusable Shape, Clip, or Clip Collection authoring, use one "
+            "AiAnimationAssetBatch command with exactly the reviewed operation(s). "
+            "Each upsert must state action=create or action=update; updates must set targetId "
+            "to an existing stable id supplied by context. Never invent an update target id. "
+            "Use context.animation.shapeGeometry as source vertex data; if geometry is "
+            "missing, ask for the target object to be selected and refreshed in context; if its "
+            "full vertices are still absent, ask for artist-authored geometry rather than "
+            "inventing coordinates. A Shape create must name sourceShapeId and provide every "
+            "vertex position at the target mesh's unchanged vertex count. "
+            "A Clip is a complete ClipJSON with normalized keyframe times, and may include "
+            "morphAnimation referring to the target node's Shape names. A Collection is a "
+            "ClipCollectionJSON whose bindings map explicit Semantic Names to existing or "
+            "proposed Clip ids and include sourceNodeId for whole-rig preview. Deletes use exact "
+            "stable ids from context. When a Clip delete has Collection bindings or scene "
+            "instances, list those dependents and include deleteCollection/deleteClipInstance "
+            "operations only when the user's request includes those dependent removals. "
+            "Do not combine "
+            "independent authoring stages; create/update one asset step at a time."
+        )
+    return ""
+
+
 def _generate_proposal_structured(
     *,
     endpoint: str,
@@ -2942,28 +3035,7 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
             else ""
         )
         + " Reply as a single JSON object with title and commands."
-        + (
-            " For reusable Shape, Clip, or Clip Collection authoring, use one "
-            "AiAnimationAssetBatch command with exactly the reviewed operation(s). "
-            "Each upsert must state action=create or action=update; updates must set targetId "
-            "to an existing stable id supplied by context. Never invent an update target id. "
-            "Use context.animation.shapeGeometry as source vertex data; if geometry is "
-            "missing, ask for the target object to be selected and refreshed in context; if its "
-            "full vertices are still absent, ask for artist-authored geometry rather than "
-            "inventing coordinates. A Shape create must name sourceShapeId and provide every "
-            "vertex position at the target mesh's unchanged vertex count. "
-            "A Clip is a complete ClipJSON with normalized keyframe times, and may include "
-            "morphAnimation referring to the target node's Shape names. A Collection is a "
-            "ClipCollectionJSON whose bindings map explicit Semantic Names to existing or "
-            "proposed Clip ids and include sourceNodeId for whole-rig preview. Deletes use exact "
-            "stable ids from context. When a Clip delete has Collection bindings or scene "
-            "instances, list those dependents and include deleteCollection/deleteClipInstance "
-            "operations only when the user's request includes those dependent removals. "
-            "Do not combine "
-            "independent authoring stages; create/update one asset step at a time."
-            if effective_mode == "animation"
-            else ""
-        )
+        + _proposal_asset_instructions(effective_mode)
         + (f" Extra instruction: {hint}" if hint else "")
         + f"\n\nAssistant message:\n{message.content}"
     )

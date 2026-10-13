@@ -165,6 +165,20 @@ describe('AiProposalView validate-dry-run-execute pipeline', () => {
     expect(screen.getByTestId('ai-proposal-execute')).toBeDisabled()
   })
 
+  it('fresh drafts ask for a first dry-run instead of claiming drift', () => {
+    const proposal = sampleProposal({ status: 'validated', validatedFingerprint: null })
+    useAiStore.setState({
+      proposals: [proposal],
+      proposalById: { 'prop-1': proposal },
+      activeProposalId: 'prop-1',
+    })
+    renderView()
+    expect(screen.getByTestId('ai-proposal-unvalidated')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-proposal-stale')).not.toBeInTheDocument()
+    // Approval still waits for validation.
+    expect(screen.getByTestId('ai-proposal-approve')).toBeDisabled()
+  })
+
   it('execution records link the single History Entry', () => {
     const proposal = sampleProposal({
       status: 'executed',

@@ -21,10 +21,11 @@ export interface AiSettingsUpdate {
   apiKey?: string
 }
 
-export type AiAssistantMode = 'lesson' | 'animation'
+export type AiAssistantMode = 'lesson' | 'animation' | 'shape' | 'collection'
 
 export function normalizeAssistantMode(mode: unknown): AiAssistantMode {
-  return mode === 'animation' ? 'animation' : 'lesson'
+  if (mode === 'animation' || mode === 'shape' || mode === 'collection') return mode
+  return 'lesson'
 }
 
 export interface AiConversationSummary {

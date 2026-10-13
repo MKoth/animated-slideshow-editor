@@ -4,6 +4,7 @@ import { animationAssetsFromConversationProposals } from '../../ai/animationAsse
 import { AiMarkdown } from '../../ai/markdown'
 import { extractLegacyScriptBlock, transpileLegacyScript } from '../../ai/legacyScript'
 import { extractScriptBlock, resolveScriptSlideId } from '../../ai/scriptBlock'
+import { buildShapeStepOperation, extractShapeStepBlock } from '../../ai/shapeStep'
 import { useFingerprint } from '../../ai/proposalFingerprint'
 import { formatTokenCount, sumConversationUsage } from '../../ai/tokens'
 import { useEngine } from '../../app/useEngine'
@@ -150,7 +151,10 @@ export function AiPanel() {
   }, [messages, usage])
   const isStreaming = status === 'streaming' && streamingConversationId === activeId
   const unavailable = status === 'unavailable' || backendStatus === 'unavailable'
-  const isAnimationMode = assistantMode === 'animation'
+  const isLessonMode = normalizeAiMode(assistantMode) === 'lesson'
+  // Shapes/Collections reuse the Animation chat + proposals chrome for now —
+  // only Lesson renders the plan/scenario/reconciliation/narration/calibration/board stages.
+  const usesAssetChrome = !isLessonMode
 
   const handleSend = () => {
     if (!projectId || !activeId || !draft.trim() || isStreaming || unavailable) return
@@ -203,7 +207,8 @@ export function AiPanel() {
 
   // LLM path: converts a prose-only message into commands. Used only when the
   // message has no appliable script block — hence the wait for the model.
-  // The modal opens immediately with a drafting indicator; review follows.
+  // Lesson reviews in the modal; asset-chrome modes (Animation/Shapes/Collections)
+  // render the new proposal inline under its message, so the modal closes.
   const handleDraft = (messageId: string) => {
     if (!projectId || !activeId || proposalBusy || unavailable) return
     clearDraftError(messageId)
@@ -212,7 +217,8 @@ export function AiPanel() {
       .draftProposal({ projectId, conversationId: activeId, messageId, context })
       .then((created) => {
         if (created) {
-          if (!isAnimationMode) setProposalModal({ mode: 'review', proposalId: created.id })
+          if (isLessonMode) setProposalModal({ mode: 'review', proposalId: created.id })
+          else setProposalModal(null)
         } else {
           setProposalModal(null)
           failDraft(messageId, 'Drafting failed.')
@@ -222,7 +228,7 @@ export function AiPanel() {
 
   // Instant path: the message already carries an appliable script block, so
   // the proposal is built locally — no second AI call, only a fast POST.
-  // Validation still runs in the review modal against the live engine.
+  // Lesson reviews in the modal; asset-chrome modes review inline, so the modal closes.
   const handleDraftScript = (messageId: string) => {
     if (!projectId || !activeId || proposalBusy || unavailable) return
     const message = messages.find((m) => m.id === messageId)
@@ -261,7 +267,7 @@ export function AiPanel() {
         title: `Animation script for ${slideHint ?? 'slide'}`,
         commands: [
           {
-            type: isAnimationMode ? 'AiRunAnimationScript' : 'SetSlideAnimationScript',
+            type: isLessonMode ? 'SetSlideAnimationScript' : 'AiRunAnimationScript',
             slideId,
             source,
           },
@@ -270,7 +276,73 @@ export function AiPanel() {
       })
       .then((created) => {
         if (created) {
-          if (!isAnimationMode) setProposalModal({ mode: 'review', proposalId: created.id })
+          if (isLessonMode) setProposalModal({ mode: 'review', proposalId: created.id })
+          else setProposalModal(null)
+        } else {
+          setProposalModal(null)
+          failDraft(messageId, 'Drafting failed.')
+        }
+      })
+  }
+
+  // Instant shape path: the message already carries an appliable shape-step
+  // block, so the proposal is built locally from live mesh geometry — no
+  // second AI call, only a fast POST. Vertices duplicate the live source
+  // Shape verbatim, so the mesh vertex count holds by construction.
+  const handleDraftShape = (messageId: string) => {
+    if (!projectId || !activeId || proposalBusy || unavailable) return
+    const message = messages.find((m) => m.id === messageId)
+    const step = message ? extractShapeStepBlock(message.content) : null
+    if (!step) return
+    const node =
+      context.animation.nodes.find((entry) => entry.id === step.node) ??
+      context.animation.nodes.find((entry) => entry.name.toLowerCase() === step.node.toLowerCase())
+    if (!node) {
+      setDraftErrorByMessage((prev) => ({
+        ...prev,
+        [messageId]: 'Could not resolve the target node — answer with the node name.',
+      }))
+      return
+    }
+    let liveShapes: { id: string; name: string; vertices: { x: number; y: number }[] }[]
+    try {
+      liveShapes = engine.getShapes(node.id).map((shape) => ({
+        id: shape.id,
+        name: shape.name,
+        vertices: shape.vertices.map((vertex) => ({ x: vertex.x, y: vertex.y })),
+      }))
+    } catch {
+      setDraftErrorByMessage((prev) => ({
+        ...prev,
+        [messageId]: `Node “${node.name}” has no mesh Shapes — pick a mesh node.`,
+      }))
+      return
+    }
+    const built = buildShapeStepOperation({ step, nodeId: node.id, liveShapes })
+    if ('error' in built) {
+      setDraftErrorByMessage((prev) => ({ ...prev, [messageId]: built.error }))
+      return
+    }
+    clearDraftError(messageId)
+    setProposalModal({ mode: 'drafting', messageId })
+    const label = step.name ?? step.target ?? step.shape ?? 'shape'
+    const title =
+      'summary' in built && built.summary
+        ? `Shape ${step.action} “${label}” on ${node.name} (${built.summary})`
+        : `Shape ${step.action} “${label}” on ${node.name}`
+    void store
+      .createProposal({
+        projectId,
+        conversationId: activeId,
+        messageId,
+        title,
+        commands: [{ type: 'AiAnimationAssetBatch', operations: [built.operation] }],
+        projectFingerprint: fingerprint,
+      })
+      .then((created) => {
+        if (created) {
+          if (isLessonMode) setProposalModal({ mode: 'review', proposalId: created.id })
+          else setProposalModal(null)
         } else {
           setProposalModal(null)
           failDraft(messageId, 'Drafting failed.')
@@ -298,10 +370,24 @@ export function AiPanel() {
         </button>
         <button
           data-testid="ai-mode-animation"
-          disabled={isAnimationMode}
+          disabled={assistantMode === 'animation'}
           onClick={() => store.setAssistantMode('animation')}
         >
           Animation
+        </button>
+        <button
+          data-testid="ai-mode-shape"
+          disabled={assistantMode === 'shape'}
+          onClick={() => store.setAssistantMode('shape')}
+        >
+          Shapes
+        </button>
+        <button
+          data-testid="ai-mode-collection"
+          disabled={assistantMode === 'collection'}
+          onClick={() => store.setAssistantMode('collection')}
+        >
+          Collections
         </button>
       </div>
 
@@ -310,7 +396,7 @@ export function AiPanel() {
           <div data-testid="ai-unavailable">
             AI unavailable — the backend is unreachable. The editor still works.
           </div>
-          {isAnimationMode ? (
+          {usesAssetChrome ? (
             <AiAnimationView
               projectId={projectId}
               conversationId={activeId}
@@ -376,7 +462,7 @@ export function AiPanel() {
                   void store.createConversation(projectId, normalizeAiMode(assistantMode))
               }}
             >
-              New {isAnimationMode ? 'animation' : 'lesson'} conversation
+              New {normalizeAiMode(assistantMode)} conversation
             </button>
             <ul data-testid="ai-conversation-list">
               {visibleConversations.map((conv) => (
@@ -504,6 +590,10 @@ export function AiPanel() {
                   ? (extractScriptBlock(message.content) ??
                     extractLegacyScriptBlock(message.content))
                   : null
+              const shapeStep =
+                message.role === 'assistant' && !scriptBlock
+                  ? extractShapeStepBlock(message.content)
+                  : null
               return (
                 <div
                   key={message.id}
@@ -537,7 +627,7 @@ export function AiPanel() {
                         data-testid={`ai-message-proposal-${proposal.id}`}
                         className="ai-message__proposal"
                       >
-                        {isAnimationMode ? (
+                        {usesAssetChrome ? (
                           <AiProposalDetail
                             proposal={proposal}
                             fingerprint={fingerprint}
@@ -548,7 +638,7 @@ export function AiPanel() {
                                 activeId,
                                 `I denied proposal ${proposal.id}. Please revise it using this feedback: ${feedback}`,
                                 context,
-                                'animation',
+                                normalizeAiMode(assistantMode),
                               )
                             }}
                           />
@@ -572,7 +662,15 @@ export function AiPanel() {
                     ))}
                   {message.role === 'assistant' && !message.errorCode && (
                     <>
-                      {scriptBlock ? (
+                      {shapeStep ? (
+                        <button
+                          data-testid={`ai-message-draft-shape-${message.id}`}
+                          disabled={proposalBusy || unavailable}
+                          onClick={() => handleDraftShape(message.id)}
+                        >
+                          Draft this shape
+                        </button>
+                      ) : scriptBlock ? (
                         <button
                           data-testid={`ai-message-draft-script-${message.id}`}
                           disabled={proposalBusy || unavailable}
@@ -586,10 +684,14 @@ export function AiPanel() {
                           disabled={proposalBusy || unavailable}
                           onClick={() => handleDraft(message.id)}
                         >
-                          Draft for me
+                          {assistantMode === 'shape'
+                            ? 'Draft shape proposal'
+                            : assistantMode === 'collection'
+                              ? 'Draft collection proposal'
+                              : 'Draft for me'}
                         </button>
                       )}
-                      {!isAnimationMode && (
+                      {isLessonMode && (
                         <button
                           data-testid={`ai-message-propose-${message.id}`}
                           onClick={() =>
@@ -630,7 +732,15 @@ export function AiPanel() {
           <div className="ai-panel__input">
             <textarea
               data-testid="ai-input"
-              placeholder={isAnimationMode ? 'Describe the performance…' : 'Ask about your lesson…'}
+              placeholder={
+                assistantMode === 'animation'
+                  ? 'Describe the performance…'
+                  : assistantMode === 'shape'
+                    ? 'Describe the shape…'
+                    : assistantMode === 'collection'
+                      ? 'Describe the collection…'
+                      : 'Ask about your lesson…'
+              }
               value={draft}
               onChange={(e) =>
                 projectId &&
@@ -662,7 +772,7 @@ export function AiPanel() {
             </button>
           </div>
 
-          {isAnimationMode ? (
+          {usesAssetChrome ? (
             <AiAnimationView
               projectId={projectId}
               conversationId={activeId}

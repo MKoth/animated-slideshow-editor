@@ -50,7 +50,7 @@ export async function streamAiChat(
     message?: string
     mode: 'send' | 'regenerate'
     context: unknown
-    assistantMode?: 'lesson' | 'animation'
+    assistantMode?: 'lesson' | 'animation' | 'shape' | 'collection'
   },
   handlers: StreamHandlers,
   signal?: AbortSignal,

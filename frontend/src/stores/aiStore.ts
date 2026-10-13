@@ -30,10 +30,11 @@ import { ApiError } from '../api/apiClient'
 
 export type AiBackendStatus = 'idle' | 'loading' | 'streaming' | 'unavailable'
 
-export type AiAssistantMode = 'lesson' | 'animation'
+export type AiAssistantMode = 'lesson' | 'animation' | 'shape' | 'collection'
 
 export function normalizeAiMode(mode: unknown): AiAssistantMode {
-  return mode === 'animation' ? 'animation' : 'lesson'
+  if (mode === 'animation' || mode === 'shape' || mode === 'collection') return mode
+  return 'lesson'
 }
 
 export function aiActiveKey(projectId: string, mode: AiAssistantMode): string {
@@ -481,7 +482,7 @@ export const useAiStore = create<AiState>()(
             const activeByProject = { ...state.activeByProject }
             const modesToFix: AiAssistantMode[] = deletedMode
               ? [deletedMode]
-              : (['lesson', 'animation'] as const)
+              : (['lesson', 'animation', 'shape', 'collection'] as const)
             for (const mode of modesToFix) {
               const key = aiActiveKey(projectId, mode)
               if (activeByProject[key] === id || (!deletedMode && activeByProject[key] === id)) {
