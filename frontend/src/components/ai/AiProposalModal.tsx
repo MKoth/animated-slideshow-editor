@@ -6,7 +6,9 @@ import { useFingerprint } from '../../ai/proposalFingerprint'
 import { AiProposalDetail } from './AiProposalView'
 
 export type ProposalModalState =
-  { mode: 'review'; proposalId: string } | { mode: 'create'; messageId: string }
+  | { mode: 'review'; proposalId: string }
+  | { mode: 'create'; messageId: string }
+  | { mode: 'drafting'; messageId: string }
 
 interface AiProposalModalProps {
   projectId: string
@@ -59,7 +61,10 @@ export function AiProposalModal({
           if (e.key === 'Escape') onClose()
         }}
         style={{
-          background: 'var(--panel-bg, #fff)',
+          background: 'var(--color-bg-panel)',
+          color: 'var(--color-text)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 12,
           maxWidth: 640,
           width: 'calc(100% - 48px)',
           maxHeight: 'calc(100% - 48px)',
@@ -67,9 +72,12 @@ export function AiProposalModal({
           padding: 16,
         }}
       >
-        <button data-testid="ai-proposal-modal-close" onClick={onClose}>
-          Close
-        </button>
+        <div className="ai-proposal-modal__header">
+          <span>{modal.mode === 'review' ? 'Review proposal' : 'Propose edit'}</span>
+          <button data-testid="ai-proposal-modal-close" onClick={onClose}>
+            Close
+          </button>
+        </div>
         {modal.mode === 'review' ? (
           proposal ? (
             <AiProposalDetail
@@ -82,6 +90,19 @@ export function AiProposalModal({
               Proposal no longer available — it may have been deleted.
             </div>
           )
+        ) : modal.mode === 'drafting' ? (
+          <div data-testid="ai-proposal-modal-drafting" className="ai-proposal-modal__drafting">
+            <span
+              className="ai-proposal-modal__spinner"
+              data-testid="ai-proposal-modal-spinner"
+              aria-hidden="true"
+            />
+            <p>
+              Drafting proposal — converting this message into reviewable engine commands. This asks
+              the model once more, so it can take a while. Nothing changes until you approve and
+              execute.
+            </p>
+          </div>
         ) : (
           <AiProposalCreateForm
             projectId={projectId}
@@ -149,7 +170,7 @@ function AiProposalCreateForm({
   }
 
   return (
-    <div data-testid="ai-proposal-modal-create">
+    <div data-testid="ai-proposal-modal-create" className="ai-proposal-modal__create">
       <h4>Propose edit</h4>
       <input
         data-testid="ai-proposal-modal-create-title"

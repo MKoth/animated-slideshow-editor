@@ -6,6 +6,7 @@ import {
   isStale,
   type AiCommandJson,
 } from '../../ai/proposals'
+import { ShikiCode } from '../../ai/markdown'
 import { useFingerprint } from '../../ai/proposalFingerprint'
 import { useEngine } from '../../app/useEngine'
 import { useAiStore } from '../../stores/aiStore'
@@ -220,15 +221,17 @@ export function AiProposalDetail({
   }
 
   return (
-    <div data-testid={`ai-proposal-${proposal.id}`}>
-      <div data-testid="ai-proposal-status">Status: {proposal.status}</div>
+    <div data-testid={`ai-proposal-${proposal.id}`} className="ai-proposal__detail">
+      <div data-testid="ai-proposal-status" className="ai-proposal__status">
+        Status: {proposal.status}
+      </div>
       {stale && proposal.status !== 'approved' && (
-        <div data-testid="ai-proposal-stale">
+        <div data-testid="ai-proposal-stale" className="ai-proposal__warning">
           Stale — the project changed since validation. Re-run the dry-run, then approve again.
         </div>
       )}
       {proposal.validation && !proposal.validation.ok && (
-        <div data-testid="ai-proposal-server-errors">
+        <div data-testid="ai-proposal-server-errors" className="ai-proposal__errors" role="alert">
           {(proposal.validation.errors ?? []).map((e, i) => (
             <div key={i} data-testid={`ai-proposal-server-error-${i}`}>
               {e.message}
@@ -238,15 +241,26 @@ export function AiProposalDetail({
       )}
       <div className="ai-proposal__commands">
         {proposal.commands.map((command, index) => (
-          <label key={index} data-testid={`ai-proposal-command-${index}`}>
-            <input
-              type="checkbox"
-              data-testid={`ai-proposal-check-${index}`}
-              checked={selected.includes(index)}
-              onChange={() => toggleSelected(index)}
-            />
-            <span data-testid={`ai-proposal-command-type-${index}`}>{command.type}</span>
-            <code>{JSON.stringify(command)}</code>
+          <label
+            key={index}
+            data-testid={`ai-proposal-command-${index}`}
+            className="ai-proposal__command"
+          >
+            <span className="ai-proposal__command-head">
+              <input
+                type="checkbox"
+                data-testid={`ai-proposal-check-${index}`}
+                checked={selected.includes(index)}
+                onChange={() => toggleSelected(index)}
+              />
+              <span
+                data-testid={`ai-proposal-command-type-${index}`}
+                className="ai-proposal__command-type"
+              >
+                {command.type}
+              </span>
+            </span>
+            <CommandPayload command={command} />
           </label>
         ))}
       </div>
@@ -284,9 +298,13 @@ export function AiProposalDetail({
           Undo last
         </button>
       </div>
-      {dryRunMessage && <div data-testid="ai-proposal-dry-run-message">{dryRunMessage}</div>}
+      {dryRunMessage && (
+        <div data-testid="ai-proposal-dry-run-message" className="ai-proposal__notice">
+          {dryRunMessage}
+        </div>
+      )}
       {proposal.dryRun && proposal.dryRun.errors && proposal.dryRun.errors.length > 0 && (
-        <div data-testid="ai-proposal-dry-run-errors">
+        <div data-testid="ai-proposal-dry-run-errors" className="ai-proposal__errors" role="alert">
           {proposal.dryRun.errors.map((e, i) => (
             <div key={i} data-testid={`ai-proposal-dry-run-error-${i}`}>
               {e.message}
@@ -294,8 +312,16 @@ export function AiProposalDetail({
           ))}
         </div>
       )}
-      {proposalError && <div data-testid="ai-proposal-error">{proposalError.message}</div>}
-      {executeError && <div data-testid="ai-proposal-execute-error">{executeError}</div>}
+      {proposalError && (
+        <div data-testid="ai-proposal-error" className="ai-proposal__errors" role="alert">
+          {proposalError.message}
+        </div>
+      )}
+      {executeError && (
+        <div data-testid="ai-proposal-execute-error" className="ai-proposal__errors" role="alert">
+          {executeError}
+        </div>
+      )}
       {proposal.executions.length > 0 && (
         <div data-testid="ai-proposal-executions">
           {proposal.executions.map((execution) => (
@@ -313,5 +339,28 @@ export function AiProposalDetail({
         </div>
       )}
     </div>
+  )
+}
+
+function CommandPayload({ command }: { command: AiCommandJson }) {
+  if (command.type === 'SetSlideAnimationScript' && typeof command.source === 'string') {
+    const slideId = typeof command.slideId === 'string' ? command.slideId : ''
+    return (
+      <span className="ai-proposal__payload">
+        {slideId && (
+          <span className="ai-proposal__payload-slide" data-testid="ai-proposal-payload-slide">
+            slide {slideId}
+          </span>
+        )}
+        <pre className="ai-proposal__payload-source">
+          <code>{command.source}</code>
+        </pre>
+      </span>
+    )
+  }
+  return (
+    <span className="ai-proposal__payload">
+      <ShikiCode code={JSON.stringify(command, null, 2)} language="json" />
+    </span>
   )
 }

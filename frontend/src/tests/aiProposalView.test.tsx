@@ -173,4 +173,33 @@ describe('AiProposalView validate-dry-run-execute pipeline', () => {
     render(<AiProposalView projectId="p-1" conversationId="c-1" disabled />)
     expect(screen.getByTestId('ai-proposal-disabled')).toBeInTheDocument()
   })
+
+  it('renders command payloads as formatted JSON', () => {
+    useAiStore.setState({
+      proposals: [sampleProposal()],
+      proposalById: { 'prop-1': sampleProposal() },
+      activeProposalId: 'prop-1',
+    })
+    renderView()
+    const payload = screen.getByTestId('ai-proposal-command-0').textContent ?? ''
+    expect(payload).toContain('"name": "Middle 1"')
+    expect(payload).toContain('\n')
+  })
+
+  it('renders animation script payloads as readable DSL with the slide', () => {
+    const dsl = 'script "Scene Animation Sequence" from 0\nbind cat = node("Cat")'
+    const proposal = sampleProposal({
+      commands: [{ type: 'SetSlideAnimationScript', slideId: 's-1', source: dsl }],
+    })
+    useAiStore.setState({
+      proposals: [proposal],
+      proposalById: { 'prop-1': proposal },
+      activeProposalId: 'prop-1',
+    })
+    renderView()
+    expect(screen.getByTestId('ai-proposal-payload-slide')).toHaveTextContent('s-1')
+    expect(screen.getByTestId('ai-proposal-command-0')).toHaveTextContent(
+      'script "Scene Animation Sequence" from 0',
+    )
+  })
 })

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { buildContextSnapshot, filterConversations } from '../../ai/contextSnapshot'
 import { AiMarkdown } from '../../ai/markdown'
+import { extractLegacyScriptBlock, transpileLegacyScript } from '../../ai/legacyScript'
+import { extractScriptBlock, resolveScriptSlideId } from '../../ai/scriptBlock'
+import { useFingerprint } from '../../ai/proposalFingerprint'
 import { formatTokenCount, sumConversationUsage } from '../../ai/tokens'
 import { useEngine } from '../../app/useEngine'
 import { conversationModeOf, normalizeAiMode, useAiStore } from '../../stores/aiStore'
@@ -50,6 +53,10 @@ export function AiPanel() {
   const [renameText, setRenameText] = useState('')
   const [proposalModal, setProposalModal] = useState<ProposalModalState | null>(null)
   const [othersOpen, setOthersOpen] = useState(false)
+  const [copyConversationState, setCopyConversationState] = useState<{
+    id: string
+    status: 'copied' | 'failed'
+  } | null>(null)
   const proposals = useAiStore((s) => s.proposals)
 
   const store = useAiStore.getState()
@@ -145,26 +152,110 @@ export function AiPanel() {
 
   const [draftErrorByMessage, setDraftErrorByMessage] = useState<Record<string, string>>({})
   const proposalBusy = useAiStore((s) => s.proposalBusy)
+  const fingerprint = useFingerprint(engine)
 
-  const handleDraft = (messageId: string) => {
-    if (!projectId || !activeId || proposalBusy || unavailable) return
+  const clearDraftError = (messageId: string) => {
     setDraftErrorByMessage((prev) => {
       if (!(messageId in prev)) return prev
       const next = { ...prev }
       delete next[messageId]
       return next
     })
+  }
+
+  const failDraft = (messageId: string, fallback: string) => {
+    const err = useAiStore.getState().proposalError
+    setDraftErrorByMessage((prev) => ({
+      ...prev,
+      [messageId]: err?.message ?? fallback,
+    }))
+  }
+
+  const handleCopyConversation = async (conversationId: string, title: string) => {
+    try {
+      const conversationMessages = await store.api.listMessages(conversationId)
+      const text = [
+        `Conversation: ${title}`,
+        ...conversationMessages.map(
+          (message) => `${message.role === 'user' ? 'User' : 'Assistant'}:\n${message.content}`,
+        ),
+      ].join('\n\n')
+      await navigator.clipboard.writeText(text)
+      setCopyConversationState({ id: conversationId, status: 'copied' })
+      window.setTimeout(() => setCopyConversationState(null), 1800)
+    } catch {
+      setCopyConversationState({ id: conversationId, status: 'failed' })
+      window.setTimeout(() => setCopyConversationState(null), 2500)
+    }
+  }
+
+  // LLM path: converts a prose-only message into commands. Used only when the
+  // message has no appliable script block — hence the wait for the model.
+  // The modal opens immediately with a drafting indicator; review follows.
+  const handleDraft = (messageId: string) => {
+    if (!projectId || !activeId || proposalBusy || unavailable) return
+    clearDraftError(messageId)
+    setProposalModal({ mode: 'drafting', messageId })
     void store
       .draftProposal({ projectId, conversationId: activeId, messageId, context })
       .then((created) => {
         if (created) {
           setProposalModal({ mode: 'review', proposalId: created.id })
         } else {
-          const err = useAiStore.getState().proposalError
-          setDraftErrorByMessage((prev) => ({
-            ...prev,
-            [messageId]: err?.message ?? 'Drafting failed.',
-          }))
+          setProposalModal(null)
+          failDraft(messageId, 'Drafting failed.')
+        }
+      })
+  }
+
+  // Instant path: the message already carries an appliable script block, so
+  // the proposal is built locally — no second AI call, only a fast POST.
+  // Validation still runs in the review modal against the live engine.
+  const handleDraftScript = (messageId: string) => {
+    if (!projectId || !activeId || proposalBusy || unavailable) return
+    const message = messages.find((m) => m.id === messageId)
+    const block = message ? extractScriptBlock(message.content) : null
+    const legacy = !block && message ? extractLegacyScriptBlock(message.content) : null
+    if (!block && !legacy) return
+    const slideHint = block?.slideHint ?? legacy?.slideHint ?? null
+    const slideId = resolveScriptSlideId(
+      context.slides,
+      slideHint,
+      context.animation.timeline.slideId,
+    )
+    if (!slideId) {
+      setDraftErrorByMessage((prev) => ({
+        ...prev,
+        [messageId]: 'Could not resolve the script slide — answer with the slide name.',
+      }))
+      return
+    }
+    const source = block?.source ?? (legacy ? transpileLegacyScript(legacy, engine, slideId) : null)
+    if (!source) {
+      setDraftErrorByMessage((prev) => ({
+        ...prev,
+        [messageId]:
+          'This legacy script uses animation data that cannot be safely converted — ask for a current Animation Script.',
+      }))
+      return
+    }
+    clearDraftError(messageId)
+    setProposalModal({ mode: 'drafting', messageId })
+    void store
+      .createProposal({
+        projectId,
+        conversationId: activeId,
+        messageId,
+        title: `Animation script for ${slideHint ?? 'slide'}`,
+        commands: [{ type: 'SetSlideAnimationScript', slideId, source }],
+        projectFingerprint: fingerprint,
+      })
+      .then((created) => {
+        if (created) {
+          setProposalModal({ mode: 'review', proposalId: created.id })
+        } else {
+          setProposalModal(null)
+          failDraft(messageId, 'Drafting failed.')
         }
       })
   }
@@ -303,6 +394,41 @@ export function AiPanel() {
                     </button>
                   )}
                   <button
+                    type="button"
+                    className="ai-panel__conversation-copy"
+                    data-testid={`ai-copy-conversation-${conv.id}`}
+                    aria-label={
+                      copyConversationState?.id === conv.id
+                        ? copyConversationState.status === 'copied'
+                          ? 'Conversation copied'
+                          : 'Copy conversation failed'
+                        : `Copy conversation ${conv.title}`
+                    }
+                    title={
+                      copyConversationState?.id === conv.id
+                        ? copyConversationState.status === 'copied'
+                          ? 'Copied'
+                          : 'Copy failed'
+                        : 'Copy conversation'
+                    }
+                    onClick={() => void handleCopyConversation(conv.id, conv.title)}
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <rect x="8" y="8" width="13" height="13" rx="2" />
+                      <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />
+                    </svg>
+                  </button>
+                  <button
                     data-testid={`ai-rename-${conv.id}`}
                     onClick={() => {
                       setRenamingId(conv.id)
@@ -354,77 +480,94 @@ export function AiPanel() {
                 </div>
               </div>
             )}
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                data-testid={`ai-message-${message.id}`}
-                data-role={message.role}
-              >
-                <div className="ai-message__role">{message.role}</div>
-                {message.role === 'assistant' ? (
-                  <AiMarkdown content={message.content} />
-                ) : (
-                  <div>{message.content}</div>
-                )}
-                {message.stopped && (
-                  <div data-testid={`ai-stopped-${message.id}`}>
-                    (stopped — partial response kept)
-                  </div>
-                )}
-                {message.errorCode && (
-                  <div data-testid={`ai-error-${message.id}`}>
-                    {message.content}
-                    <button data-testid={`ai-retry-${message.id}`} onClick={handleRegenerate}>
-                      Retry
-                    </button>
-                  </div>
-                )}
-                {proposals
-                  .filter((p) => p.conversationId === activeId && p.messageId === message.id)
-                  .map((proposal) => (
-                    <div
-                      key={proposal.id}
-                      data-testid={`ai-message-proposal-${proposal.id}`}
-                      className="ai-message__proposal"
-                    >
-                      <span>
-                        Proposing: {proposal.title} ({proposal.commands.length} change(s),{' '}
-                        {proposal.status})
-                      </span>{' '}
-                      <button
-                        data-testid={`ai-message-proposal-view-${proposal.id}`}
-                        onClick={() =>
-                          setProposalModal({ mode: 'review', proposalId: proposal.id })
-                        }
-                      >
-                        View
+            {messages.map((message) => {
+              const scriptBlock =
+                message.role === 'assistant'
+                  ? (extractScriptBlock(message.content) ??
+                    extractLegacyScriptBlock(message.content))
+                  : null
+              return (
+                <div
+                  key={message.id}
+                  data-testid={`ai-message-${message.id}`}
+                  data-role={message.role}
+                >
+                  <div className="ai-message__role">{message.role}</div>
+                  {message.role === 'assistant' ? (
+                    <AiMarkdown content={message.content} />
+                  ) : (
+                    <div>{message.content}</div>
+                  )}
+                  {message.stopped && (
+                    <div data-testid={`ai-stopped-${message.id}`}>
+                      (stopped — partial response kept)
+                    </div>
+                  )}
+                  {message.errorCode && (
+                    <div data-testid={`ai-error-${message.id}`}>
+                      {message.content}
+                      <button data-testid={`ai-retry-${message.id}`} onClick={handleRegenerate}>
+                        Retry
                       </button>
                     </div>
-                  ))}
-                {message.role === 'assistant' && !message.errorCode && (
-                  <>
-                    <button
-                      data-testid={`ai-message-draft-${message.id}`}
-                      disabled={proposalBusy || unavailable}
-                      onClick={() => handleDraft(message.id)}
-                    >
-                      Draft for me
-                    </button>
-                    <button
-                      data-testid={`ai-message-propose-${message.id}`}
-                      onClick={() => setProposalModal({ mode: 'create', messageId: message.id })}
-                    >
-                      Propose edit
-                    </button>
-                    {draftErrorByMessage[message.id] && (
-                      <div data-testid={`ai-message-draft-error-${message.id}`}>
-                        {draftErrorByMessage[message.id]}
+                  )}
+                  {proposals
+                    .filter((p) => p.conversationId === activeId && p.messageId === message.id)
+                    .map((proposal) => (
+                      <div
+                        key={proposal.id}
+                        data-testid={`ai-message-proposal-${proposal.id}`}
+                        className="ai-message__proposal"
+                      >
+                        <span>
+                          Proposing: {proposal.title} ({proposal.commands.length} change(s),{' '}
+                          {proposal.status})
+                        </span>{' '}
+                        <button
+                          data-testid={`ai-message-proposal-view-${proposal.id}`}
+                          onClick={() =>
+                            setProposalModal({ mode: 'review', proposalId: proposal.id })
+                          }
+                        >
+                          View
+                        </button>
                       </div>
-                    )}
-                  </>
-                )}
-              </div>
-            ))}
+                    ))}
+                  {message.role === 'assistant' && !message.errorCode && (
+                    <>
+                      {scriptBlock ? (
+                        <button
+                          data-testid={`ai-message-draft-script-${message.id}`}
+                          disabled={proposalBusy || unavailable}
+                          onClick={() => handleDraftScript(message.id)}
+                        >
+                          Draft this script
+                        </button>
+                      ) : (
+                        <button
+                          data-testid={`ai-message-draft-${message.id}`}
+                          disabled={proposalBusy || unavailable}
+                          onClick={() => handleDraft(message.id)}
+                        >
+                          Draft for me
+                        </button>
+                      )}
+                      <button
+                        data-testid={`ai-message-propose-${message.id}`}
+                        onClick={() => setProposalModal({ mode: 'create', messageId: message.id })}
+                      >
+                        Propose edit
+                      </button>
+                      {draftErrorByMessage[message.id] && (
+                        <div data-testid={`ai-message-draft-error-${message.id}`}>
+                          {draftErrorByMessage[message.id]}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )
+            })}
             {isStreaming && (
               <div data-testid="ai-streaming">
                 <AiMarkdown content={streamingContent || '…'} />

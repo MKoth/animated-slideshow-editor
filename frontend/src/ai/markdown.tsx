@@ -1,8 +1,20 @@
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useUiStore } from '../stores/uiStore'
 
-const SUPPORTED = new Set(['typescript', 'ts', 'glsl', 'python', 'py', 'json', 'markdown', 'md'])
+const SUPPORTED = new Set([
+  'typescript',
+  'ts',
+  'glsl',
+  'python',
+  'py',
+  'json',
+  'markdown',
+  'md',
+  'engine-command',
+  'engine-commands',
+])
 
 function langFor(className?: string): string | null {
   if (!className) return null
@@ -12,18 +24,23 @@ function langFor(className?: string): string | null {
   if (lang === 'ts') return 'typescript'
   if (lang === 'py') return 'python'
   if (lang === 'md') return 'markdown'
+  if (lang === 'engine-command' || lang === 'engine-commands') return 'typescript'
   return SUPPORTED.has(lang) ? lang : null
 }
 
 export function ShikiCode({ code, language }: { code: string; language: string }) {
   const [html, setHtml] = useState<string | null>(null)
+  const theme = useUiStore((s) => s.theme)
 
   useEffect(() => {
     let cancelled = false
     const highlight = async () => {
       try {
         const { codeToHtml } = await import('shiki')
-        const out = await codeToHtml(code, { lang: language, theme: 'github-dark' })
+        const out = await codeToHtml(code, {
+          lang: language,
+          theme: theme === 'dark' ? 'github-dark' : 'github-light',
+        })
         if (!cancelled) setHtml(out)
       } catch {
         if (!cancelled) setHtml(null)
@@ -33,7 +50,7 @@ export function ShikiCode({ code, language }: { code: string; language: string }
     return () => {
       cancelled = true
     }
-  }, [code, language])
+  }, [code, language, theme])
 
   if (html) {
     return <span data-testid="shiki-code" dangerouslySetInnerHTML={{ __html: html }} />
@@ -57,11 +74,7 @@ export function AiMarkdown({ content }: { content: string }) {
               return <code className={className}>{children}</code>
             }
             if (language) {
-              return (
-                <pre>
-                  <ShikiCode code={text} language={language} />
-                </pre>
-              )
+              return <ShikiCode code={text} language={language} />
             }
             return (
               <pre>
