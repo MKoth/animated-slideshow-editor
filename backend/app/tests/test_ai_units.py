@@ -60,6 +60,7 @@ def test_context_to_text_includes_animation_snapshot() -> None:
                     "name": "Cat",
                     "parentId": "root",
                     "depth": 1,
+                    "childCount": 3,
                     "semanticName": "cat",
                     "components": ["mesh", "assetInstance"],
                     "assetDefinitionId": "asset-cat",
@@ -91,6 +92,7 @@ def test_context_to_text_includes_animation_snapshot() -> None:
     text = context_to_text(context)
     assert "Cat [n-cat]" in text
     assert "child of root" in text
+    assert "[3 children]" in text
     assert "asset-cat" in text
     assert "shape-a -> shape-b" in text
     assert "Walk" in text
@@ -98,6 +100,102 @@ def test_context_to_text_includes_animation_snapshot() -> None:
     assert "12" in text
     # Analysis rendering never mutates the project context it reads.
     assert context == before
+
+
+def test_context_to_text_renders_exterior_hull_outlines() -> None:
+    import copy
+
+    square = [
+        {"x": 0, "y": 0},
+        {"x": 10, "y": 0},
+        {"x": 10, "y": 5},
+        {"x": 0, "y": 5},
+        {"x": 5, "y": 2},  # interior point stays out of the hull
+    ]
+    context = {
+        "projectName": "Cat Lesson",
+        "activeSlideName": "Room",
+        "animation": {
+            "nodes": [{"id": "n-paw", "name": "Paw", "childCount": 0}],
+            "shapeGeometry": [
+                {"nodeId": "n-paw", "shapes": [{"name": "profile", "vertices": square}]}
+            ],
+            "timeline": {"duration": 4},
+            "truncated": {},
+        },
+    }
+    before = copy.deepcopy(context)
+    text = context_to_text(context)
+    assert "shape outlines" in text
+    assert "Paw [n-paw] shape 'profile'" in text
+    assert "5v" in text
+    assert "bounds (0.0,0.0 10.0x5.0)" in text
+    assert "centroid (5.0,2.4)" in text
+    assert "outline M " in text
+    # Interior point (5.0,2.0) is not a hull vertex.
+    assert "5.0,2.0" not in text
+    assert context == before
+
+
+def test_context_to_text_flags_truncated_geometry() -> None:
+    context = {
+        "projectName": "P",
+        "animation": {
+            "nodes": [{"id": "n", "name": "N"}],
+            "shapeGeometry": [
+                {
+                    "nodeId": "n",
+                    "shapes": [
+                        {
+                            "name": "s",
+                            "vertices": [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 0, "y": 1}],
+                        }
+                    ],
+                }
+            ],
+            "shapeGeometryTruncated": True,
+            "timeline": {},
+            "truncated": {},
+        },
+    }
+    assert "truncated to the bounded set" in context_to_text(context)
+
+
+def test_context_to_text_prefers_qualified_shape_names() -> None:
+    context = {
+        "projectName": "P",
+        "animation": {
+            "nodes": [{"id": "n-paw", "name": "Paw"}],
+            "rig": {
+                "shapeInventory": [
+                    {
+                        "nodeId": "n-paw",
+                        "shapeCount": 2,
+                        "shapeNames": ["straight", "straight"],
+                        "qualifiedShapeNames": ["front/straight", "rear/straight"],
+                    }
+                ],
+            },
+            "shapeGeometry": [
+                {
+                    "nodeId": "n-paw",
+                    "shapes": [
+                        {
+                            "name": "straight",
+                            "categoryPath": ["front"],
+                            "vertices": [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 0, "y": 1}],
+                        }
+                    ],
+                }
+            ],
+            "timeline": {},
+            "truncated": {},
+        },
+    }
+    text = context_to_text(context)
+    assert "front/straight" in text
+    assert "rear/straight" in text
+    assert "shape 'front/straight'" in text
 
 
 def test_compose_trims_oldest_first_and_never_drops_context() -> None:

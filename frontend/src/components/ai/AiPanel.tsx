@@ -410,6 +410,7 @@ export function AiPanel() {
         `Fix the \`\`\`clip-batch block and reply with a corrected block (same steps, corrected). ` +
         `Valid tracks are positionX, positionY, rotation, scaleX, scaleY, opacity, morph, ` +
         `visible, zIndex, circle.<prop> — rotation is plain rotation, never rotationX/Y/Z. ` +
+        `Every batch must close with one collection: <name> | source: <rig root node> line binding every step's Semantic Name — never omit it. ` +
         `Do not claim anything was created.`,
       context,
       normalizeAiMode(assistantMode),

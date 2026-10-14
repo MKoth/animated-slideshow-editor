@@ -76,9 +76,29 @@ function buildSilhouetteFrames(
     const engine = createEngine()
     engine.restoreFromJSON(sourceEngine.toJSON())
     const collection = engine.getClipCollection(collectionId)
-    const descendants = descendantsOf(engine, parentNodeId).filter(
-      (node) => !!node.semanticName && collection.hasBinding(node.semanticName),
+    const all = descendantsOf(engine, parentNodeId)
+    const matchedIds = new Set(
+      all
+        .filter((node) => !!node.semanticName && collection.hasBinding(node.semanticName))
+        .map((node) => node.id),
     )
+    // Compound semantics (e.g. a `head` group with meshed children carrying no
+    // semantic of their own) render their whole subtree — the matched node
+    // plus every renderable descendant — so group-level clips preview the
+    // children combination instead of "No previewable mesh silhouettes".
+    const descendants = all.filter((node) => {
+      let cursor: SceneNode | null = node
+      while (cursor) {
+        if (matchedIds.has(cursor.id)) return true
+        if (cursor.id === parentNodeId) return false
+        try {
+          cursor = cursor.parent ?? null
+        } catch {
+          return false
+        }
+      }
+      return false
+    })
     if (descendants.length === 0) return null
 
     const duration = longestClipDuration(engine, collectionId)

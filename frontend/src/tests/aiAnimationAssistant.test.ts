@@ -125,7 +125,15 @@ describe('animation-assistant context snapshot', () => {
         nodeId: 'n-cat',
         shapeCount: 1,
         shapeNames: ['Sit'],
-        shapeDetails: [{ id: expect.any(String), name: 'Sit', vertexCount: expect.any(Number) }],
+        qualifiedShapeNames: ['Sit'],
+        shapeDetails: [
+          {
+            id: expect.any(String),
+            name: 'Sit',
+            vertexCount: expect.any(Number),
+            categoryPath: null,
+          },
+        ],
       },
     ])
     expect(animation.rig.morphBindings).toEqual([

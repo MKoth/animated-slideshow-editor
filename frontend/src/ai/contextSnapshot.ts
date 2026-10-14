@@ -1,4 +1,6 @@
 import type { AnimationProperty, EnginePublic, SceneNode, Slide } from '../engine'
+import type { ShapeCategory } from '../engine/shapeCategory'
+import { categoryPathOfShape, qualifiedShapeName } from '../engine/shape'
 import { composeChain } from '../engine/worldTransform'
 
 export interface ContextSnapshotSlide {
@@ -47,7 +49,14 @@ export interface ContextSnapshotRigSummary {
     nodeId: string
     shapeCount: number
     shapeNames: string[]
-    shapeDetails?: { id: string; name: string; vertexCount: number }[]
+    /** Category-qualified names (`Category/Sub/name`, bare when Uncategorized) — unique per node. */
+    qualifiedShapeNames?: string[]
+    shapeDetails?: {
+      id: string
+      name: string
+      vertexCount: number
+      categoryPath: readonly string[] | null
+    }[]
   }[]
   morphBindings: { nodeId: string; fromShapeId: string | null; toShapeId: string | null }[]
   controls: { hostNodeId: string; keys: string[] }[]
@@ -83,7 +92,12 @@ export interface AnimationAssistantSnapshot {
   timeline: ContextSnapshotTimelineSummary
   shapeGeometry?: {
     nodeId: string
-    shapes: { id: string; name: string; vertices: { x: number; y: number }[] }[]
+    shapes: {
+      id: string
+      name: string
+      categoryPath: readonly string[] | null
+      vertices: { x: number; y: number }[]
+    }[]
   }[]
   shapeGeometryTruncated?: boolean
   truncated: {
@@ -385,6 +399,12 @@ function buildAnimationSnapshot(
     }
     try {
       const shapes = engine.getShapes(node.id)
+      let categories: readonly ShapeCategory[] | undefined
+      try {
+        categories = engine.getShapeCategories(node.id)
+      } catch {
+        categories = undefined
+      }
       const rows: NonNullable<AnimationAssistantSnapshot['shapeGeometry']>[number]['shapes'] = []
       for (const shape of shapes) {
         if (shape.vertices.length > remainingShapeVertices) {
@@ -394,6 +414,7 @@ function buildAnimationSnapshot(
         rows.push({
           id: shape.id,
           name: shape.name,
+          categoryPath: categoryPathOfShape(shape, categories),
           vertices: shape.vertices.map((vertex) => ({ x: vertex.x, y: vertex.y })),
         })
         remainingShapeVertices -= shape.vertices.length
@@ -533,24 +554,50 @@ function readShapes(
 ): {
   shapeCount: number
   shapeNames: string[]
-  shapeDetails: { id: string; name: string; vertexCount: number }[]
+  qualifiedShapeNames: string[]
+  shapeDetails: {
+    id: string
+    name: string
+    vertexCount: number
+    categoryPath: readonly string[] | null
+  }[]
 } | null {
   try {
     const shapes = engine.getShapes(nodeId)
     if (!Array.isArray(shapes)) return null
+    let categories: readonly ShapeCategory[] | undefined
+    try {
+      categories = engine.getShapeCategories(nodeId)
+    } catch {
+      categories = undefined
+    }
     const names: string[] = []
-    const shapeDetails: { id: string; name: string; vertexCount: number }[] = []
+    const qualified: string[] = []
+    const shapeDetails: {
+      id: string
+      name: string
+      vertexCount: number
+      categoryPath: readonly string[] | null
+    }[] = []
     for (const shape of shapes.slice(0, ANIMATION_SNAPSHOT_LIMITS.shapesPerNode)) {
       if (typeof shape?.name === 'string' && shape.name.trim()) {
+        const path = categoryPathOfShape(shape, categories)
         names.push(shape.name.trim())
+        qualified.push(qualifiedShapeName(path, shape.name.trim()))
         shapeDetails.push({
           id: shape.id,
           name: shape.name.trim(),
           vertexCount: Array.isArray(shape.vertices) ? shape.vertices.length : 0,
+          categoryPath: path,
         })
       }
     }
-    return { shapeCount: shapes.length, shapeNames: names, shapeDetails }
+    return {
+      shapeCount: shapes.length,
+      shapeNames: names,
+      qualifiedShapeNames: qualified,
+      shapeDetails,
+    }
   } catch {
     return null
   }

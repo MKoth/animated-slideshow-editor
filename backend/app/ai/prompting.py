@@ -172,6 +172,110 @@ def format_rendered_view_label(
     )
 
 
+def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Monotone-chain exterior hull (CCW, no duplicate endpoint). Pure."""
+    unique = sorted(set(points))
+    if len(unique) <= 1:
+        return unique
+
+    def cross(o: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: list[tuple[float, float]] = []
+    for point in unique:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0:
+            lower.pop()
+        lower.append(point)
+    upper: list[tuple[float, float]] = []
+    for point in reversed(unique):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0:
+            upper.pop()
+        upper.append(point)
+    return lower[:-1] + upper[:-1]
+
+
+def _shape_geometry_to_text(animation: dict[str, Any]) -> str:
+    """Compact exterior-hull outlines from snapshot shapeGeometry (issue: model shape sight).
+
+    Bounds: at most 20 shapes, 24 hull points each — mesh-local x/y, exterior
+    only (no interior triangulation). Pure and read-only.
+    """
+    node_names: dict[str, str] = {}
+    for entry in _dict_entries(animation.get("nodes"), 150):
+        node_id = entry.get("id")
+        name = entry.get("name")
+        if isinstance(node_id, str) and isinstance(name, str) and name.strip():
+            node_names[node_id] = name.strip()
+    raw = animation.get("shapeGeometry")
+    if not isinstance(raw, list) or not raw:
+        return ""
+    parts: list[str] = []
+    for node_entry in raw:
+        if not isinstance(node_entry, dict) or len(parts) >= 20:
+            continue
+        node_id = node_entry.get("nodeId")
+        key = node_id if isinstance(node_id, str) else "?"
+        label = node_names.get(key, key) if isinstance(key, str) else "?"
+        shapes = node_entry.get("shapes")
+        if not isinstance(shapes, list):
+            continue
+        for shape in shapes[:10]:
+            if len(parts) >= 20 or not isinstance(shape, dict):
+                continue
+            shape_name = shape.get("name")
+            vertices = shape.get("vertices")
+            if not isinstance(shape_name, str) or not shape_name.strip():
+                continue
+            if not isinstance(vertices, list) or not vertices:
+                continue
+            category_path = shape.get("categoryPath")
+            if isinstance(category_path, list) and all(
+                isinstance(seg, str) and seg for seg in category_path
+            ):
+                qualified = "/".join([*category_path, shape_name.strip()])
+            else:
+                qualified = shape_name.strip()
+            points: list[tuple[float, float]] = []
+            for vertex in vertices:
+                if not isinstance(vertex, dict):
+                    continue
+                x, y = vertex.get("x"), vertex.get("y")
+                if isinstance(x, bool) or isinstance(y, bool):
+                    continue
+                if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                    import math
+
+                    if math.isfinite(x) and math.isfinite(y):
+                        points.append((float(x), float(y)))
+            if not points:
+                continue
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            centroid = (sum(xs) / len(xs), sum(ys) / len(ys))
+            hull = _convex_hull(points)
+            if len(hull) > 24:
+                step = len(hull) / 24
+                hull = [hull[int(i * step)] for i in range(24)]
+            outline = (
+                "M " + " L ".join(f"{x:.1f},{y:.1f}" for x, y in hull) + " Z"
+                if hull
+                else "M (empty) Z"
+            )
+            parts.append(
+                f"{label} [{key}] shape '{qualified}': {len(points)}v "
+                f"bounds ({min_x:.1f},{min_y:.1f} {max_x - min_x:.1f}x{max_y - min_y:.1f}) "
+                f"centroid ({centroid[0]:.1f},{centroid[1]:.1f}) outline {outline}"
+            )
+    if not parts:
+        return ""
+    text = "shape outlines (mesh-local x/y, exterior hull only): " + "; ".join(parts)
+    if animation.get("shapeGeometryTruncated") is True:
+        text += " (note: geometry truncated to the bounded set)"
+    return text
+
+
 def _animation_to_text(animation: dict[str, Any]) -> str:
     """Bounded rendering of the animation-assistant snapshot (issue #438).
 
@@ -197,6 +301,9 @@ def _animation_to_text(animation: dict[str, Any]) -> str:
         depth = entry.get("depth")
         if isinstance(depth, int):
             summary += f" depth {depth}"
+        child_count = entry.get("childCount")
+        if isinstance(child_count, int) and child_count > 0:
+            summary += f" [{child_count} children]"
         transform = entry.get("transform")
         if isinstance(transform, dict):
             summary += (
@@ -218,12 +325,18 @@ def _animation_to_text(animation: dict[str, Any]) -> str:
             )
         shape_parts = []
         for entry in _dict_entries(rig.get("shapeInventory"), 150):
-            names = entry.get("shapeNames")
-            label = (
-                ", ".join(str(n) for n in names[:10])
-                if isinstance(names, list) and names
-                else f"{entry.get('shapeCount', 0)} shapes"
-            )
+            # Prefer category-qualified names (Category/Sub/name, unique per
+            # node) so duplicate shape names across categories stay distinct.
+            qualified = entry.get("qualifiedShapeNames")
+            if isinstance(qualified, list) and qualified:
+                label = ", ".join(str(n) for n in qualified[:10])
+            else:
+                names = entry.get("shapeNames")
+                label = (
+                    ", ".join(str(n) for n in names[:10])
+                    if isinstance(names, list) and names
+                    else f"{entry.get('shapeCount', 0)} shapes"
+                )
             shape_parts.append(f"{entry.get('nodeId', '?')}: {label}")
         if shape_parts:
             rig_parts.append("shapes: " + "; ".join(shape_parts))
@@ -244,6 +357,9 @@ def _animation_to_text(animation: dict[str, Any]) -> str:
             rig_parts.append("controls: " + "; ".join(control_parts))
         if rig_parts:
             lines.append("rig: " + " | ".join(rig_parts))
+    geometry_text = _shape_geometry_to_text(animation)
+    if geometry_text:
+        lines.append(geometry_text)
     clip_parts = []
     for entry in _dict_entries(animation.get("clips"), 100):
         label = str(entry.get("name", "?"))

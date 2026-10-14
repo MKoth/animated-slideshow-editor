@@ -133,11 +133,11 @@ describe('buildClipBatchOperations', () => {
         { id: body.id, name: 'body' },
         { id: head.id, name: 'head' },
       ],
-      plan: plan!,
+      plan: { ...plan!, collection: { name: 'test collection', source: 'body', category: null } },
     })
     expect(built.ok).toBe(true)
     if (!built.ok) return
-    expect(built.build.operations).toHaveLength(2)
+    expect(built.build.operations).toHaveLength(3)
     expect(built.build.from).toBe(0)
     expect(built.build.to).toBe(1)
 
@@ -179,7 +179,7 @@ describe('buildClipBatchOperations', () => {
     const built = buildClipBatchOperations({
       engine,
       nodes: [{ id: body.id, name: 'body' }],
-      plan: plan!,
+      plan: { ...plan!, collection: { name: 'test collection', source: 'body', category: null } },
     })
     expect(built.ok).toBe(true)
     if (!built.ok) return
@@ -206,7 +206,7 @@ describe('buildClipBatchOperations', () => {
         from: 0,
         to: 1,
         steps: [{ name: 'c', node: 'ghost', semantic: null, category: null, keys: [] }],
-        collection: null,
+        collection: { name: 'test collection', source: 'body', category: null },
         collectionError: null,
       },
     })
@@ -222,12 +222,29 @@ describe('buildClipBatchOperations', () => {
         from: 0,
         to: 1,
         steps: [{ name: 'c', node: 'empty', semantic: null, category: null, keys: [] }],
-        collection: null,
+        collection: { name: 'test collection', source: 'body', category: null },
         collectionError: null,
       },
     })
     expect(bare.ok).toBe(false)
     if (!bare.ok) expect(bare.error).toMatch(/no orphan keyframes/i)
+  })
+
+  it('fails loudly when the collection line is missing', () => {
+    const { engine, mkNode, addKf } = setupEngine()
+    const body = mkNode('body')
+    addKf(body.id, 'positionY', 0, 1)
+    addKf(body.id, 'positionY', 1, 2)
+    const plan = extractClipBatchBlock('```clip-batch\nwindow: 0 - 1\nclip: c | node: body\n```')
+    expect(plan?.collection).toBeNull()
+    const built = buildClipBatchOperations({
+      engine,
+      nodes: [{ id: body.id, name: 'body' }],
+      plan: plan!,
+    })
+    expect(built.ok).toBe(false)
+    if (built.ok) return
+    expect(built.error).toMatch(/no collection line/i)
   })
 
   it('built clips pass the proposal schema gate and parse back losslessly', () => {
@@ -239,7 +256,7 @@ describe('buildClipBatchOperations', () => {
     const built = buildClipBatchOperations({
       engine,
       nodes: [{ id: body.id, name: 'body' }],
-      plan: plan!,
+      plan: { ...plan!, collection: { name: 'test collection', source: 'body', category: null } },
     })
     expect(built.ok).toBe(true)
     if (!built.ok) return
@@ -265,6 +282,7 @@ describe('buildClipBatchOperations', () => {
         'window: 0 - 4',
         'clip: body designed | node: body | semantic: body',
         'keys: positionY = 0@0, -20@2, 0@4',
+        'collection: test collection | source: body',
         '```',
       ].join('\n'),
     )
@@ -320,6 +338,7 @@ describe('buildClipBatchOperations', () => {
         'window: 0 - 4',
         'clip: body move | node: meshnode | semantic: body',
         'keys: morph lying -> stand = 0@0, 1@4',
+        'collection: test collection | source: meshnode',
         '```',
       ].join('\n'),
     )
@@ -337,6 +356,7 @@ describe('buildClipBatchOperations', () => {
   it('requires an explicit window for designed steps and window-bound times', () => {
     const { engine, mkNode } = setupEngine()
     const body = mkNode('body')
+    const testCollection = { name: 'test collection', source: 'body', category: null } as const
     const noWindow = buildClipBatchOperations({
       engine,
       nodes: [{ id: body.id, name: 'body' }],
@@ -359,7 +379,7 @@ describe('buildClipBatchOperations', () => {
             ],
           },
         ],
-        collection: null,
+        collection: { ...testCollection },
         collectionError: null,
       },
     })
@@ -387,7 +407,7 @@ describe('buildClipBatchOperations', () => {
             ],
           },
         ],
-        collection: null,
+        collection: { ...testCollection },
         collectionError: null,
       },
     })
@@ -408,6 +428,7 @@ describe('buildClipBatchOperations', () => {
         'clip: body real | node: body | semantic: body',
         'clip: head authored | node: head | semantic: head',
         'keys: positionY = 5@0, 15@1',
+        'collection: test collection | source: body',
         '```',
       ].join('\n'),
     )
@@ -421,7 +442,7 @@ describe('buildClipBatchOperations', () => {
     })
     expect(built.ok).toBe(true)
     if (!built.ok) return
-    expect(built.build.operations).toHaveLength(2)
+    expect(built.build.operations).toHaveLength(3)
     expect(built.build.summary).toMatch(/extracted/)
     expect(built.build.summary).toMatch(/designed/)
   })
@@ -617,7 +638,7 @@ describe('buildClipBatchOperations', () => {
       if (!res.ok) throw new Error('morph keyframe failed')
     }
     const plan = extractClipBatchBlock(
-      '```clip-batch\nclip: m | node: meshnode | semantic: body\n```',
+      '```clip-batch\nclip: m | node: meshnode | semantic: body\ncollection: test collection | source: meshnode\n```',
     )
     const built = buildClipBatchOperations({
       engine,
@@ -639,5 +660,128 @@ describe('buildClipBatchOperations', () => {
     expect(clip.morphAnimation.keyframes[0]!.value).toMatchObject({ coefficient: 0 })
     const roundTripped = ClipDefinition.fromJSON(op.clip as never)
     expect(roundTripped.getMorphKeyframes()).toHaveLength(2)
+  })
+
+  describe('category-qualified morph refs', () => {
+    function setupCategorizedMesh() {
+      const { engine } = setupEngine()
+      const slide = (
+        engine as unknown as {
+          getActiveSlide: () => { scene: { id: string; root: { id: string } } }
+        }
+      ).getActiveSlide()
+      const mesh = createDefaultRectangleMesh(10, 10)
+      const node = (
+        engine as unknown as {
+          createNode: (
+            sceneId: string,
+            parentId: string,
+            name: string,
+            opts: unknown,
+          ) => { id: string; name: string }
+        }
+      ).createNode(slide.scene.id, slide.scene.root.id, 'paw', {
+        components: { mesh: { kind: 'mesh', mesh } },
+      })
+      const internal = engine as unknown as {
+        createShapeCategory: (nodeId: string, name: string, parent: null) => { id: string }
+        createShape: (nodeId: string, name: string, categoryId: string | null) => { id: string }
+      }
+      const front = internal.createShapeCategory(node.id, 'front', null)
+      const rear = internal.createShapeCategory(node.id, 'rear', null)
+      internal.createShape(node.id, 'straight', front.id)
+      internal.createShape(node.id, 'straight', rear.id)
+      internal.createShape(node.id, 'half raised', front.id)
+      return { engine, node }
+    }
+
+    function buildMorphBatch(
+      engine: EnginePublic,
+      node: { id: string; name: string },
+      morphLine: string,
+    ) {
+      const plan = extractClipBatchBlock(
+        [
+          '```clip-batch',
+          'window: 0 - 4',
+          `clip: paw move | node: ${node.name} | semantic: paw`,
+          morphLine,
+          `collection: test collection | source: ${node.name}`,
+          '```',
+        ].join('\n'),
+      )
+      return buildClipBatchOperations({
+        engine,
+        nodes: [{ id: node.id, name: node.name }],
+        plan: plan!,
+      })
+    }
+
+    it('resolves Category/Name refs to the exact shape and stores paths', () => {
+      const { engine, node } = setupCategorizedMesh()
+      const built = buildMorphBatch(
+        engine,
+        node,
+        'keys: morph front/straight -> front/half raised = 0@0, 1@4',
+      )
+      expect(built.ok).toBe(true)
+      if (!built.ok) return
+      const op = built.build.operations[0] as Extract<
+        AnimationAssetOperation,
+        { kind: 'upsertClip' }
+      >
+      const clip = op.clip as unknown as {
+        morphAnimation: { keyframes: { value: Record<string, unknown> }[] }
+      }
+      expect(clip.morphAnimation.keyframes[0]!.value).toMatchObject({
+        fromShapeName: 'straight',
+        toShapeName: 'half raised',
+        fromCategoryPath: ['front'],
+        toCategoryPath: ['front'],
+      })
+      // Path-exact values round-trip through the canonical clip schema.
+      expect(() => ClipDefinition.fromJSON(op.clip as never)).not.toThrow()
+    })
+
+    it('fails loudly on bare ambiguous names, naming qualified options', () => {
+      const { engine, node } = setupCategorizedMesh()
+      const built = buildMorphBatch(
+        engine,
+        node,
+        'keys: morph straight -> front/half raised = 0@0, 1@4',
+      )
+      expect(built.ok).toBe(false)
+      if (built.ok) return
+      expect(built.error).toMatch(/matches several shapes/i)
+      expect(built.error).toMatch(/front\/straight/)
+      expect(built.error).toMatch(/rear\/straight/)
+    })
+
+    it('lists qualified names for unknown shapes', () => {
+      const { engine, node } = setupCategorizedMesh()
+      const built = buildMorphBatch(
+        engine,
+        node,
+        'keys: morph front/bent -> front/half raised = 0@0, 1@4',
+      )
+      expect(built.ok).toBe(false)
+      if (built.ok) return
+      expect(built.error).toMatch(/unknown morph shape/i)
+      expect(built.error).toMatch(/front\/straight/)
+    })
+
+    it('exposes qualified names in the context snapshot', async () => {
+      const { engine, node } = setupCategorizedMesh()
+      const { buildContextSnapshot } = await import('../ai/contextSnapshot')
+      const snapshot = buildContextSnapshot(engine, {})
+      const entry = snapshot.animation.rig.shapeInventory.find((row) => row.nodeId === node.id)
+      expect(entry?.qualifiedShapeNames).toEqual(
+        expect.arrayContaining(['front/straight', 'rear/straight', 'front/half raised']),
+      )
+      const geometry = snapshot.animation.shapeGeometry?.find((row) => row.nodeId === node.id)
+      expect(geometry?.shapes.find((shape) => shape.name === 'straight')?.categoryPath).toEqual([
+        'front',
+      ])
+    })
   })
 })

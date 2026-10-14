@@ -215,4 +215,38 @@ describe('CollectionSilhouettePreview', () => {
       screen.getByTestId(`collection-silhouette-step-${collection.id}-0`).querySelector('path'),
     ).toHaveAttribute('d', expectedPath)
   })
+
+  it('renders compound semantic groups via their meshed children', async () => {
+    const engine = createEngineInternal()
+    engine.createProject({ name: 'Compound preview' })
+    const slide = engine.createSlide('Slide')
+    const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+    const head = engine.createNode(slide.scene.id, parent.id, 'Head', {
+      semanticName: 'head',
+    })
+    engine.createNode(slide.scene.id, head.id, 'Skull', {
+      components: { mesh: { kind: 'mesh', mesh: createDefaultRectangleMesh(20, 12) } },
+    })
+    engine.createNode(slide.scene.id, head.id, 'Jaw', {
+      components: { mesh: { kind: 'mesh', mesh: createDefaultRectangleMesh(10, 6) } },
+    })
+    const clip = engine.createClip('Nod', 1, '', [], [{ property: 'positionY' }])
+    engine.addClipChannelKeyframe(clip.id, 'positionY', 0, 0)
+    engine.addClipChannelKeyframe(clip.id, 'positionY', 1, 0)
+    const collection = engine.createClipCollection('Nod head', { head: clip.id })
+
+    render(
+      <CollectionSilhouettePreview
+        engine={toReadOnly(engine)}
+        collectionId={collection.id}
+        parentNodeId={parent.id}
+        revision={0}
+      />,
+    )
+
+    await screen.findByTestId(`collection-silhouette-step-${collection.id}-0`)
+    const first = screen.getByTestId(`collection-silhouette-step-${collection.id}-0`)
+    // Both children contribute paths even though only the group carries `head`.
+    expect(first.querySelectorAll('path').length).toBeGreaterThanOrEqual(2)
+  })
 })

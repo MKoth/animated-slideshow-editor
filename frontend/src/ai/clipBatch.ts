@@ -40,6 +40,8 @@ import { channelKeyOf, validateNoDuplicateTimes } from '../engine/clipExtraction
 import { newKeyframeId } from '../engine/keyframe'
 import { newClipId } from '../engine/clipDefinition'
 import { newId } from '../engine/ids'
+import type { ShapeCategory } from '../engine/shapeCategory'
+import { categoryPathOfShape, qualifiedShapeName, splitQualifiedShapeName } from '../engine/shape'
 import type { AnimationAssetOperation } from './animationAssetOperations'
 
 export interface ClipBatchStep {
@@ -63,9 +65,9 @@ export interface ClipBatchStep {
 export interface DesignedTrack {
   /** Uniform-six property, `morph`, `visible`, `zIndex`, or `circle.<prop>`. */
   readonly track: string
-  /** Morph only: source shape name, resolved live (unknown names fail the step). */
+  /** Morph only: source shape ref — a bare name or `Category/Sub/name` for duplicates. */
   readonly morphFrom: string | null
-  /** Morph only: target shape name, resolved live. */
+  /** Morph only: target shape ref — a bare name or `Category/Sub/name` for duplicates. */
   readonly morphTo: string | null
   readonly points: readonly DesignedPoint[]
 }
@@ -189,6 +191,7 @@ const KNOWN_INTERPOLATIONS: readonly string[] = [
  * Parse one `keys:` line into a DesignedTrack.
  * `keys: positionY = 0@0, -20@0.5, 0@1`
  * `keys: morph standing -> stand = 0@0, 1@1`
+ * `keys: morph profile/standing -> profile/stand = 0@0, 1@1`
  * `keys: visible = true@0, false@2`
  * Optional per-point interpolation: `0@0:hold`.
  */
@@ -204,12 +207,26 @@ function parseKeysLine(line: string): DesignedTrack | null {
   let track: string
   let morphFrom: string | null = null
   let morphTo: string | null = null
-  const morphMatch = /^morph\s+(\S+)\s*->\s*(\S+)$/.exec(head)
-  if (morphMatch?.[1] && morphMatch[2]) {
-    track = 'morph'
-    morphFrom = morphMatch[1].replace(/^["']|["']$/g, '')
-    morphTo = morphMatch[2].replace(/^["']|["']$/g, '')
-    if (!morphFrom || !morphTo) return null
+  const morphHead = /^morph\s+(.+)$/i.exec(head)
+  if (morphHead?.[1]) {
+    // Split on the arrow (not \S+ tokens) so shape and category names may
+    // contain spaces. A `morph <name>` line without an arrow falls through to
+    // track handling, which fails loudly with the valid track vocabulary.
+    const sides = morphHead[1].split('->')
+    if (sides.length === 2) {
+      const from = sides[0]?.trim().replace(/^["']|["']$/g, '')
+      const to = sides[1]?.trim().replace(/^["']|["']$/g, '')
+      if (from && to) {
+        track = 'morph'
+        morphFrom = from
+        morphTo = to
+      } else {
+        return null
+      }
+    } else {
+      const lower = head.toLowerCase()
+      track = lower
+    }
   } else {
     // Canonicalize case-insensitively — `positiony` must still hit `positionY`.
     const lower = head.toLowerCase()
@@ -444,7 +461,7 @@ function collectOrphans(
   return out
 }
 
-/** Orphan morph values reference shape ids — clips carry shape names. */
+/** Orphan morph values reference shape ids — clips carry shape names + category paths. */
 function morphToClipValue(engine: EnginePublic, nodeId: string, raw: unknown): unknown {
   if (typeof raw === 'number') {
     return { fromShapeId: null, toShapeId: null, coefficient: raw }
@@ -453,20 +470,35 @@ function morphToClipValue(engine: EnginePublic, nodeId: string, raw: unknown): u
   const record = raw as Record<string, unknown>
   if (!('coefficient' in record)) return raw
   if ('fromShapeName' in record || 'toShapeName' in record) return raw
-  // Category paths are optional in canonical clips — names suffice.
+  let categories: readonly ShapeCategory[] | undefined
+  try {
+    categories = engine.getShapeCategories(nodeId)
+  } catch {
+    categories = undefined
+  }
+  // Category paths travel with the names so duplicate shape names resolve
+  // exactly on the target (null = Uncategorized).
   let fromName: string | null = null
   let toName: string | null = null
+  let fromPath: readonly string[] | null = null
+  let toPath: readonly string[] | null = null
   try {
     const shapes = engine.getShapes(nodeId)
     const fromId = (record.fromShapeId as string | null) ?? null
     const toId = (record.toShapeId as string | null) ?? null
     if (fromId) {
       const found = shapes.find((shape) => shape.id === fromId)
-      if (found) fromName = found.name
+      if (found) {
+        fromName = found.name
+        fromPath = categoryPathOfShape(found, categories)
+      }
     }
     if (toId) {
       const found = shapes.find((shape) => shape.id === toId)
-      if (found) toName = found.name
+      if (found) {
+        toName = found.name
+        toPath = categoryPathOfShape(found, categories)
+      }
     }
   } catch {
     // No mesh inventory — keep nulls; the dry-run names the missing shapes.
@@ -474,27 +506,98 @@ function morphToClipValue(engine: EnginePublic, nodeId: string, raw: unknown): u
   return {
     fromShapeName: fromName,
     toShapeName: toName,
+    fromCategoryPath: fromPath,
+    toCategoryPath: toPath,
     coefficient: record.coefficient,
   }
 }
 
-function shapeInventory(engine: EnginePublic, nodeId: string): { id: string; name: string }[] {
+interface ShapeInventoryEntry {
+  readonly id: string
+  readonly name: string
+  readonly categoryPath: readonly string[] | null
+}
+
+function shapeInventory(engine: EnginePublic, nodeId: string): ShapeInventoryEntry[] {
   try {
-    return engine.getShapes(nodeId).map((shape) => ({ id: shape.id, name: shape.name }))
+    const shapes = engine.getShapes(nodeId)
+    let categories: readonly ShapeCategory[] | undefined
+    try {
+      categories = engine.getShapeCategories(nodeId)
+    } catch {
+      categories = undefined
+    }
+    return shapes.map((shape) => ({
+      id: shape.id,
+      name: shape.name,
+      categoryPath: categoryPathOfShape(shape, categories),
+    }))
   } catch {
     return []
   }
 }
 
-function resolveShapeName(
-  inventory: { id: string; name: string }[],
-  wanted: string,
-): { id: string; name: string } | null {
+function pathsEqual(a: readonly string[] | null, b: readonly string[] | null): boolean {
+  const left = a ?? []
+  const right = b ?? []
+  if (left.length !== right.length) return false
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] !== right[i]) return false
+  }
+  return true
+}
+
+function qualifiedInventory(inventory: readonly ShapeInventoryEntry[]): string {
   return (
-    inventory.find((shape) => shape.name === wanted) ??
-    inventory.find((shape) => shape.name.toLowerCase() === wanted.toLowerCase()) ??
-    null
+    inventory.map((shape) => qualifiedShapeName(shape.categoryPath, shape.name)).join(', ') ||
+    '(none)'
   )
+}
+
+type ShapeRefResolution =
+  | { readonly status: 'ok'; readonly shape: ShapeInventoryEntry }
+  | { readonly status: 'unknown' }
+  | { readonly status: 'ambiguous'; readonly matches: readonly ShapeInventoryEntry[] }
+
+/**
+ * Resolve a morph shape ref — a bare name or `Category/Sub/name` — against
+ * the live mesh inventory. Bare names matching several shapes (same name in
+ * different categories) resolve as ambiguous instead of silently taking the
+ * first match; the caller tells the author to qualify with Category/Name.
+ */
+function resolveShapeRef(
+  inventory: readonly ShapeInventoryEntry[],
+  wanted: string,
+): ShapeRefResolution {
+  const trimmed = wanted.trim()
+  if (!trimmed) return { status: 'unknown' }
+  const { categoryPath, name } = splitQualifiedShapeName(trimmed)
+  if (!name) return { status: 'unknown' }
+  if (categoryPath.length > 0) {
+    const byPath = inventory.filter(
+      (shape) => shape.name === name && pathsEqual(shape.categoryPath, categoryPath),
+    )
+    if (byPath.length > 0) return { status: 'ok', shape: byPath[0]! }
+    const byPathInsensitive = inventory.filter(
+      (shape) =>
+        shape.name.toLowerCase() === name.toLowerCase() &&
+        (shape.categoryPath ?? []).length === categoryPath.length &&
+        (shape.categoryPath ?? []).every(
+          (segment, index) => segment.toLowerCase() === categoryPath[index]!.toLowerCase(),
+        ),
+    )
+    if (byPathInsensitive.length > 0) return { status: 'ok', shape: byPathInsensitive[0]! }
+    // Fall through: the whole string may be a slash-containing shape name.
+  }
+  const named = inventory.filter((shape) => shape.name === trimmed)
+  if (named.length === 1) return { status: 'ok', shape: named[0]! }
+  if (named.length > 1) return { status: 'ambiguous', matches: named }
+  const namedInsensitive = inventory.filter(
+    (shape) => shape.name.toLowerCase() === trimmed.toLowerCase(),
+  )
+  if (namedInsensitive.length === 1) return { status: 'ok', shape: namedInsensitive[0]! }
+  if (namedInsensitive.length > 1) return { status: 'ambiguous', matches: namedInsensitive }
+  return { status: 'unknown' }
 }
 
 /** Map a designed track name to a live keyframe target — unknown tracks fail the step. */
@@ -543,7 +646,12 @@ function designedExtractables(args: {
   for (const spec of tracks) {
     const resolved = designedTarget(spec.track, nodeId)
     if (!resolved.ok) return { ok: false, error: `Clip “${stepName}”: ${resolved.error}` }
-    let morphNames: { from: string; to: string } | null = null
+    let morphNames: {
+      from: string
+      to: string
+      fromPath: readonly string[] | null
+      toPath: readonly string[] | null
+    } | null = null
     if (spec.track === 'morph') {
       const inventory = shapeInventory(engine, nodeId)
       if (inventory.length === 0) {
@@ -552,18 +660,38 @@ function designedExtractables(args: {
           error: `Clip “${stepName}”: node “${nodeName}” has no mesh Shapes — morph needs a mesh target.`,
         }
       }
-      const fromShape = resolveShapeName(inventory, spec.morphFrom ?? '')
-      const toShape = resolveShapeName(inventory, spec.morphTo ?? '')
-      if (!fromShape || !toShape) {
-        const available = inventory.map((shape) => shape.name).join(', ') || '(none)'
+      const fromShape = resolveShapeRef(inventory, spec.morphFrom ?? '')
+      const toShape = resolveShapeRef(inventory, spec.morphTo ?? '')
+      const ambiguous = [fromShape, toShape].find(
+        (entry): entry is Extract<ShapeRefResolution, { status: 'ambiguous' }> =>
+          entry.status === 'ambiguous',
+      )
+      if (ambiguous) {
+        const wanted = ambiguous === fromShape ? (spec.morphFrom ?? '') : (spec.morphTo ?? '')
+        const options = ambiguous.matches
+          .map((shape) => qualifiedShapeName(shape.categoryPath, shape.name))
+          .join(', ')
+        return {
+          ok: false,
+          error:
+            `Clip “${stepName}”: morph shape “${wanted}” matches several shapes — ` +
+            `qualify with Category/Name: ${options}.`,
+        }
+      }
+      if (fromShape.status !== 'ok' || toShape.status !== 'ok') {
         return {
           ok: false,
           error:
             `Clip “${stepName}”: unknown morph shape — “${spec.morphFrom}” → “${spec.morphTo}”. ` +
-            `Available on “${nodeName}”: ${available}.`,
+            `Available on “${nodeName}”: ${qualifiedInventory(inventory)}.`,
         }
       }
-      morphNames = { from: fromShape.name, to: toShape.name }
+      morphNames = {
+        from: fromShape.shape.name,
+        to: toShape.shape.name,
+        fromPath: fromShape.shape.categoryPath,
+        toPath: toShape.shape.categoryPath,
+      }
     }
     for (const point of spec.points) {
       if (!(point.time >= from - EPS && point.time <= to + EPS)) {
@@ -586,6 +714,8 @@ function designedExtractables(args: {
         value = {
           fromShapeName: morphNames!.from,
           toShapeName: morphNames!.to,
+          fromCategoryPath: morphNames!.fromPath,
+          toCategoryPath: morphNames!.toPath,
           coefficient: point.value,
         } as unknown as ExtractableKeyframe['value']
       } else if (spec.track === 'visible') {
@@ -767,6 +897,13 @@ export function buildClipBatchOperations(args: {
     return { ok: false, error: 'Clip batches hold at most 20 steps — split it and draft twice.' }
   }
   if (plan.collectionError) return { ok: false, error: plan.collectionError }
+  if (!plan.collection) {
+    return {
+      ok: false,
+      error:
+        'The clip batch has no collection line — add `collection: <name> | source: <rig root node>` binding every step\u2019s Semantic Name.',
+    }
+  }
 
   const resolved: { step: ClipBatchStep; node: LiveNode }[] = []
   for (const step of plan.steps) {

@@ -521,6 +521,7 @@ describe('AiPanel instant shape draft', () => {
           'window: 0 - 4',
           'clip: paw move | node: paw | semantic: paw',
           'keys: rotationZ = 90@0, 0@4',
+          'collection: paw batch | source: paw',
           '```',
         ].join('\n'),
         stopped: false,

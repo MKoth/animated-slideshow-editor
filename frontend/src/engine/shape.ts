@@ -143,6 +143,37 @@ export function categoryPathOfShape(
   return categoryPathForShape(categories, shape.categoryId ?? null)
 }
 
+/**
+ * Display form of a shape reference: `Category/Sub/name`, bare `name` when
+ * Uncategorized. Unique per node (names are category-scoped). Parse with
+ * splitQualifiedShapeName — names containing "/" resolve by exact fallback.
+ */
+export function qualifiedShapeName(
+  categoryPath: readonly string[] | null | undefined,
+  name: string,
+): string {
+  if (!categoryPath || categoryPath.length === 0) return name
+  return [...categoryPath, name].join('/')
+}
+
+/**
+ * Split a `Category/Sub/name` reference into path + name. The last segment
+ * is the name; everything before it is the category path (empty = bare name).
+ * A whole-string exact-name match takes precedence at resolution time, so
+ * shape names containing "/" still resolve when referenced bare.
+ */
+export function splitQualifiedShapeName(ref: string): {
+  readonly categoryPath: readonly string[]
+  readonly name: string
+} {
+  const segments = ref
+    .split('/')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+  const name = segments.pop() ?? ''
+  return { categoryPath: segments, name }
+}
+
 export interface ShapeCategoryGroup {
   readonly label: string
   readonly shapes: readonly Shape[]
