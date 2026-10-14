@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AiPanel } from '../components/ai/AiPanel'
@@ -113,5 +113,70 @@ describe('AiPanel foundation', () => {
     await user.type(screen.getByTestId('ai-search'), 'cat')
     expect(screen.getByTestId('ai-conversation-c-1')).toBeInTheDocument()
     expect(screen.queryByTestId('ai-conversation-c-2')).not.toBeInTheDocument()
+  })
+
+  it('never renders a collection story in the animation tab', async () => {
+    mockFetchConversations([])
+    const engine = renderPanel()
+    const projectId = engine.project?.id ?? ''
+    const stamp = new Date().toISOString()
+    // Let the mount-time loads settle so they cannot wipe the seeded state below.
+    await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled())
+    mockFetchConversations([])
+    useAiStore.setState({
+      assistantMode: 'animation',
+      conversations: [
+        { id: 'c-col', projectId, title: 'Walk batch', mode: 'collection', modified: stamp },
+      ],
+      messagesById: {
+        'c-col': [
+          {
+            id: 'm-1',
+            role: 'user',
+            content: 'collection story',
+            stopped: false,
+            errorCode: null,
+            created: stamp,
+          },
+        ],
+      },
+      // Stale persisted mapping: animation key points at the collection conversation.
+      activeByProject: { [`${projectId}:animation`]: 'c-col' },
+    })
+
+    // The stale mapping is cleared instead of rendered.
+    await waitFor(() =>
+      expect(useAiStore.getState().activeByProject[`${projectId}:animation`]).toBeUndefined(),
+    )
+    expect(screen.queryByText('collection story')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-conversation-c-col')).not.toBeInTheDocument()
+    expect(screen.getByTestId('ai-no-conversation-in-mode')).toHaveTextContent(
+      'No animation conversation yet',
+    )
+  })
+
+  it('repairs a stale mapping to the same-mode conversation', async () => {
+    mockFetchConversations([])
+    const engine = renderPanel()
+    const projectId = engine.project?.id ?? ''
+    const stamp = new Date().toISOString()
+    await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled())
+    const seeded = [
+      { id: 'c-col', projectId, title: 'Walk batch', mode: 'collection', modified: stamp },
+      { id: 'c-anim', projectId, title: 'Cat walk', mode: 'animation', modified: stamp },
+    ]
+    mockFetchConversations(seeded)
+    useAiStore.setState({
+      assistantMode: 'animation',
+      conversations: seeded,
+      messagesById: {},
+      activeByProject: { [`${projectId}:animation`]: 'c-col' },
+    })
+
+    await waitFor(() =>
+      expect(useAiStore.getState().activeByProject[`${projectId}:animation`]).toBe('c-anim'),
+    )
+    expect(screen.getByTestId('ai-conversation-c-anim')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-conversation-c-col')).not.toBeInTheDocument()
   })
 })

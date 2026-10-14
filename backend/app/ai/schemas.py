@@ -18,7 +18,12 @@ class AiSettingsUpdate(BaseModel):
 class AiConversationCreate(BaseModel):
     projectId: str = Field(min_length=1)
     title: str | None = None
-    mode: Literal["lesson", "animation", "shape", "collection"] | None = None
+    # "lesson" is a deprecated alias kept for backwards compatibility;
+    # it normalizes to "scenario".
+    mode: (
+        Literal["scenario", "audio", "blackboard", "animation", "shape", "collection", "lesson"]
+        | None
+    ) = None
 
 
 class AiConversationRename(BaseModel):
@@ -30,7 +35,10 @@ class AiChatRequest(BaseModel):
     message: str | None = None
     mode: Literal["send", "regenerate"] = "send"
     context: Any = None
-    assistantMode: Literal["lesson", "animation", "shape", "collection"] | None = None
+    assistantMode: (
+        Literal["scenario", "audio", "blackboard", "animation", "shape", "collection", "lesson"]
+        | None
+    ) = None
 
 
 class AiPlanSlideAsset(BaseModel):

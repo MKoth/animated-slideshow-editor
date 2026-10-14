@@ -575,7 +575,7 @@ describe('AiPanel animation mode', () => {
       drafts: {},
       search: '',
       panelOpen: true,
-      assistantMode: 'lesson',
+      assistantMode: 'scenario',
       settingsOpen: false,
       status: 'idle',
       streamingConversationId: null,
@@ -622,15 +622,39 @@ describe('AiPanel animation mode', () => {
     expect(screen.queryByTestId('ai-proposal-section')).not.toBeInTheDocument()
   })
 
-  it('switches back to lesson mode', async () => {
+  it('switches back to scenario mode', async () => {
     renderPanel()
     const user = userEvent.setup()
 
     await user.click(screen.getByTestId('ai-mode-animation'))
-    await user.click(screen.getByTestId('ai-mode-lesson'))
+    await user.click(screen.getByTestId('ai-mode-scenario'))
 
     expect(screen.queryByTestId('ai-animation-section')).not.toBeInTheDocument()
     expect(screen.getByTestId('ai-plan-section')).toBeInTheDocument()
+  })
+
+  it('splits lesson stages across scenario, audio, and blackboard modes', async () => {
+    renderPanel()
+    const user = userEvent.setup()
+
+    await user.click(screen.getByTestId('ai-mode-scenario'))
+    expect(screen.getByTestId('ai-plan-section')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-section')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-reconciliation-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-narration-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-board-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-animation-section')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('ai-mode-audio'))
+    expect(screen.getByTestId('ai-narration-section')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-calibration-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-plan-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-board-section')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('ai-mode-blackboard'))
+    expect(screen.getByTestId('ai-board-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-plan-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-narration-section')).not.toBeInTheDocument()
   })
 
   it('switches to dedicated shapes and collections modes sharing the asset chrome', async () => {

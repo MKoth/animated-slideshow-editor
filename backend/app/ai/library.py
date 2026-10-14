@@ -184,10 +184,15 @@ class AiLibrary:
 
     @staticmethod
     def normalize_conversation_mode(mode: object) -> str:
-        """Lesson/animation/shape/collection split: unknown or missing reads as lesson for old rows."""
-        if mode in ("animation", "shape", "collection"):
+        """Scenario/audio/blackboard/animation/shape/collection split.
+
+        Legacy `lesson`, unknown, or missing modes read as `scenario` (the Lesson
+        tab was split into Scenario/Audio/Blackboard; old lesson conversations
+        surface in Scenario).
+        """
+        if mode in ("scenario", "audio", "blackboard", "animation", "shape", "collection"):
             return str(mode)
-        return "lesson"
+        return "scenario"
 
     def list_conversations(
         self, project_id: str, mode: str | None = None

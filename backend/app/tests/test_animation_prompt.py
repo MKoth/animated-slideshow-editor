@@ -7,7 +7,10 @@ from app.api.ai import (
 )
 from app.config import (
     DEFAULT_ANIMATION_SYSTEM_PROMPT,
+    DEFAULT_AUDIO_SYSTEM_PROMPT,
+    DEFAULT_BLACKBOARD_SYSTEM_PROMPT,
     DEFAULT_COLLECTION_SYSTEM_PROMPT,
+    DEFAULT_SCENARIO_SYSTEM_PROMPT,
     DEFAULT_SHAPE_SYSTEM_PROMPT,
     DEFAULT_SYSTEM_PROMPT,
 )
@@ -33,7 +36,10 @@ def test_animation_coverage_rules_also_apply_to_custom_prompts() -> None:
 
     assert prompt.startswith("Custom animation guidance")
     assert ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS in prompt
-    assert _system_prompt_for_mode("Custom lesson guidance", "lesson") == "Custom lesson guidance"
+    assert (
+        _system_prompt_for_mode("Custom scenario guidance", "scenario")
+        == "Custom scenario guidance"
+    )
 
 
 def test_shape_prompt_scopes_to_single_shape_step() -> None:
@@ -73,21 +79,66 @@ def test_mode_normalization_passes_through_new_modes() -> None:
     assert AiLibrary.normalize_conversation_mode("shape") == "shape"
     assert AiLibrary.normalize_conversation_mode("collection") == "collection"
     assert AiLibrary.normalize_conversation_mode("animation") == "animation"
-    assert AiLibrary.normalize_conversation_mode("bogus") == "lesson"
-    assert AiLibrary.normalize_conversation_mode(None) == "lesson"
+    assert AiLibrary.normalize_conversation_mode("scenario") == "scenario"
+    assert AiLibrary.normalize_conversation_mode("audio") == "audio"
+    assert AiLibrary.normalize_conversation_mode("blackboard") == "blackboard"
+    # Legacy lesson plus unknown/missing modes read as scenario.
+    assert AiLibrary.normalize_conversation_mode("lesson") == "scenario"
+    assert AiLibrary.normalize_conversation_mode("bogus") == "scenario"
+    assert AiLibrary.normalize_conversation_mode(None) == "scenario"
 
 
 def test_effective_mode_prefers_explicit_shape_or_collection() -> None:
-    assert _effective_assistant_mode("shape", "lesson") == "shape"
+    assert _effective_assistant_mode("shape", "scenario") == "shape"
     assert _effective_assistant_mode("collection", "animation") == "collection"
+    assert _effective_assistant_mode("scenario", "audio") == "scenario"
+    assert _effective_assistant_mode("audio", "scenario") == "audio"
+    assert _effective_assistant_mode("blackboard", "scenario") == "blackboard"
     assert _effective_assistant_mode(None, "shape") == "shape"
-    assert _effective_assistant_mode(None, "bogus") == "lesson"
+    assert _effective_assistant_mode(None, "audio") == "audio"
+    assert _effective_assistant_mode(None, "bogus") == "scenario"
+    assert _effective_assistant_mode(None, "lesson") == "scenario"
 
 
 def test_shape_and_collection_defaults_differ_from_animation() -> None:
     assert DEFAULT_SHAPE_SYSTEM_PROMPT != DEFAULT_ANIMATION_SYSTEM_PROMPT
     assert DEFAULT_COLLECTION_SYSTEM_PROMPT != DEFAULT_ANIMATION_SYSTEM_PROMPT
     assert DEFAULT_SHAPE_SYSTEM_PROMPT != DEFAULT_COLLECTION_SYSTEM_PROMPT
+    assert DEFAULT_SCENARIO_SYSTEM_PROMPT != DEFAULT_ANIMATION_SYSTEM_PROMPT
+    assert DEFAULT_AUDIO_SYSTEM_PROMPT != DEFAULT_BLACKBOARD_SYSTEM_PROMPT
+    assert DEFAULT_SCENARIO_SYSTEM_PROMPT != DEFAULT_AUDIO_SYSTEM_PROMPT
+
+
+def test_scenario_audio_blackboard_prompts_scope_to_their_stages() -> None:
+    scenario = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "scenario").lower()
+    assert "high-level lesson plan" in scenario
+    assert "action scenario" in scenario or "action" in scenario
+    assert "never claim a mutation happened before approval" in scenario
+    assert ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS not in _system_prompt_for_mode(
+        DEFAULT_SYSTEM_PROMPT, "scenario"
+    )
+
+    audio = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "audio").lower()
+    assert "speech" in audio
+    assert "prompter" in audio or "voice" in audio
+    assert "per-part" in audio or "per part" in audio
+    assert "never claim a mutation happened before approval" in audio
+    assert ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS not in _system_prompt_for_mode(
+        DEFAULT_SYSTEM_PROMPT, "audio"
+    )
+
+    board = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "blackboard").lower()
+    assert "blackboard" in board
+    assert "never claim a mutation happened before approval" in board
+    assert ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS not in _system_prompt_for_mode(
+        DEFAULT_SYSTEM_PROMPT, "blackboard"
+    )
+
+    assert _system_prompt_for_mode("Custom audio guidance", "audio") == "Custom audio guidance"
+    assert (
+        _system_prompt_for_mode("Custom blackboard guidance", "blackboard")
+        == "Custom blackboard guidance"
+    )
 
 
 def test_shape_and_collection_prompts_describe_draft_button_flow() -> None:
@@ -100,6 +151,9 @@ def test_shape_and_collection_prompts_describe_draft_button_flow() -> None:
 
 
 def test_proposal_asset_instructions_are_mode_scoped() -> None:
+    assert _proposal_asset_instructions("scenario") == ""
+    assert _proposal_asset_instructions("audio") == ""
+    assert _proposal_asset_instructions("blackboard") == ""
     assert _proposal_asset_instructions("lesson") == ""
     assert _proposal_asset_instructions("bogus") == ""
 

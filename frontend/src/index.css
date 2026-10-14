@@ -4254,6 +4254,7 @@ button:disabled {
 
 .ai-panel__modes {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 4px;
   border: 1px solid var(--color-border);
@@ -4262,9 +4263,10 @@ button:disabled {
 }
 
 .ai-panel__modes button {
-  flex: 1;
+  flex: 1 1 auto;
   border-color: transparent;
   background: transparent;
+  white-space: nowrap;
 }
 
 .ai-panel__modes button:disabled {

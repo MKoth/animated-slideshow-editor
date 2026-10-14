@@ -241,13 +241,16 @@ describe('AiPanel draft this script', () => {
     renderPanel([scriptMessage()] as never[], seen)
     const user = userEvent.setup()
     await user.click(await screen.findByTestId('ai-message-draft-script-m-script'))
-    const modal = await screen.findByTestId('ai-proposal-modal')
-    expect(modal).toBeInTheDocument()
+    // Animation mode reviews inline: the modal closes once the proposal lands
+    // under its message (commit 41032a8d changed this from modal review).
+    const card = await screen.findByTestId('ai-message-proposal-prop-script')
+    expect(card).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-proposal-modal')).not.toBeInTheDocument()
     expect(seen.draftCalled).not.toBe(true)
     expect(seen.createCalled).toBe(true)
     const commands = seen.commands as { type: string; slideId: string; source: string }[]
     expect(commands).toHaveLength(1)
-    expect(commands[0].type).toBe('SetSlideAnimationScript')
+    expect(commands[0].type).toBe('AiRunAnimationScript')
     expect(commands[0].source).toContain('script "Scene Animation Sequence" from 0')
     expect(commands[0].source).not.toContain('slide:')
     expect(typeof commands[0].slideId).toBe('string')

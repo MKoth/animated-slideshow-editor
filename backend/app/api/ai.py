@@ -20,6 +20,7 @@ from app.ai.library import (
     AiSecretMissingError,
     StaleProposalError,
 )
+from app.ai.model import AiConversationRow
 from app.ai.plans import (
     PLAN_JSON_SCHEMA,
     apply_user_edits_preservation,
@@ -75,7 +76,10 @@ from app.ai.zen import (
 )
 from app.config import (
     DEFAULT_ANIMATION_SYSTEM_PROMPT,
+    DEFAULT_AUDIO_SYSTEM_PROMPT,
+    DEFAULT_BLACKBOARD_SYSTEM_PROMPT,
     DEFAULT_COLLECTION_SYSTEM_PROMPT,
+    DEFAULT_SCENARIO_SYSTEM_PROMPT,
     DEFAULT_SHAPE_SYSTEM_PROMPT,
     DEFAULT_SYSTEM_PROMPT,
 )
@@ -289,8 +293,8 @@ def _resolve_live_models(
 
 
 def _effective_assistant_mode(requested: str | None, conversation_mode: object) -> str:
-    """Lesson/animation/shape/collection split: explicit request wins, else stored conversation mode."""
-    if requested in ("animation", "lesson", "shape", "collection"):
+    """Scenario/audio/blackboard/animation/shape/collection split: explicit request wins, else stored conversation mode."""
+    if requested in ("scenario", "audio", "blackboard", "animation", "shape", "collection"):
         return str(requested)
     return AiLibrary.normalize_conversation_mode(conversation_mode)
 
@@ -311,7 +315,81 @@ def _system_prompt_for_mode(stored_prompt: str, effective_mode: str) -> str:
         if stored_prompt.strip() and stored_prompt.strip() != DEFAULT_SYSTEM_PROMPT.strip():
             return stored_prompt
         return DEFAULT_COLLECTION_SYSTEM_PROMPT
+    if effective_mode == "scenario":
+        if stored_prompt.strip() and stored_prompt.strip() != DEFAULT_SYSTEM_PROMPT.strip():
+            return stored_prompt
+        return DEFAULT_SCENARIO_SYSTEM_PROMPT
+    if effective_mode == "audio":
+        if stored_prompt.strip() and stored_prompt.strip() != DEFAULT_SYSTEM_PROMPT.strip():
+            return stored_prompt
+        return DEFAULT_AUDIO_SYSTEM_PROMPT
+    if effective_mode == "blackboard":
+        if stored_prompt.strip() and stored_prompt.strip() != DEFAULT_SYSTEM_PROMPT.strip():
+            return stored_prompt
+        return DEFAULT_BLACKBOARD_SYSTEM_PROMPT
     return stored_prompt
+
+
+def _linked_histories_text(
+    library: AiLibrary,
+    project_id: str,
+    current_conversation_id: str,
+    budget_tokens: int,
+) -> str:
+    """Read-only transcripts of the project's other conversations for cross-agent visibility.
+
+    Takes the most recent conversation per other mode, newest messages first up to a
+    bounded per-conversation cap, and caps the whole block to half the context budget.
+    Pure prompt shaping — never writes.
+    """
+    try:
+        rows = library.list_conversations(project_id)
+    except Exception:
+        return ""
+    seen: dict[str, AiConversationRow] = {}
+    for row in rows:
+        if row.id == current_conversation_id:
+            continue
+        mode = AiLibrary.normalize_conversation_mode(row.mode)
+        if mode not in seen:
+            seen[mode] = row
+    if not seen:
+        return ""
+    cap_total = min(12000, max(2000, (budget_tokens * 4) // 2))
+    per_conv_cap = max(2000, cap_total // len(seen))
+    blocks: list[str] = []
+    for mode in sorted(seen):
+        row = seen[mode]
+        try:
+            messages = library.list_messages(row.id)
+        except (KeyError, ValueError):
+            continue
+        lines: list[str] = []
+        used = 0
+        for message in reversed(messages):
+            role = message.role
+            content = message.content or ""
+            speaker = "User" if role == "user" else "Assistant"
+            chunk = f"{speaker}: {content}"
+            if len(chunk) > 2000:
+                chunk = chunk[:2000] + "…[truncated]"
+            if used + len(chunk) > per_conv_cap:
+                break
+            lines.append(chunk)
+            used += len(chunk) + 1
+        if not lines:
+            continue
+        lines.reverse()
+        title = row.title or "untitled"
+        blocks.append(
+            f'--- {mode} conversation "{title}" (read-only linked context; '
+            "do not confuse it with this conversation and never claim its work as done here) ---\n"
+            + "\n".join(lines)
+        )
+    text = "\n\n".join(blocks)
+    if len(text) > cap_total:
+        text = text[:cap_total] + "\n…[linked histories truncated to budget]"
+    return text
 
 
 @router.post("/ai/chat")
@@ -350,6 +428,11 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
         context_text = f"{context_text}\nassistant mode: {effective_mode}"
     else:
         context_text = f"assistant mode: {effective_mode}"
+    linked = _linked_histories_text(
+        library, conversation.project_id, body.conversationId, library.context_budget
+    )
+    if linked:
+        context_text = f"{context_text}\n\nLinked project conversations:\n{linked}"
     stored = library.list_messages(body.conversationId)
     history = [ChatMessage(role=m.role, content=m.content) for m in stored]
 
@@ -2853,9 +2936,11 @@ PROPOSAL_COMMAND_TYPES: tuple[str, ...] = (
 def _proposal_asset_instructions(effective_mode: str) -> str:
     """Mode-scoped AiAnimationAssetBatch guidance for the proposal drafter.
 
-    Lesson mode has no asset authoring; animation keeps the full combined
-    guidance; shape/collection modes get narrowed variants so the drafter
-    only emits operations that belong to the active tab.
+    Scenario/audio/blackboard modes have no asset authoring (they work through
+    the plan/scenario/reconciliation/narration/calibration/board stages);
+    animation keeps the full combined guidance; shape/collection modes get
+    narrowed variants so the drafter only emits operations that belong to the
+    active tab.
     """
     if effective_mode == "shape":
         return (
@@ -3034,6 +3119,11 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
         context_text = f"{context_text}\nassistant mode: {effective_mode}"
     else:
         context_text = f"assistant mode: {effective_mode}"
+    linked = _linked_histories_text(
+        library, body.projectId, body.conversationId, library.context_budget
+    )
+    if linked:
+        context_text = f"{context_text}\n\nLinked project conversations:\n{linked}"
     stored = library.list_messages(body.conversationId)
     history = [ChatMessage(role=m.role, content=m.content) for m in stored]
     budget = library.context_budget

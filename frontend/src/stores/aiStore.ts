@@ -30,11 +30,21 @@ import { ApiError } from '../api/apiClient'
 
 export type AiBackendStatus = 'idle' | 'loading' | 'streaming' | 'unavailable'
 
-export type AiAssistantMode = 'lesson' | 'animation' | 'shape' | 'collection'
+export type AiAssistantMode =
+  'scenario' | 'audio' | 'blackboard' | 'animation' | 'shape' | 'collection'
 
 export function normalizeAiMode(mode: unknown): AiAssistantMode {
-  if (mode === 'animation' || mode === 'shape' || mode === 'collection') return mode
-  return 'lesson'
+  if (
+    mode === 'scenario' ||
+    mode === 'audio' ||
+    mode === 'blackboard' ||
+    mode === 'animation' ||
+    mode === 'shape' ||
+    mode === 'collection'
+  )
+    return mode
+  // Legacy 'lesson' (split into scenario/audio/blackboard) and unknown read as scenario.
+  return 'scenario'
 }
 
 export function aiActiveKey(projectId: string, mode: AiAssistantMode): string {
@@ -52,9 +62,12 @@ function readActiveId(
 ): string | null {
   const key = aiActiveKey(projectId, mode)
   if (activeByProject[key]) return activeByProject[key] ?? null
-  // Legacy persisted key (pre mode-split) holds the lesson conversation.
-  if (normalizeAiMode(mode) === 'lesson' && activeByProject[projectId]) {
-    return activeByProject[projectId] ?? null
+  // Legacy persisted keys (pre scenario/audio/blackboard split) hold the
+  // scenario conversation under the old lesson key or the bare project key.
+  if (normalizeAiMode(mode) === 'scenario') {
+    if (activeByProject[`${projectId}:lesson`])
+      return activeByProject[`${projectId}:lesson`] ?? null
+    if (activeByProject[projectId]) return activeByProject[projectId] ?? null
   }
   return null
 }
@@ -118,6 +131,7 @@ interface AiState {
   setSearch: (search: string) => void
   setDraft: (projectId: string, draft: string, mode?: AiAssistantMode) => void
   setActive: (projectId: string, conversationId: string, mode?: AiAssistantMode) => void
+  clearActive: (projectId: string, mode?: AiAssistantMode) => void
   activeIdFor: (projectId: string, mode?: AiAssistantMode) => string | null
   setPlanRequest: (request: string) => void
   setActivePlan: (id: string | null) => void
@@ -314,7 +328,7 @@ export const useAiStore = create<AiState>()(
       drafts: {},
       search: '',
       panelOpen: false,
-      assistantMode: 'lesson',
+      assistantMode: 'scenario',
       settingsOpen: false,
       status: 'idle',
       streamingConversationId: null,
@@ -376,6 +390,16 @@ export const useAiStore = create<AiState>()(
           activeByProject: { ...state.activeByProject, [key]: conversationId },
         }))
       },
+      clearActive: (projectId, mode) => {
+        const wanted = normalizeAiMode(mode ?? get().assistantMode)
+        const key = aiActiveKey(projectId, wanted)
+        set((state) => {
+          if (!(key in state.activeByProject)) return state
+          const activeByProject = { ...state.activeByProject }
+          delete activeByProject[key]
+          return { activeByProject }
+        })
+      },
       activeIdFor: (projectId, mode) =>
         readActiveId(
           get().activeByProject,
@@ -393,22 +417,44 @@ export const useAiStore = create<AiState>()(
           }))
           set((state) => {
             const wanted = normalizeAiMode(mode ?? state.assistantMode)
-            const inMode = normalized.filter((c) => conversationModeOf(c) === wanted)
-            const active = readActiveId(state.activeByProject, projectId, wanted)
-            const stillThere = active && normalized.some((c) => c.id === active)
             const nextActive = { ...state.activeByProject }
-            if (!stillThere) {
-              // Prefer a conversation of the requested mode; fall back to any.
-              const pick = inMode[0] ?? normalized[0]
-              if (pick) nextActive[aiActiveKey(projectId, wanted)] = pick.id
+            // Drop the pre-split lesson key: its conversations normalize to
+            // scenario and are picked up by the scenario pass below.
+            delete nextActive[`${projectId}:lesson`]
+            // Repair every mode key, not just the current tab: persisted state
+            // may hold stale cross-mode mappings (animation key pointing at a
+            // collection conversation). A key only survives when it points at a
+            // same-mode conversation of this project; otherwise the mode keeps
+            // its own most recent conversation or stays empty.
+            const allModes: AiAssistantMode[] = [
+              'scenario',
+              'audio',
+              'blackboard',
+              'animation',
+              'shape',
+              'collection',
+            ]
+            for (const m of allModes) {
+              const key = aiActiveKey(projectId, m)
+              const cur = nextActive[key]
+              const curConv =
+                cur !== undefined
+                  ? normalized.find((c) => c.id === cur && c.projectId === projectId)
+                  : undefined
+              if (curConv !== undefined && conversationModeOf(curConv) === m) continue
+              const pick = normalized.find(
+                (c) => c.projectId === projectId && conversationModeOf(c) === m,
+              )
+              if (pick) nextActive[key] = pick.id
+              else delete nextActive[key]
             }
-            // Backfill legacy lesson key so old persisted state keeps working.
+            // Backfill the bare project key so old persisted state keeps working.
             if (
-              wanted === 'lesson' &&
-              nextActive[aiActiveKey(projectId, 'lesson')] &&
+              wanted === 'scenario' &&
+              nextActive[aiActiveKey(projectId, 'scenario')] &&
               !nextActive[projectId]
             ) {
-              nextActive[projectId] = nextActive[aiActiveKey(projectId, 'lesson')] as string
+              nextActive[projectId] = nextActive[aiActiveKey(projectId, 'scenario')] as string
             }
             return {
               conversations: normalized,
@@ -482,24 +528,29 @@ export const useAiStore = create<AiState>()(
             const activeByProject = { ...state.activeByProject }
             const modesToFix: AiAssistantMode[] = deletedMode
               ? [deletedMode]
-              : (['lesson', 'animation', 'shape', 'collection'] as const)
+              : (['scenario', 'audio', 'blackboard', 'animation', 'shape', 'collection'] as const)
             for (const mode of modesToFix) {
               const key = aiActiveKey(projectId, mode)
               if (activeByProject[key] === id || (!deletedMode && activeByProject[key] === id)) {
-                const fallback =
-                  conversations.find(
-                    (c) => c.projectId === projectId && conversationModeOf(c) === mode,
-                  ) ?? conversations.find((c) => c.projectId === projectId)
+                // Strict per-mode fallback: only a same-mode conversation may
+                // replace the deleted one; otherwise the mode stays empty.
+                const fallback = conversations.find(
+                  (c) => c.projectId === projectId && conversationModeOf(c) === mode,
+                )
                 if (fallback) activeByProject[key] = fallback.id
                 else delete activeByProject[key]
               }
             }
-            // Legacy lesson key cleanup.
-            if (activeByProject[projectId] === id) {
-              const fallback =
-                conversations.find(
-                  (c) => c.projectId === projectId && conversationModeOf(c) === 'lesson',
-                ) ?? conversations.find((c) => c.projectId === projectId)
+            // Legacy lesson/bare key cleanup (pre scenario/audio/blackboard split):
+            // the old lesson key is dropped, the bare key follows scenario.
+            if (
+              activeByProject[projectId] === id ||
+              activeByProject[`${projectId}:lesson`] === id
+            ) {
+              const fallback = conversations.find(
+                (c) => c.projectId === projectId && conversationModeOf(c) === 'scenario',
+              )
+              delete activeByProject[`${projectId}:lesson`]
               if (fallback) activeByProject[projectId] = fallback.id
               else delete activeByProject[projectId]
             }
@@ -529,6 +580,10 @@ export const useAiStore = create<AiState>()(
         const wanted = normalizeAiMode(
           assistantMode ?? (existing ? conversationModeOf(existing) : get().assistantMode),
         )
+        // Strict per-mode: never send into a conversation owned by another mode.
+        // This blocks the old cross-talk path where the animation tab held a
+        // collection conversation id and poisoned its history with the wrong prompt.
+        if (existing && conversationModeOf(existing) !== wanted) return
         const aborter = new AbortController()
         set({
           status: 'streaming',
@@ -607,6 +662,8 @@ export const useAiStore = create<AiState>()(
         const wanted = normalizeAiMode(
           assistantMode ?? (existing ? conversationModeOf(existing) : get().assistantMode),
         )
+        // Strict per-mode: same guard as sendMessage — no cross-mode regenerate.
+        if (existing && conversationModeOf(existing) !== wanted) return
         const aborter = new AbortController()
         set({
           status: 'streaming',

@@ -237,3 +237,46 @@ def test_chat_truncated_stream_says_raise_max_tokens(
     event = json.loads(log_file.read_text(encoding="utf-8").splitlines()[-1])
     assert event["code"] == "response_truncated"
     assert event["extra"]["truncated"] is True
+
+
+def test_chat_injects_linked_histories_from_other_modes(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cross-agent visibility: an audio chat sees the scenario conversation transcript."""
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+    seen: dict[str, Any] = {}
+
+    def _stream(self: ZenClient, **kwargs: Any) -> Iterator[str]:
+        seen["messages"] = kwargs.get("messages")
+        yield "ok"
+
+    monkeypatch.setattr(ZenClient, "chat_stream", _stream)
+
+    scenario = client.post(
+        "/api/ai/conversations", json={"projectId": "p-1", "mode": "scenario"}
+    ).json()
+    assert scenario["mode"] == "scenario"
+    audio = client.post(
+        "/api/ai/conversations", json={"projectId": "p-1", "mode": "audio"}
+    ).json()
+    client.post(
+        "/api/ai/chat",
+        json={"conversationId": scenario["id"], "message": "teach cats", "mode": "send", "context": {}},
+    )
+    r = client.post(
+        "/api/ai/chat",
+        json={
+            "conversationId": audio["id"],
+            "message": "speak now",
+            "mode": "send",
+            "context": {},
+            "assistantMode": "audio",
+        },
+    )
+    assert r.status_code == 200
+    joined = "\n".join(str(m.get("content", "")) for m in seen["messages"])
+    assert "teach cats" in joined
+    assert "scenario conversation" in joined
+    assert "read-only linked context" in joined

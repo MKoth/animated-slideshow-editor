@@ -48,6 +48,8 @@ interface AiAnimationViewProps {
   conversationId: string | null
   context: ContextSnapshot
   disabled?: boolean
+  /** strict per-mode chrome label: animation | shape | collection */
+  assistantMode?: 'animation' | 'shape' | 'collection'
   /** Requested actions to analyze (issue #440). Empty until the artist describes a performance. */
   beats?: readonly RequestedBeat[]
   /** Requested rendered views (issue #441). Empty until the artist or assistant asks for visual evidence. */
@@ -79,7 +81,7 @@ interface AiAnimationViewProps {
  * unsaved Project: every summary reads the live Context Snapshot regenerated
  * from engine state per request — never a saved copy. Summaries are bounded
  * and read-only; analysis and edits flow through the shared conversation and
- * the existing AI Edit Proposal lifecycle, not through lesson-production
+ * the existing AI Edit Proposal lifecycle, not through scenario/audio/blackboard
  * stages (plan/scenario/reconciliation/narration/calibration/board).
  */
 export function AiAnimationView({
@@ -87,6 +89,7 @@ export function AiAnimationView({
   conversationId,
   context,
   disabled,
+  assistantMode = 'animation',
   beats = [],
   viewRequests = [],
   travel = [],
@@ -190,11 +193,22 @@ export function AiAnimationView({
     return (
       <div className="ai-animation" data-testid="ai-animation-section">
         <div data-testid="ai-animation-disabled">
-          Animation assistant unavailable — backend unreachable.
+          {assistantMode === 'collection'
+            ? 'Collections assistant unavailable — backend unreachable.'
+            : assistantMode === 'shape'
+              ? 'Shapes assistant unavailable — backend unreachable.'
+              : 'Animation assistant unavailable — backend unreachable.'}
         </div>
       </div>
     )
   }
+
+  const modeTitle =
+    assistantMode === 'collection'
+      ? 'Collections assistant — author reusable Clips + Collections'
+      : assistantMode === 'shape'
+        ? 'Shapes assistant — author mesh Shape steps'
+        : 'Animation assistant — compose from existing collections + keyframes'
 
   const animation = context.animation
   const visibleNodes = animation.nodes.slice(0, 10)
@@ -204,7 +218,7 @@ export function AiAnimationView({
   return (
     <div className="ai-animation" data-testid="ai-animation-section">
       <div className="ai-animation__header">
-        <span>Animation assistant</span>
+        <span>{modeTitle}</span>
         <button
           data-testid="ai-animation-toggle"
           aria-expanded={detailsOpen}

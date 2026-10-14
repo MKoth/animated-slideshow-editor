@@ -23,7 +23,7 @@ function renderPanelWithUsage() {
   }
   useAiStore.setState({
     conversations: [
-      { id: 'c-1', projectId, title: 'Chat', mode: 'lesson', modified: new Date().toISOString() },
+      { id: 'c-1', projectId, title: 'Chat', mode: 'scenario', modified: new Date().toISOString() },
     ],
     messagesById: {
       'c-1': [
@@ -48,11 +48,11 @@ function renderPanelWithUsage() {
         },
       ],
     },
-    activeByProject: { [`${projectId}:lesson`]: 'c-1' },
+    activeByProject: { [`${projectId}:scenario`]: 'c-1' },
     drafts: {},
     search: '',
     panelOpen: true,
-    assistantMode: 'lesson',
+    assistantMode: 'scenario',
     settingsOpen: false,
     status: 'idle',
     streamingConversationId: null,
@@ -79,7 +79,7 @@ describe('AiPanel token usage', () => {
       drafts: {},
       search: '',
       panelOpen: true,
-      assistantMode: 'lesson',
+      assistantMode: 'scenario',
       settingsOpen: false,
       status: 'idle',
       streamingConversationId: null,

@@ -46,7 +46,7 @@ const userMessage: AiMessage = {
   created: now(),
 }
 
-function attachedProposal(projectId: string, mode = 'lesson') {
+function attachedProposal(projectId: string, mode = 'scenario') {
   return {
     id: 'prop-1',
     projectId,
@@ -55,7 +55,7 @@ function attachedProposal(projectId: string, mode = 'lesson') {
     title: 'Middle fill',
     status: 'validated',
     commands:
-      mode === 'lesson'
+      mode === 'scenario'
         ? [{ type: 'CreateSlide', name: 'Middle 1' }]
         : [
             {
@@ -117,7 +117,7 @@ function installFetch(projectId: string, draftFailure = false, mode = 'lesson') 
         ...attachedProposal(projectId, mode),
         id: 'prop-drafted',
         messageId: body.messageId ?? null,
-        title: mode === 'lesson' ? 'Drafted slide' : 'Drafted shape',
+        title: mode === 'scenario' ? 'Drafted slide' : 'Drafted shape',
         baseFingerprint: 'draft:m-1',
       }
       return new Response(JSON.stringify(drafted), { status: 201 })
@@ -160,7 +160,7 @@ function installFetch(projectId: string, draftFailure = false, mode = 'lesson') 
 
 function renderInline(
   draftFailure = false,
-  mode: 'lesson' | 'animation' | 'shape' | 'collection' = 'lesson',
+  mode: 'scenario' | 'animation' | 'shape' | 'collection' = 'scenario',
 ) {
   const { value, projectId } = seedEngine()
   installFetch(projectId, draftFailure, mode)
@@ -202,7 +202,7 @@ describe('AiPanel inline proposals', () => {
       drafts: {},
       search: '',
       panelOpen: true,
-      assistantMode: 'lesson',
+      assistantMode: 'scenario',
       settingsOpen: false,
       status: 'idle',
       streamingConversationId: null,

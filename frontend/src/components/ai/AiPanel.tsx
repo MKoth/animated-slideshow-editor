@@ -46,7 +46,7 @@ export function AiPanel() {
     const mode = normalizeAiMode(s.assistantMode)
     const key = `${projectId}:${mode}`
     if (s.drafts[key] !== undefined) return s.drafts[key] ?? ''
-    if (mode === 'lesson' && s.drafts[projectId] !== undefined) {
+    if (mode === 'scenario' && s.drafts[projectId] !== undefined) {
       return s.drafts[projectId] ?? ''
     }
     return ''
@@ -74,12 +74,25 @@ export function AiPanel() {
   }, [projectId])
 
   useEffect(() => {
-    if (!projectId || activeId) return
-    const mode = normalizeAiMode(assistantMode)
+    if (!projectId) return
+    const m = normalizeAiMode(assistantMode)
+    if (!activeId) {
+      const fallback = conversations.find(
+        (conv) => conv.projectId === projectId && conversationModeOf(conv) === m,
+      )
+      if (fallback) void store.setActive(projectId, fallback.id, m)
+      return
+    }
+    // A stale cross-mode mapping (e.g. animation key pointing at a collection
+    // conversation) must never render — revalidate on every tab switch. An id
+    // missing from the list is left alone: the loader owns that case.
+    const current = conversations.find((conv) => conv.id === activeId)
+    if (current === undefined || conversationModeOf(current) === m) return
     const fallback = conversations.find(
-      (conv) => conv.projectId === projectId && conversationModeOf(conv) === mode,
+      (conv) => conv.projectId === projectId && conversationModeOf(conv) === m,
     )
-    if (fallback) void store.setActive(projectId, fallback.id, mode)
+    if (fallback) void store.setActive(projectId, fallback.id, m)
+    else void store.clearActive(projectId, m)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, assistantMode, conversations, activeId])
 
@@ -152,10 +165,12 @@ export function AiPanel() {
   }, [messages, usage])
   const isStreaming = status === 'streaming' && streamingConversationId === activeId
   const unavailable = status === 'unavailable' || backendStatus === 'unavailable'
-  const isLessonMode = normalizeAiMode(assistantMode) === 'lesson'
-  // Shapes/Collections reuse the Animation chat + proposals chrome for now —
-  // only Lesson renders the plan/scenario/reconciliation/narration/calibration/board stages.
-  const usesAssetChrome = !isLessonMode
+  const mode = normalizeAiMode(assistantMode)
+  // Lesson was split into scenario/audio/blackboard: those render the
+  // plan/scenario/reconciliation/narration/calibration/board stages while
+  // animation/shapes/collections share the asset chat + proposals chrome.
+  const isStageMode = mode === 'scenario' || mode === 'audio' || mode === 'blackboard'
+  const usesAssetChrome = !isStageMode
 
   const handleSend = () => {
     if (!projectId || !activeId || !draft.trim() || isStreaming || unavailable) return
@@ -208,8 +223,9 @@ export function AiPanel() {
 
   // LLM path: converts a prose-only message into commands. Used only when the
   // message has no appliable script block — hence the wait for the model.
-  // Lesson reviews in the modal; asset-chrome modes (Animation/Shapes/Collections)
-  // render the new proposal inline under its message, so the modal closes.
+  // Stage modes (Scenario/Audio/Blackboard) review in the modal; asset-chrome
+  // modes (Animation/Shapes/Collections) render the new proposal inline under
+  // its message, so the modal closes.
   const handleDraft = (messageId: string) => {
     if (!projectId || !activeId || proposalBusy || unavailable) return
     clearDraftError(messageId)
@@ -218,7 +234,7 @@ export function AiPanel() {
       .draftProposal({ projectId, conversationId: activeId, messageId, context })
       .then((created) => {
         if (created) {
-          if (isLessonMode) setProposalModal({ mode: 'review', proposalId: created.id })
+          if (isStageMode) setProposalModal({ mode: 'review', proposalId: created.id })
           else setProposalModal(null)
         } else {
           setProposalModal(null)
@@ -229,7 +245,7 @@ export function AiPanel() {
 
   // Instant path: the message already carries an appliable script block, so
   // the proposal is built locally — no second AI call, only a fast POST.
-  // Lesson reviews in the modal; asset-chrome modes review inline, so the modal closes.
+  // Stage modes review in the modal; asset-chrome modes review inline, so the modal closes.
   const handleDraftScript = (messageId: string) => {
     if (!projectId || !activeId || proposalBusy || unavailable) return
     const message = messages.find((m) => m.id === messageId)
@@ -268,7 +284,9 @@ export function AiPanel() {
         title: `Animation script for ${slideHint ?? 'slide'}`,
         commands: [
           {
-            type: isLessonMode ? 'SetSlideAnimationScript' : 'AiRunAnimationScript',
+            // Blackboard authors board scripts directly; other modes run with
+            // replace-by-footprint semantics.
+            type: mode === 'blackboard' ? 'SetSlideAnimationScript' : 'AiRunAnimationScript',
             slideId,
             source,
           },
@@ -277,7 +295,7 @@ export function AiPanel() {
       })
       .then((created) => {
         if (created) {
-          if (isLessonMode) setProposalModal({ mode: 'review', proposalId: created.id })
+          if (isStageMode) setProposalModal({ mode: 'review', proposalId: created.id })
           else setProposalModal(null)
         } else {
           setProposalModal(null)
@@ -342,7 +360,7 @@ export function AiPanel() {
       })
       .then((created) => {
         if (created) {
-          if (isLessonMode) setProposalModal({ mode: 'review', proposalId: created.id })
+          if (isStageMode) setProposalModal({ mode: 'review', proposalId: created.id })
           else setProposalModal(null)
         } else {
           setProposalModal(null)
@@ -385,7 +403,7 @@ export function AiPanel() {
       })
       .then((created) => {
         if (created) {
-          if (isLessonMode) setProposalModal({ mode: 'review', proposalId: created.id })
+          if (isStageMode) setProposalModal({ mode: 'review', proposalId: created.id })
           else setProposalModal(null)
         } else {
           setProposalModal(null)
@@ -429,29 +447,43 @@ export function AiPanel() {
       </div>
       <div className="ai-panel__modes" data-testid="ai-assistant-mode">
         <button
-          data-testid="ai-mode-lesson"
-          disabled={assistantMode === 'lesson'}
-          onClick={() => store.setAssistantMode('lesson')}
+          data-testid="ai-mode-scenario"
+          disabled={mode === 'scenario'}
+          onClick={() => store.setAssistantMode('scenario')}
         >
-          Lesson
+          Scenario
+        </button>
+        <button
+          data-testid="ai-mode-audio"
+          disabled={mode === 'audio'}
+          onClick={() => store.setAssistantMode('audio')}
+        >
+          Audio
+        </button>
+        <button
+          data-testid="ai-mode-blackboard"
+          disabled={mode === 'blackboard'}
+          onClick={() => store.setAssistantMode('blackboard')}
+        >
+          Blackboard
         </button>
         <button
           data-testid="ai-mode-animation"
-          disabled={assistantMode === 'animation'}
+          disabled={mode === 'animation'}
           onClick={() => store.setAssistantMode('animation')}
         >
           Animation
         </button>
         <button
           data-testid="ai-mode-shape"
-          disabled={assistantMode === 'shape'}
+          disabled={mode === 'shape'}
           onClick={() => store.setAssistantMode('shape')}
         >
           Shapes
         </button>
         <button
           data-testid="ai-mode-collection"
-          disabled={assistantMode === 'collection'}
+          disabled={mode === 'collection'}
           onClick={() => store.setAssistantMode('collection')}
         >
           Collections
@@ -468,6 +500,29 @@ export function AiPanel() {
               projectId={projectId}
               conversationId={activeId}
               context={context}
+              disabled
+              assistantMode={mode === 'shape' || mode === 'collection' ? mode : 'animation'}
+            />
+          ) : mode === 'audio' ? (
+            <>
+              <AiNarrationView
+                projectId={projectId}
+                reconciliationId={activeReconciliationId}
+                conversationId={activeId}
+                disabled
+              />
+              <AiCalibrationView
+                projectId={projectId}
+                narrationId={activeNarrationId}
+                conversationId={activeId}
+                disabled
+              />
+            </>
+          ) : mode === 'blackboard' ? (
+            <AiBoardView
+              projectId={projectId}
+              narrationId={activeNarrationId}
+              conversationId={activeId}
               disabled
             />
           ) : (
@@ -489,24 +544,6 @@ export function AiPanel() {
                 scenarioId={activeScenarioId}
                 conversationId={activeId}
                 context={context}
-                disabled
-              />
-              <AiNarrationView
-                projectId={projectId}
-                reconciliationId={activeReconciliationId}
-                conversationId={activeId}
-                disabled
-              />
-              <AiCalibrationView
-                projectId={projectId}
-                narrationId={activeNarrationId}
-                conversationId={activeId}
-                disabled
-              />
-              <AiBoardView
-                projectId={projectId}
-                narrationId={activeNarrationId}
-                conversationId={activeId}
                 disabled
               />
             </>
@@ -531,6 +568,12 @@ export function AiPanel() {
             >
               New {normalizeAiMode(assistantMode)} conversation
             </button>
+            {visibleConversations.length === 0 && !activeId && (
+              <div data-testid="ai-no-conversation-in-mode">
+                No {normalizeAiMode(assistantMode)} conversation yet — create one above. Other
+                modes&apos; conversations stay in their own tabs.
+              </div>
+            )}
             <ul data-testid="ai-conversation-list">
               {visibleConversations.map((conv) => (
                 <li key={conv.id} data-testid={`ai-conversation-${conv.id}`}>
@@ -763,14 +806,14 @@ export function AiPanel() {
                           disabled={proposalBusy || unavailable}
                           onClick={() => handleDraft(message.id)}
                         >
-                          {assistantMode === 'shape'
+                          {mode === 'shape'
                             ? 'Draft shape proposal'
-                            : assistantMode === 'collection'
+                            : mode === 'collection'
                               ? 'Draft collection proposal'
                               : 'Draft for me'}
                         </button>
                       )}
-                      {isLessonMode && (
+                      {isStageMode && (
                         <button
                           data-testid={`ai-message-propose-${message.id}`}
                           onClick={() =>
@@ -821,13 +864,17 @@ export function AiPanel() {
             <textarea
               data-testid="ai-input"
               placeholder={
-                assistantMode === 'animation'
+                mode === 'animation'
                   ? 'Describe the performance…'
-                  : assistantMode === 'shape'
+                  : mode === 'shape'
                     ? 'Describe the shape…'
-                    : assistantMode === 'collection'
+                    : mode === 'collection'
                       ? 'Describe the collection…'
-                      : 'Ask about your lesson…'
+                      : mode === 'audio'
+                        ? 'Describe the speech…'
+                        : mode === 'blackboard'
+                          ? 'Describe the blackboard…'
+                          : 'Describe the lesson plan…'
               }
               value={draft}
               onChange={(e) =>
@@ -866,6 +913,30 @@ export function AiPanel() {
               conversationId={activeId}
               context={context}
               disabled={unavailable}
+              assistantMode={mode === 'shape' || mode === 'collection' ? mode : 'animation'}
+            />
+          ) : mode === 'audio' ? (
+            <>
+              <AiNarrationView
+                projectId={projectId}
+                reconciliationId={activeReconciliationId}
+                conversationId={activeId}
+                disabled={unavailable}
+              />
+
+              <AiCalibrationView
+                projectId={projectId}
+                narrationId={activeNarrationId}
+                conversationId={activeId}
+                disabled={unavailable}
+              />
+            </>
+          ) : mode === 'blackboard' ? (
+            <AiBoardView
+              projectId={projectId}
+              narrationId={activeNarrationId}
+              conversationId={activeId}
+              disabled={unavailable}
             />
           ) : (
             <>
@@ -888,27 +959,6 @@ export function AiPanel() {
                 scenarioId={activeScenarioId}
                 conversationId={activeId}
                 context={context}
-                disabled={unavailable}
-              />
-
-              <AiNarrationView
-                projectId={projectId}
-                reconciliationId={activeReconciliationId}
-                conversationId={activeId}
-                disabled={unavailable}
-              />
-
-              <AiCalibrationView
-                projectId={projectId}
-                narrationId={activeNarrationId}
-                conversationId={activeId}
-                disabled={unavailable}
-              />
-
-              <AiBoardView
-                projectId={projectId}
-                narrationId={activeNarrationId}
-                conversationId={activeId}
                 disabled={unavailable}
               />
             </>
