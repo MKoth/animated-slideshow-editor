@@ -14,6 +14,12 @@ import {
   executeCollectionFreeze,
   placementEndTime,
 } from '../../engine/collectionFreeze'
+import {
+  collectionLaneEnvFromEngine,
+  commitCollectionMove,
+  commitCollectionStretch,
+} from '../../app/collectionLaneActions'
+import { deleteCollectionPlacementWithFreeze } from '../../app/collectionFreezeDeletion'
 import { timelineRows } from '../../components/panels/timelineTracks'
 
 function setupEngine(): { engine: Engine; dispatcher: CommandDispatcher; undoStack: UndoStack } {
@@ -227,5 +233,222 @@ describe('timeline collection lane rows', () => {
     engine.createNode(slide.scene.id, slide.scene.root.id, 'Plain')
     const rows = timelineRows(slide.scene, {}, [], {}, undefined, undefined)
     expect(rows.some((r) => r.kind === 'collectionLane')).toBe(false)
+  })
+})
+
+describe('freeze link (placement ↔ frozen keyframes)', () => {
+  it('tags freeze-last writes with placement link roles (last + prefix)', () => {
+    const { engine, dispatcher, undoStack, placementId, paw } = setupPlacedCollection()
+    const res = executeCollectionFreeze(engine, dispatcher.dispatch.bind(dispatcher), undoStack, {
+      placementId,
+      source: 'last',
+    })
+    expect(res.ok).toBe(true)
+    const linked = engine.getFreezeKeyframes(placementId)
+    // 2 end keys (last) + 2 hold prefixes (prefix)
+    expect(linked).toHaveLength(4)
+    expect(linked.filter((l) => l.keyframe.freezeLink?.role === 'last')).toHaveLength(2)
+    expect(linked.filter((l) => l.keyframe.freezeLink?.role === 'prefix')).toHaveLength(2)
+    for (const l of linked) expect(l.keyframe.freezeLink?.placementId).toBe(placementId)
+    void paw
+  })
+
+  it('tags freeze-first writes with the first role', () => {
+    const { engine, dispatcher, undoStack, placementId } = setupPlacedCollection()
+    const res = executeCollectionFreeze(engine, dispatcher.dispatch.bind(dispatcher), undoStack, {
+      placementId,
+      source: 'first',
+    })
+    expect(res.ok).toBe(true)
+    const linked = engine.getFreezeKeyframes(placementId)
+    expect(linked).toHaveLength(2)
+    for (const l of linked) {
+      expect(l.keyframe.freezeLink?.placementId).toBe(placementId)
+      expect(l.keyframe.freezeLink?.role).toBe('first')
+    }
+  })
+
+  it('collection move shifts linked freeze keys by the same delta', () => {
+    const { engine, dispatcher, undoStack, placementId, paw } = setupPlacedCollection()
+    const dispatch = dispatcher.dispatch.bind(dispatcher)
+    expect(
+      executeCollectionFreeze(engine, dispatch, undoStack, { placementId, source: 'last' }).ok,
+    ).toBe(true)
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => k.time)).toEqual([2, 6])
+    const env = collectionLaneEnvFromEngine(engine)
+    const res = commitCollectionMove(env, dispatch as never, placementId, 5, 2, {
+      maxStartTime: 20,
+    })
+    expect(res.ok).toBe(true)
+    expect(res.freezeSkipped).toBe(0)
+    expect(res.freezeMoved).toBe(4)
+    expect(engine.getCollectionPlacement(placementId).startTime).toBe(5)
+    // prefix rode 2 → 5, frozen end rode 6 → 9
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => k.time)).toEqual([5, 9])
+    // links survive the move
+    expect(engine.getFreezeKeyframes(placementId)).toHaveLength(4)
+  })
+
+  it('move then undo restores both placement and freeze key times', () => {
+    const { engine, dispatcher, undoStack, placementId, paw } = setupPlacedCollection()
+    const dispatch = dispatcher.dispatch.bind(dispatcher)
+    expect(
+      executeCollectionFreeze(engine, dispatch, undoStack, { placementId, source: 'last' }).ok,
+    ).toBe(true)
+    const env = collectionLaneEnvFromEngine(engine)
+    commitCollectionMove(env, dispatch as never, placementId, 5, 2, { maxStartTime: 20 })
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => k.time)).toEqual([5, 9])
+    expect(dispatcher.undo()).toBe(true)
+    expect(engine.getCollectionPlacement(placementId).startTime).toBe(2)
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => k.time)).toEqual([2, 6])
+    void undoStack
+  })
+
+  it('stretch-right moves end-linked keys, keeps start-linked ones', () => {
+    const { engine, dispatcher, undoStack, placementId, paw } = setupPlacedCollection()
+    const dispatch = dispatcher.dispatch.bind(dispatcher)
+    expect(
+      executeCollectionFreeze(engine, dispatch, undoStack, { placementId, source: 'last' }).ok,
+    ).toBe(true)
+    const env = collectionLaneEnvFromEngine(engine)
+    // visual 4 → 8: right edge 6 → 10
+    const res = commitCollectionStretch(env, dispatch as never, {
+      placementId,
+      initialStart: 2,
+      initialVisual: 4,
+      previewStart: 2,
+      previewVisual: 8,
+      isLeftHandle: false,
+    })
+    expect(res.ok).toBe(true)
+    expect(res.freezeSkipped).toBe(0)
+    // prefix stays at 2, frozen end rides 6 → 10
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => k.time)).toEqual([2, 10])
+  })
+
+  it('stretch-left moves start-linked keys, keeps end-linked ones', () => {
+    const { engine, dispatcher, undoStack, placementId, paw } = setupPlacedCollection()
+    const dispatch = dispatcher.dispatch.bind(dispatcher)
+    expect(
+      executeCollectionFreeze(engine, dispatch, undoStack, { placementId, source: 'last' }).ok,
+    ).toBe(true)
+    const env = collectionLaneEnvFromEngine(engine)
+    // left edge 2 → 4 (visual 4 → 2 keeps right edge at 6)
+    const res = commitCollectionStretch(env, dispatch as never, {
+      placementId,
+      initialStart: 2,
+      initialVisual: 4,
+      previewStart: 4,
+      previewVisual: 2,
+      isLeftHandle: true,
+    })
+    expect(res.ok).toBe(true)
+    expect(res.freezeSkipped).toBe(0)
+    // prefix rides 2 → 4, frozen end stays at 6
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => k.time)).toEqual([4, 6])
+  })
+
+  it('delete choice removes linked freeze keys with the placement', () => {
+    const { engine, dispatcher, undoStack, placementId, paw, tail } = setupPlacedCollection()
+    const dispatch = dispatcher.dispatch.bind(dispatcher)
+    expect(
+      executeCollectionFreeze(engine, dispatch, undoStack, { placementId, source: 'last' }).ok,
+    ).toBe(true)
+    expect(engine.getFreezeKeyframes(placementId)).toHaveLength(4)
+    const result = deleteCollectionPlacementWithFreeze(
+      engine,
+      dispatch as never,
+      placementId,
+      'delete',
+    )
+    expect(result.ok).toBe(true)
+    expect(result.freezeDeleted).toBe(4)
+    expect(() => engine.getCollectionPlacement(placementId)).toThrow()
+    expect(engine.getKeyframes(paw.id, 'positionX')).toHaveLength(0)
+    expect(engine.getKeyframes(tail.id, 'positionX')).toHaveLength(0)
+    // undo restores placement and linked keys together
+    expect(dispatcher.undo()).toBe(true)
+    expect(engine.getCollectionPlacement(placementId).startTime).toBe(2)
+    expect(engine.getFreezeKeyframes(placementId)).toHaveLength(4)
+  })
+
+  it('orphan choice keeps freeze keys as plain keyframes', () => {
+    const { engine, dispatcher, undoStack, placementId, paw } = setupPlacedCollection()
+    const dispatch = dispatcher.dispatch.bind(dispatcher)
+    expect(
+      executeCollectionFreeze(engine, dispatch, undoStack, { placementId, source: 'last' }).ok,
+    ).toBe(true)
+    const result = deleteCollectionPlacementWithFreeze(
+      engine,
+      dispatch as never,
+      placementId,
+      'orphan',
+    )
+    expect(result.ok).toBe(true)
+    expect(result.freezeOrphaned).toBe(4)
+    expect(() => engine.getCollectionPlacement(placementId)).toThrow()
+    // keys stay, links stripped
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => k.time)).toEqual([2, 6])
+    for (const kf of engine.getKeyframes(paw.id, 'positionX')) {
+      expect(kf.freezeLink).toBeUndefined()
+    }
+    // undo restores the placement and the links
+    expect(dispatcher.undo()).toBe(true)
+    expect(engine.getCollectionPlacement(placementId).startTime).toBe(2)
+    expect(engine.getFreezeKeyframes(placementId)).toHaveLength(4)
+  })
+
+  it('freeze links survive a JSON round-trip', () => {
+    const { engine, dispatcher, undoStack, placementId } = setupPlacedCollection()
+    expect(
+      executeCollectionFreeze(engine, dispatcher.dispatch.bind(dispatcher), undoStack, {
+        placementId,
+        source: 'last',
+      }).ok,
+    ).toBe(true)
+    const restored = createEngine()
+    restored.restoreFromJSON(engine.toJSON())
+    const linked = restored.getFreezeKeyframes(placementId)
+    expect(linked).toHaveLength(4)
+    expect(linked.filter((l) => l.keyframe.freezeLink?.role === 'last')).toHaveLength(2)
+    expect(linked.filter((l) => l.keyframe.freezeLink?.role === 'prefix')).toHaveLength(2)
+  })
+
+  it('duplicate slide remaps freeze links to the copied placement', () => {
+    const { engine, dispatcher, undoStack, placementId, paw } = setupPlacedCollection()
+    expect(
+      executeCollectionFreeze(engine, dispatcher.dispatch.bind(dispatcher), undoStack, {
+        placementId,
+        source: 'last',
+      }).ok,
+    ).toBe(true)
+    const slide = engine.getActiveSlide()!
+    const copy = engine.duplicateSlide(slide.id)
+    const copiedParentId = copy.scene.root.children.find((c) => c.name === 'Cat')!.id
+    const copiedPlacementId = engine.getNode(copiedParentId).collectionPlacements[0]!.id
+    expect(copiedPlacementId).not.toBe(placementId)
+    const linked = engine.getFreezeKeyframes(copiedPlacementId)
+    expect(linked).toHaveLength(4)
+    // old placement keeps its own links
+    expect(engine.getFreezeKeyframes(placementId)).toHaveLength(4)
+    void paw
+  })
+
+  it('skips (never overwrites) freeze keys whose destination is occupied', () => {
+    const { engine, dispatcher, undoStack, placementId, paw } = setupPlacedCollection()
+    const dispatch = dispatcher.dispatch.bind(dispatcher)
+    expect(
+      executeCollectionFreeze(engine, dispatch, undoStack, { placementId, source: 'last' }).ok,
+    ).toBe(true)
+    // plant a manual key exactly where the frozen end would land after a +3 move
+    engine.addKeyframe({ kind: 'node', nodeId: paw.id, property: 'positionX' }, 9, 999)
+    const env = collectionLaneEnvFromEngine(engine)
+    const res = commitCollectionMove(env, dispatch as never, placementId, 5, 2, {
+      maxStartTime: 20,
+    })
+    expect(res.ok).toBe(true)
+    expect(res.freezeSkipped).toBeGreaterThan(0)
+    // the manual key is untouched
+    expect(engine.getKeyframes(paw.id, 'positionX').find((k) => k.time === 9)?.value).toBe(999)
   })
 })

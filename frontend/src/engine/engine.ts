@@ -341,6 +341,12 @@ export interface EnginePublic {
   resolveAnimationTarget(target: KeyframeTarget): KeyframeTrackRef
   getKeyframesOf(target: KeyframeTarget): readonly Keyframe[]
   setKeyframeDisabled(target: KeyframeTarget, keyframeId: string, disabled: boolean): boolean
+  setKeyframeFreezeLink(
+    target: KeyframeTarget,
+    keyframeId: string,
+    link: import('./keyframe').FreezeLink | undefined,
+  ): import('./keyframe').FreezeLink | undefined
+  getFreezeKeyframes(placementId: string): readonly { target: KeyframeTarget; keyframe: Keyframe }[]
 }
 
 export function createEngine(): EnginePublic {

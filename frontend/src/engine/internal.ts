@@ -20,6 +20,8 @@ import type {
   PastePayload,
 } from './animationManager'
 import type { AnimationProperty, Keyframe } from './animation'
+import { ANIMATABLE_PROPERTIES } from './animationProperties'
+const ANIMATABLE_PROPERTIES_FOR_FREEZE = ANIMATABLE_PROPERTIES
 import type { InterpolationType, KeyframeTangent } from './keyframe'
 import type { KeyframeTarget, KeyframeTrackRef } from './keyframeTarget'
 import type { MaterialParameterKindOf } from './keyframeTarget'
@@ -2221,6 +2223,73 @@ export class Engine {
 
   setKeyframeWrap(target: KeyframeTarget, keyframeId: string, wrap: boolean): boolean {
     return this.#animations.setKeyframeWrap(target, keyframeId, wrap)
+  }
+
+  setKeyframeFreezeLink(
+    target: KeyframeTarget,
+    keyframeId: string,
+    link: import('./keyframe').FreezeLink | undefined,
+  ): import('./keyframe').FreezeLink | undefined {
+    return this.#animations.setKeyframeFreezeLink(target, keyframeId, link)
+  }
+
+  /**
+   * All keyframes linked to a collection placement via freeze (first/last/prefix),
+   * across every animated track of the placement slide. Dangling links (placement
+   * id with no live placement) are ignored by callers — use exact id match.
+   */
+  getFreezeKeyframes(
+    placementId: string,
+  ): readonly { target: KeyframeTarget; keyframe: Keyframe }[] {
+    let placement: { parentNodeId: string }
+    try {
+      placement = this.getCollectionPlacement(placementId)
+    } catch {
+      return []
+    }
+    let slide: Slide
+    try {
+      slide = this.getSlideOfNode(placement.parentNodeId)
+    } catch {
+      return []
+    }
+    const out: { target: KeyframeTarget; keyframe: Keyframe }[] = []
+    const collect = (target: KeyframeTarget, keyframes: readonly Keyframe[]) => {
+      for (const kf of keyframes) {
+        if (kf.freezeLink?.placementId === placementId) out.push({ target, keyframe: kf })
+      }
+    }
+    for (const node of walkPreOrder(slide.scene.root)) {
+      const animation = slide.animation.node(node.id)
+      if (!animation) continue
+      const nodeId = node.id
+      for (const property of ANIMATABLE_PROPERTIES_FOR_FREEZE) {
+        collect({ kind: 'node', nodeId, property }, animation.keyframes(property))
+      }
+      for (const parameter of animation.materialTrackParameterKeys()) {
+        collect({ kind: 'node', nodeId, parameter }, animation.materialKeyframes(parameter))
+      }
+      for (const label of animation.dataLabelTrackLabels()) {
+        collect({ kind: 'dataLabel', nodeId, label }, animation.dataLabelKeyframes(label))
+      }
+      for (const property of animation.circleTrackKeys()) {
+        collect({ kind: 'circle', nodeId, property }, animation.circleKeyframes(property))
+      }
+      for (const property of animation.tableTrackKeys()) {
+        collect({ kind: 'table', nodeId, property }, animation.tableKeyframes(property))
+      }
+      collect({ kind: 'visible', nodeId }, animation.visibleKeyframes())
+      collect({ kind: 'morph', nodeId }, animation.morphKeyframes())
+      for (const property of animation.shadowTrackKeys()) {
+        collect({ kind: 'shadow', nodeId, property }, animation.shadowKeyframes(property))
+      }
+      collect({ kind: 'symmetry', nodeId }, animation.symmetryKeyframes())
+      collect({ kind: 'zIndex', nodeId }, animation.zIndexKeyframes())
+      for (const key of animation.controlTrackKeys()) {
+        collect({ kind: 'control', nodeId, controlKey: key }, animation.controlKeyframes(key))
+      }
+    }
+    return out
   }
 
   pasteKeyframes(target: KeyframeTarget, payload: PastePayload, atTime: number): Keyframe[] {
@@ -6947,6 +7016,9 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getKeyframesOf: (target) => engine.getKeyframesOf(target),
     setKeyframeDisabled: (target, keyframeId, disabled) =>
       engine.setKeyframeDisabled(target, keyframeId, disabled),
+    setKeyframeFreezeLink: (target, keyframeId, link) =>
+      engine.setKeyframeFreezeLink(target, keyframeId, link),
+    getFreezeKeyframes: (placementId) => engine.getFreezeKeyframes(placementId),
   }
 }
 

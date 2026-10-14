@@ -21,6 +21,35 @@ export type KeyframeTangent = {
   readonly value: number
 }
 
+/**
+ * Link from a frozen-pose keyframe back to the collection placement that
+ * produced it. `first` pins the collection's opening pose at the block start,
+ * `last` pins the closing pose at the block end, `prefix` is the hold guard
+ * at the block start that keeps a lone `last` key from hijacking the pre-block
+ * pose. Plain (manually authored) keyframes carry no link.
+ */
+export type FreezeLinkRole = 'first' | 'last' | 'prefix'
+
+export interface FreezeLink {
+  readonly placementId: string
+  readonly role: FreezeLinkRole
+}
+
+export function requireFreezeLinkRole(value: unknown): FreezeLinkRole {
+  if (value === 'first' || value === 'last' || value === 'prefix') return value
+  throw new Error(`Unknown freeze link role: ${String(value)}`)
+}
+
+/** Tolerant read — valid link object passes through, anything else → undefined. */
+export function freezeLinkFromJSON(value: unknown): FreezeLink | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.placementId !== 'string' || record.placementId === '') return undefined
+  const role = record.role
+  if (role !== 'first' && role !== 'last' && role !== 'prefix') return undefined
+  return { placementId: record.placementId, role }
+}
+
 export const ZERO_TANGENT: KeyframeTangent = Object.freeze({ time: 0, value: 0 })
 
 /** Whether the interpolation type is a parametric motion curve. */
@@ -80,6 +109,14 @@ export class Keyframe {
    */
   blend: readonly number[]
 
+  /**
+   * Optional link to the collection placement whose freeze produced this
+   * keyframe. Mutated by freeze / orphan flows, never by evaluation.
+   * Not a constructor identity field — set post-construction so existing
+   * positional call sites keep working.
+   */
+  freezeLink?: FreezeLink | undefined
+
   constructor(
     id: string,
     time: number,
@@ -90,6 +127,7 @@ export class Keyframe {
     disabled = false,
     blend?: readonly number[],
     wrap = false,
+    freezeLink?: FreezeLink,
   ) {
     this.id = id
     this.time = time
@@ -100,6 +138,7 @@ export class Keyframe {
     this.disabled = disabled
     this.blend = blend ? [...blend] : []
     this.wrap = wrap
+    if (freezeLink) this.freezeLink = { ...freezeLink }
   }
 
   toJSON(): KeyframeJSON {
@@ -112,6 +151,7 @@ export class Keyframe {
       tangentOut: { time: this.tangentOut.time, value: this.tangentOut.value },
       ...(this.blend.length > 0 ? { blend: [...this.blend] } : {}),
       ...(this.wrap ? { wrap: true } : {}),
+      ...(this.freezeLink ? { freezeLink: { ...this.freezeLink } } : {}),
     }
   }
 }
@@ -131,6 +171,7 @@ export interface KeyframeSnapshot {
   readonly disabled?: boolean
   readonly blend?: readonly number[]
   readonly wrap?: boolean
+  readonly freezeLink?: FreezeLink
 }
 
 export function snapshotOf(keyframe: Keyframe): KeyframeSnapshot {
@@ -144,6 +185,7 @@ export function snapshotOf(keyframe: Keyframe): KeyframeSnapshot {
     ...(keyframe.disabled ? { disabled: true } : {}),
     ...(keyframe.blend.length > 0 ? { blend: [...keyframe.blend] } : {}),
     ...(keyframe.wrap ? { wrap: true } : {}),
+    ...(keyframe.freezeLink ? { freezeLink: { ...keyframe.freezeLink } } : {}),
   }
 }
 

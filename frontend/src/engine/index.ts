@@ -194,6 +194,7 @@ export {
   DuplicateKeyframesCommand,
   SetKeyframeInterpolationCommand,
   SetKeyframeTangentsCommand,
+  SetKeyframeFreezeLinkCommand,
   CreateClipCommand,
   DeleteClipCommand,
   RenameClipCommand,

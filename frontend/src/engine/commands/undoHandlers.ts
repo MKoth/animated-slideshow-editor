@@ -708,6 +708,13 @@ export function applyUndo(
               void 0
             }
           }
+          if (kf.freezeLink) {
+            try {
+              engine.setKeyframeFreezeLink(target, kf.keyframeId, { ...kf.freezeLink })
+            } catch {
+              void 0
+            }
+          }
         } catch {
           void 0
         }
@@ -784,6 +791,13 @@ export function applyUndo(
       const keyframeId = inv.keyframeId as string
       const oldWrap = inv.oldWrap as boolean
       engine.setKeyframeWrap(target, keyframeId, oldWrap)
+      return
+    }
+    case 'SetKeyframeFreezeLink': {
+      const target = inv.target as import('../keyframeTarget').KeyframeTarget
+      const keyframeId = inv.keyframeId as string
+      const oldLink = inv.oldFreezeLink as import('../keyframe').FreezeLink | undefined
+      engine.setKeyframeFreezeLink(target, keyframeId, oldLink)
       return
     }
     case 'CreateClip': {
@@ -3386,6 +3400,12 @@ export function applyRedo(
     case 'SetKeyframeDisabled': {
       const targetD = params.target as import('../keyframeTarget').KeyframeTarget
       engine.setKeyframeDisabled(targetD, params.keyframeId as string, params.disabled as boolean)
+      return
+    }
+    case 'SetKeyframeFreezeLink': {
+      const targetL = params.target as import('../keyframeTarget').KeyframeTarget
+      const link = params.freezeLink as import('../keyframe').FreezeLink | undefined
+      engine.setKeyframeFreezeLink(targetL, params.keyframeId as string, link)
       return
     }
     case 'CreateClip': {

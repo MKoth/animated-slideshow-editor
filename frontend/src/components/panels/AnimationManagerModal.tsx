@@ -25,7 +25,17 @@ import {
   rulerTickTimes,
   tickLabel,
 } from '../../stores/timelineViewStore'
-import { executeCollectionFreeze, previewCollectionFreeze } from '../../engine/collectionFreeze'
+import {
+  executeCollectionFreeze,
+  previewCollectionFreeze,
+  buildFreezeFollowCommands,
+  freezeFollowEnvFromEngine,
+} from '../../engine/collectionFreeze'
+import {
+  countLinkedFreezeKeys,
+  deleteCollectionPlacementWithFreeze,
+  freezeDeleteMessage,
+} from '../../app/collectionFreezeDeletion'
 import { ClipCollectionAlignmentEditor } from './ClipCollectionAlignmentEditor'
 import { CollectionSilhouettePreview } from './CollectionSilhouettePreview'
 import { refreshCollectionSilhouettePreviews } from './collectionSilhouetteCache'
@@ -69,7 +79,6 @@ import {
   CopyClipCommand,
   CopyCollectionCommand,
   RemoveClipCommand,
-  DeleteCollectionPlacementCommand,
   SetControlSetCommand,
   UpdateControlIntervalCommand,
   ReorderControlBindingCommand,
@@ -365,12 +374,6 @@ function countClipUses(engine: ReturnType<typeof useEngine>['engine'], clipId: s
     }
   }
   return n
-}
-
-function deletedPlacementMessage(removedLanes: number): string {
-  return removedLanes > 0
-    ? `Deleted collection placement (+${removedLanes} clip lane(s) removed)`
-    : 'Deleted collection placement'
 }
 
 /**
@@ -2223,9 +2226,17 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           void 0
         }
         const pid = selectedPlacementId
-        const result = dispatch(new DeleteCollectionPlacementCommand({ placementId: pid }))
-        if (!result.ok) notify(result.error.message)
-        else notify(deletedPlacementMessage(result.inverse.memberInstances.length))
+        // Hotkey delete is non-destructive toward freeze keys: linked keys are
+        // kept as plain keyframes (use the context menu to delete them too).
+        const linkedCount = countLinkedFreezeKeys(engine, pid)
+        const result = deleteCollectionPlacementWithFreeze(
+          engine,
+          dispatch as never,
+          pid,
+          linkedCount > 0 ? 'orphan' : 'delete',
+        )
+        if (!result.ok) notify(result.error ?? 'Delete failed')
+        else notify(freezeDeleteMessage(result))
         setSelectedPlacementId(null)
         return
       }
@@ -3479,8 +3490,23 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 }),
               )
             }
+            // Linked freeze keys ride the block; occupied destinations are
+            // skipped (never overwritten) and reported.
+            const follow = buildFreezeFollowCommands(
+              freezeFollowEnvFromEngine(engine),
+              current.placementId,
+              () => delta,
+            )
+            for (const cmd of follow.cmds) {
+              cmds.push(cmd as unknown as import('../../engine/commands').Command<unknown>)
+            }
             const tx = new TransactionCommand(cmds as never)
             dispatch(tx)
+            if (follow.skipped > 0) {
+              notify(
+                `${follow.skipped} linked freeze key(s) left behind — destination time occupied, move them manually.`,
+              )
+            }
           } catch (e) {
             notify(e instanceof Error ? e.message : String(e))
           }
@@ -3525,6 +3551,20 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   }),
                 )
               }
+              // Start-linked freezes (first/prefix) ride the left edge.
+              const follow = buildFreezeFollowCommands(
+                freezeFollowEnvFromEngine(engine),
+                current.placementId,
+                (role) => (role === 'last' ? 0 : current.previewStart - current.initialStart),
+              )
+              for (const cmd of follow.cmds) {
+                cmds.push(cmd as unknown as import('../../engine/commands').Command<unknown>)
+              }
+              if (follow.skipped > 0) {
+                notify(
+                  `${follow.skipped} linked freeze key(s) left behind — destination time occupied, move them manually.`,
+                )
+              }
             }
             // Uniform stretch: newSpeed = oldSpeed * oldVisual / newVisual (clamped per member)
             for (const m of members) {
@@ -3550,6 +3590,28 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               }
             }
             if (cmds.length > 0) {
+              // Right-handle stretch: end-linked freezes (last) ride the right edge.
+              if (current.mode === 'collection-resize-right') {
+                const deltaEnd =
+                  current.previewStart +
+                  current.previewVisual -
+                  (current.initialStart + current.initialVisual)
+                if (Math.abs(deltaEnd) > 1e-6) {
+                  const follow = buildFreezeFollowCommands(
+                    freezeFollowEnvFromEngine(engine),
+                    current.placementId,
+                    (role) => (role === 'last' ? deltaEnd : 0),
+                  )
+                  for (const cmd of follow.cmds) {
+                    cmds.push(cmd as unknown as import('../../engine/commands').Command<unknown>)
+                  }
+                  if (follow.skipped > 0) {
+                    notify(
+                      `${follow.skipped} linked freeze key(s) left behind — destination time occupied, move them manually.`,
+                    )
+                  }
+                }
+              }
               const tx = new TransactionCommand(cmds as never)
               dispatch(tx)
             }
@@ -9226,35 +9288,118 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               >
                 Freeze last pose AFTER block
               </button>
-              <button
-                role="menuitem"
-                data-testid="collection-lane-delete"
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '6px 10px',
-                  border: 'none',
-                  background: 'transparent',
-                  cursor: 'pointer',
-                  fontSize: 12,
-                  color: 'var(--color-danger, #c00)',
-                }}
-                onClick={() => {
-                  const pid = collectionPlacementMenu.placementId
-                  const result = dispatch(
-                    new DeleteCollectionPlacementCommand({ placementId: pid }),
+              {(() => {
+                const linkedCount = collectionPlacementMenu
+                  ? countLinkedFreezeKeys(engine, collectionPlacementMenu.placementId)
+                  : 0
+                if (linkedCount === 0) {
+                  return (
+                    <button
+                      role="menuitem"
+                      data-testid="collection-lane-delete"
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '6px 10px',
+                        border: 'none',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        color: 'var(--color-danger, #c00)',
+                      }}
+                      onClick={() => {
+                        const pid = collectionPlacementMenu.placementId
+                        const result = deleteCollectionPlacementWithFreeze(
+                          engine,
+                          dispatch as never,
+                          pid,
+                          'delete',
+                        )
+                        if (!result.ok) notify(result.error ?? 'Delete failed')
+                        else {
+                          notify(freezeDeleteMessage(result))
+                          if (selectedPlacementId === pid) setSelectedPlacementId(null)
+                        }
+                        setCollectionPlacementMenu(null)
+                      }}
+                    >
+                      Delete placement
+                    </button>
                   )
-                  if (!result.ok) notify(result.error.message)
-                  else {
-                    notify(deletedPlacementMessage(result.inverse.memberInstances.length))
-                    if (selectedPlacementId === pid) setSelectedPlacementId(null)
-                  }
-                  setCollectionPlacementMenu(null)
-                }}
-              >
-                Delete placement
-              </button>
+                }
+                return (
+                  <>
+                    <div style={{ fontSize: 10, color: '#888', padding: '4px 10px' }}>
+                      {linkedCount} linked freeze key(s) ride this block. Delete them with it, or
+                      keep them as plain keyframes?
+                    </div>
+                    <button
+                      role="menuitem"
+                      data-testid="collection-lane-delete-with-freeze"
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '6px 10px',
+                        border: 'none',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        color: 'var(--color-danger, #c00)',
+                      }}
+                      onClick={() => {
+                        const pid = collectionPlacementMenu.placementId
+                        const result = deleteCollectionPlacementWithFreeze(
+                          engine,
+                          dispatch as never,
+                          pid,
+                          'delete',
+                        )
+                        if (!result.ok) notify(result.error ?? 'Delete failed')
+                        else {
+                          notify(freezeDeleteMessage(result))
+                          if (selectedPlacementId === pid) setSelectedPlacementId(null)
+                        }
+                        setCollectionPlacementMenu(null)
+                      }}
+                    >
+                      Delete placement + {linkedCount} freeze key(s)
+                    </button>
+                    <button
+                      role="menuitem"
+                      data-testid="collection-lane-delete-keep-freeze"
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '6px 10px',
+                        border: 'none',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                      }}
+                      onClick={() => {
+                        const pid = collectionPlacementMenu.placementId
+                        const result = deleteCollectionPlacementWithFreeze(
+                          engine,
+                          dispatch as never,
+                          pid,
+                          'orphan',
+                        )
+                        if (!result.ok) notify(result.error ?? 'Delete failed')
+                        else {
+                          notify(freezeDeleteMessage(result))
+                          if (selectedPlacementId === pid) setSelectedPlacementId(null)
+                        }
+                        setCollectionPlacementMenu(null)
+                      }}
+                    >
+                      Delete placement, keep freeze keys
+                    </button>
+                  </>
+                )
+              })()}
             </div>
           </>
         )}

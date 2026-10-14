@@ -2,6 +2,7 @@ import { newId } from './ids'
 import type { Keyframe } from './keyframe'
 import {
   Keyframe as KeyframeModel,
+  freezeLinkFromJSON,
   requireKeyframeBlend,
   requireKeyframeInterpolation,
   requireKeyframeTangent,
@@ -1363,6 +1364,7 @@ export function controlTrackKeyframeFromJSON(
       record.disabled === true,
       blend,
       requireKeyframeWrap(record.wrap),
+      freezeLinkFromJSON(record.freezeLink),
     )
   } catch {
     return undefined

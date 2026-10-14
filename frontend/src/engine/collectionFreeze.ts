@@ -4,9 +4,10 @@ import type { Command } from './commands/command'
 import type { UndoStack } from './commands/undoStack'
 import { PasteKeyframesCommand } from './commands/pasteKeyframesCommand'
 import { DeleteKeyframesCommand } from './commands/deleteKeyframesCommand'
+import { MoveKeyframesCommand } from './commands/moveKeyframesCommand'
 import { walkPreOrder } from './sceneNode'
 import type { KeyframeTarget } from './keyframeTarget'
-import type { InterpolationType, Keyframe, KeyframeTangent } from './keyframe'
+import type { FreezeLinkRole, InterpolationType, Keyframe, KeyframeTangent } from './keyframe'
 import { ZERO_TANGENT } from './keyframe'
 import { CLIP_CHANNELS } from './clipDefinition'
 import type { ClipChannel } from './clipDefinition'
@@ -57,6 +58,7 @@ interface PendingWrite {
   interpolation: InterpolationType
   tangentIn: KeyframeTangent
   tangentOut: KeyframeTangent
+  freezeLink: import('./keyframe').FreezeLink
 }
 
 function targetKey(target: KeyframeTarget): string {
@@ -222,6 +224,7 @@ function collectFreezeWrites(
   const writes: PendingWrite[] = []
   const perNode = new Map<string, FreezePreviewEntry & { writeCount: number }>()
   const warnings: string[] = []
+  const edgeRole = plan.source === 'first' ? 'first' : 'last'
   const pushEdge = (
     node: ReturnType<EnginePublic['getNode']>,
     sem: string,
@@ -242,6 +245,7 @@ function collectFreezeWrites(
       interpolation: edge.interpolation,
       tangentIn: { time: edge.tangentIn.time * clipDuration, value: edge.tangentIn.value },
       tangentOut: { time: edge.tangentOut.time * clipDuration, value: edge.tangentOut.value },
+      freezeLink: { placementId: plan.placementId, role: edgeRole },
     })
     const entry = perNode.get(node.id)
     if (entry) entry.writeCount += 1
@@ -296,6 +300,7 @@ function collectFreezeWrites(
       interpolation: 'hold',
       tangentIn: { ...ZERO_TANGENT },
       tangentOut: { ...ZERO_TANGENT },
+      freezeLink: { placementId: plan.placementId, role: 'prefix' },
     })
     prefixCount += 1
     const entry = perNode.get(node.id)
@@ -519,6 +524,7 @@ export function executeCollectionFreeze(
               interpolation: w.interpolation,
               tangentIn: { ...w.tangentIn },
               tangentOut: { ...w.tangentOut },
+              freezeLink: { ...w.freezeLink },
             })),
         },
       }) as unknown as Command<unknown>,
@@ -546,4 +552,120 @@ export function executeCollectionFreeze(
     targetTime: collected.targetTime,
     warnings,
   }
+}
+
+/** Minimal engine surface for shifting linked freeze keys with a placement. */
+export interface FreezeFollowEnv {
+  getFreezeKeyframes(placementId: string): readonly {
+    target: KeyframeTarget
+    keyframe: { id: string; time: number } & Partial<Pick<Keyframe, 'freezeLink'>>
+  }[]
+  getKeyframesOf(target: KeyframeTarget): readonly { id: string; time: number }[]
+  slideDuration: number
+}
+
+export function freezeFollowEnvFromEngine(engine: EnginePublic): FreezeFollowEnv {
+  let duration = Number.POSITIVE_INFINITY
+  try {
+    const active = engine.getActiveSlide()
+    if (active && Number.isFinite(active.duration)) duration = active.duration
+  } catch {
+    // no active slide — leave unclamped
+  }
+  return {
+    getFreezeKeyframes: (placementId) => engine.getFreezeKeyframes(placementId),
+    getKeyframesOf: (target) => engine.getKeyframesOf(target),
+    slideDuration: duration,
+  }
+}
+
+export interface FreezeFollowResult {
+  readonly cmds: MoveKeyframesCommand[]
+  readonly moved: number
+  readonly skipped: number
+}
+
+/**
+ * Build one MoveKeyframesCommand per affected track that shifts the placement's
+ * linked freeze keys. `deltaFor` maps a link role to its time delta: moves pass
+ * the same delta for every role; left-stretch passes the start delta for
+ * `first`/`prefix` and 0 for `last`; right-stretch the reverse.
+ *
+ * Keys whose destination is occupied by a non-moving key are skipped (never
+ * overwritten) and counted — the caller should surface the count.
+ */
+export function buildFreezeFollowCommands(
+  env: FreezeFollowEnv,
+  placementId: string,
+  deltaFor: (role: FreezeLinkRole) => number,
+): FreezeFollowResult {
+  let linked: readonly {
+    target: KeyframeTarget
+    keyframe: { id: string; time: number } & Partial<Pick<Keyframe, 'freezeLink'>>
+  }[]
+  try {
+    linked = env.getFreezeKeyframes(placementId)
+  } catch {
+    return { cmds: [], moved: 0, skipped: 0 }
+  }
+  if (linked.length === 0) return { cmds: [], moved: 0, skipped: 0 }
+  const clamp = (t: number): number => {
+    const rounded = Math.round(t * 1000) / 1000
+    if (!Number.isFinite(env.slideDuration)) return Math.max(0, rounded)
+    return Math.min(Math.max(0, rounded), env.slideDuration)
+  }
+  // Group candidate moves by track so occupancy is checked per lane.
+  const byTrack = new Map<
+    string,
+    { target: KeyframeTarget; moves: { keyframeId: string; newTime: number }[] }
+  >()
+  let skipped = 0
+  const claimNewTime = new Map<string, Set<number>>()
+  for (const { target, keyframe } of linked) {
+    const role = keyframe.freezeLink?.role
+    if (role !== 'first' && role !== 'last' && role !== 'prefix') {
+      skipped += 1
+      continue
+    }
+    const delta = deltaFor(role)
+    if (!Number.isFinite(delta) || Math.abs(delta) <= 1e-9) continue
+    const newTime = clamp(keyframe.time + delta)
+    if (Math.abs(newTime - keyframe.time) <= 1e-9) continue
+    const key = targetKey(target)
+    let occupied: readonly { id: string; time: number }[]
+    try {
+      occupied = env.getKeyframesOf(target)
+    } catch {
+      skipped += 1
+      continue
+    }
+    const movingIds = new Set(linked.map((l) => l.keyframe.id))
+    const blocked =
+      occupied.some((kf) => kf.time === newTime && !movingIds.has(kf.id)) ||
+      (claimNewTime.get(key)?.has(newTime) ?? false)
+    if (blocked) {
+      skipped += 1
+      continue
+    }
+    let group = byTrack.get(key)
+    if (!group) {
+      group = { target, moves: [] }
+      byTrack.set(key, group)
+    }
+    group.moves.push({ keyframeId: keyframe.id, newTime })
+    let claimed = claimNewTime.get(key)
+    if (!claimed) {
+      claimed = new Set<number>()
+      claimNewTime.set(key, claimed)
+    }
+    claimed.add(newTime)
+  }
+  const cmds: MoveKeyframesCommand[] = []
+  let moved = 0
+  for (const group of byTrack.values()) {
+    if (group.moves.length === 0) continue
+    cmds.push(new MoveKeyframesCommand({ target: group.target, moves: group.moves }))
+    moved += group.moves.length
+  }
+  return { cmds, moved, skipped }
 }

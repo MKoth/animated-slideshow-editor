@@ -14,6 +14,7 @@ import { cloneControlSet } from './control'
 export interface CopiedScene {
   readonly scene: Scene
   readonly nodeIds: ReadonlyMap<string, string>
+  readonly placementIds: ReadonlyMap<string, string>
 }
 
 export class SceneManager {
@@ -53,7 +54,7 @@ export class SceneManager {
     }
     const scene = new SceneModel(newId('scene'), root, findNodeById(root, cameraId))
     this.install(scene)
-    return { scene, nodeIds }
+    return { scene, nodeIds, placementIds }
   }
 
   install(scene: Scene): void {

@@ -91,7 +91,7 @@ export class SlideManager {
       throw new Error('No project exists in memory')
     }
     const source = this.get(slideId)
-    const { scene, nodeIds } = this.#scenes.copyScene(source.scene)
+    const { scene, nodeIds, placementIds } = this.#scenes.copyScene(source.scene)
     const duplicatedEffects = source.effects.map((effect) => {
       const common = {
         ...effect,
@@ -170,7 +170,7 @@ export class SlideManager {
       source.name,
       source.duration,
       scene,
-      source.animation.copyFor(nodeIds),
+      source.animation.copyFor(nodeIds, placementIds),
       source.fullscreenShader
         ? {
             shaderDefinitionId: source.fullscreenShader.shaderDefinitionId,

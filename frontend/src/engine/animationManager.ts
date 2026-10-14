@@ -4,7 +4,11 @@ import type { Slide } from './slide'
 import type { Keyframe } from './keyframe'
 import { Keyframe as KeyframeModel, newKeyframeId, ZERO_TANGENT } from './keyframe'
 import type { InterpolationType, KeyframeTangent } from './keyframe'
-import { requireKeyframeInterpolation, requireKeyframeTangent } from './keyframe'
+import {
+  freezeLinkFromJSON,
+  requireKeyframeInterpolation,
+  requireKeyframeTangent,
+} from './keyframe'
 import type { AnimationProperty } from './animationProperties'
 import { requireKeyframeTime } from './animationProperties'
 import { requireFiniteNumber } from './guards'
@@ -51,6 +55,7 @@ export interface PastePayloadKeyframe {
   readonly tangentOut: KeyframeTangent
   readonly blend?: readonly number[]
   readonly wrap?: boolean
+  readonly freezeLink?: import('./keyframe').FreezeLink
 }
 
 export interface PastePayload {
@@ -271,6 +276,24 @@ export class AnimationManager {
     return validated.map((move) => ({ keyframeId: move.keyframeId, oldTime: move.oldTime }))
   }
 
+  /**
+   * Attach or clear the freeze link on one keyframe. Returns the previous link
+   * (for undo). Emits KeyframeMoved so timeline lanes refresh even though the
+   * time is unchanged — the link affects grouping, not evaluation.
+   */
+  setKeyframeFreezeLink(
+    target: KeyframeTarget,
+    keyframeId: string,
+    link: import('./keyframe').FreezeLink | undefined,
+  ): import('./keyframe').FreezeLink | undefined {
+    const resolved = this.#resolve(target)
+    const keyframe = this.#requireKeyframe(resolved, keyframeId)
+    const old = keyframe.freezeLink ? { ...keyframe.freezeLink } : undefined
+    keyframe.freezeLink = link ? { ...link } : undefined
+    this.#bus.emit({ type: 'KeyframeMoved', target, keyframeId })
+    return old
+  }
+
   scaleKeyframes(
     target: KeyframeTarget,
     keyframeIds: readonly string[],
@@ -472,6 +495,7 @@ export class AnimationManager {
         false,
         entry.payload.blend ? [...entry.payload.blend] : [],
         entry.payload.wrap === true,
+        freezeLinkFromJSON(entry.payload.freezeLink),
       )
       if (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex') {
         keyframe.interpolation = 'hold'
@@ -517,6 +541,7 @@ export class AnimationManager {
     const created: Keyframe[] = []
     for (const move of moves) {
       const source = this.#requireKeyframe(resolved, move.keyframeId)
+      // Duplicates are manual copies — never inherit the freeze link.
       const keyframe = new KeyframeModel(
         newKeyframeId(),
         move.newTime,

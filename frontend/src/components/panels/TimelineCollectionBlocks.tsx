@@ -16,7 +16,11 @@ import {
 } from '../../app/collectionLaneActions'
 import { executeCollectionFreeze, previewCollectionFreeze } from '../../engine/collectionFreeze'
 import type { FreezePoseSource } from '../../engine/collectionFreeze'
-import { DeleteCollectionPlacementCommand } from '../../engine/commands'
+import {
+  countLinkedFreezeKeys,
+  deleteCollectionPlacementWithFreeze,
+  freezeDeleteMessage,
+} from '../../app/collectionFreezeDeletion'
 import { ClipCollectionAlignmentEditor } from './ClipCollectionAlignmentEditor'
 
 interface DragState {
@@ -208,9 +212,18 @@ export function TimelineCollectionBlocks({
       setDrag(null)
       if (!cur) return
       const env = collectionLaneEnvFromEngine(engineRef.current)
+      const notifySkipped = (skipped: number) => {
+        if (skipped > 0) {
+          useNotificationStore
+            .getState()
+            .notify(
+              `${skipped} linked freeze key(s) left behind — destination time occupied, move them manually.`,
+            )
+        }
+      }
       try {
         if (cur.mode === 'move') {
-          commitCollectionMove(
+          const res = commitCollectionMove(
             env,
             dispatchRef.current as never,
             cur.placementId,
@@ -218,8 +231,9 @@ export function TimelineCollectionBlocks({
             cur.initialStart,
             { maxStartTime: durationRef.current },
           )
+          notifySkipped(res.freezeSkipped)
         } else if (cur.mode === 'resize-right') {
-          commitCollectionStretch(env, dispatchRef.current as never, {
+          const res = commitCollectionStretch(env, dispatchRef.current as never, {
             placementId: cur.placementId,
             initialStart: cur.initialStart,
             initialVisual: cur.initialVisual,
@@ -227,8 +241,9 @@ export function TimelineCollectionBlocks({
             previewVisual: cur.previewVisual,
             isLeftHandle: false,
           })
+          notifySkipped(res.freezeSkipped)
         } else if (cur.mode === 'resize-left') {
-          commitCollectionStretch(env, dispatchRef.current as never, {
+          const res = commitCollectionStretch(env, dispatchRef.current as never, {
             placementId: cur.placementId,
             initialStart: cur.initialStart,
             initialVisual: cur.initialVisual,
@@ -236,6 +251,7 @@ export function TimelineCollectionBlocks({
             previewVisual: cur.previewVisual,
             isLeftHandle: true,
           })
+          notifySkipped(res.freezeSkipped)
         } else if (cur.mode === 'reorder') {
           if (cur.previewIndex !== cur.initialIndex) {
             commitCollectionReorder(
@@ -507,41 +523,98 @@ export function TimelineCollectionBlocks({
             >
               Freeze last pose AFTER block
             </button>
-            <button
-              role="menuitem"
-              data-testid="timeline-collection-delete"
-              style={{ ...menuItemStyle, color: 'var(--color-danger, #c00)' }}
-              onClick={() => {
-                const id = menu.placementId
-                let name = id.slice(0, 8)
-                try {
-                  const placement = engine.getCollectionPlacement(id)
-                  name = engine.getClipCollection(placement.collectionId).name
-                } catch {
-                  // fall back to short id
-                }
-                setMenu(null)
-                if (!window.confirm(`Delete collection placement "${name}" and its clip lanes?`))
-                  return
-                const result = dispatch(
-                  new DeleteCollectionPlacementCommand({ placementId: id }) as never,
+            {(() => {
+              const linkedCount = menu ? countLinkedFreezeKeys(engine, menu.placementId) : 0
+              if (linkedCount === 0) {
+                return (
+                  <button
+                    role="menuitem"
+                    data-testid="timeline-collection-delete"
+                    style={{ ...menuItemStyle, color: 'var(--color-danger, #c00)' }}
+                    onClick={() => {
+                      const id = menu.placementId
+                      let name = id.slice(0, 8)
+                      try {
+                        const placement = engine.getCollectionPlacement(id)
+                        name = engine.getClipCollection(placement.collectionId).name
+                      } catch {
+                        // fall back to short id
+                      }
+                      setMenu(null)
+                      if (
+                        !window.confirm(`Delete collection placement "${name}" and its clip lanes?`)
+                      )
+                        return
+                      const result = deleteCollectionPlacementWithFreeze(
+                        engine,
+                        dispatch as never,
+                        id,
+                        'delete',
+                      )
+                      if (!result.ok) notify(result.error ?? 'Delete failed')
+                      else {
+                        notify(freezeDeleteMessage(result))
+                        setTick((t) => t + 1)
+                      }
+                    }}
+                  >
+                    Delete placement
+                  </button>
                 )
-                if (!result.ok) notify(result.error.message)
-                else {
-                  const count =
-                    (result.inverse as { memberInstances?: readonly unknown[] }).memberInstances
-                      ?.length ?? 0
-                  notify(
-                    count > 0
-                      ? `Deleted collection placement (+${count} clip lane(s) removed)`
-                      : 'Deleted collection placement',
-                  )
-                  setTick((t) => t + 1)
-                }
-              }}
-            >
-              Delete placement
-            </button>
+              }
+              return (
+                <>
+                  <div style={{ fontSize: 10, color: '#888', padding: '4px 10px' }}>
+                    {linkedCount} linked freeze key(s) ride this block. Delete them with it, or keep
+                    them as plain keyframes?
+                  </div>
+                  <button
+                    role="menuitem"
+                    data-testid="timeline-collection-delete-with-freeze"
+                    style={{ ...menuItemStyle, color: 'var(--color-danger, #c00)' }}
+                    onClick={() => {
+                      const id = menu.placementId
+                      setMenu(null)
+                      const result = deleteCollectionPlacementWithFreeze(
+                        engine,
+                        dispatch as never,
+                        id,
+                        'delete',
+                      )
+                      if (!result.ok) notify(result.error ?? 'Delete failed')
+                      else {
+                        notify(freezeDeleteMessage(result))
+                        setTick((t) => t + 1)
+                      }
+                    }}
+                  >
+                    Delete placement + {linkedCount} freeze key(s)
+                  </button>
+                  <button
+                    role="menuitem"
+                    data-testid="timeline-collection-delete-keep-freeze"
+                    style={menuItemStyle}
+                    onClick={() => {
+                      const id = menu.placementId
+                      setMenu(null)
+                      const result = deleteCollectionPlacementWithFreeze(
+                        engine,
+                        dispatch as never,
+                        id,
+                        'orphan',
+                      )
+                      if (!result.ok) notify(result.error ?? 'Delete failed')
+                      else {
+                        notify(freezeDeleteMessage(result))
+                        setTick((t) => t + 1)
+                      }
+                    }}
+                  >
+                    Delete placement, keep freeze keys
+                  </button>
+                </>
+              )
+            })()}
             <div style={{ fontSize: 10, color: '#888', padding: '4px 10px' }}>
               Freeze first pins the collection&apos;s 0s pose at the block start so it holds before
               the block; freeze last pins the final pose at the block end so it holds after. Add

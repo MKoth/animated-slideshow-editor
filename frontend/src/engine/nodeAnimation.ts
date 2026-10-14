@@ -7,6 +7,7 @@ import {
   requireKeyframeInterpolation,
   requireKeyframeTangent,
   requireKeyframeWrap,
+  freezeLinkFromJSON,
   ZERO_TANGENT,
 } from './keyframe'
 import type {
@@ -248,6 +249,7 @@ export class NodeAnimation {
             undefined,
             kfJson.wrap === true,
           )
+          attachFreezeLink(kf, kfJson)
           this.addShadow(prop, kf)
         } catch {
           continue
@@ -326,6 +328,7 @@ export class NodeAnimation {
             undefined,
             kfJson.wrap === true,
           )
+          attachFreezeLink(kf, kfJson)
           this.addSymmetry(kf)
         } catch {
           continue
@@ -435,6 +438,7 @@ export class NodeAnimation {
             undefined,
             kfJson.wrap === true,
           )
+          attachFreezeLink(kf, kfJson)
           this.addZIndex(kf)
         } catch {
           continue
@@ -616,6 +620,31 @@ export class NodeAnimation {
       copy.#morphBinding = { ...this.#morphBinding }
     }
     return copy
+  }
+
+  /**
+   * Remap freeze links after a slide/scene duplicate minted fresh placement
+   * ids. Links with no entry in the map are stripped — the copy keeps the
+   * keyframes as plain data instead of dangling pointers.
+   */
+  remapFreezeLinks(placementIds: ReadonlyMap<string, string>): void {
+    const remap = (keyframe: Keyframe): void => {
+      const link = keyframe.freezeLink
+      if (!link) return
+      const next = placementIds.get(link.placementId)
+      keyframe.freezeLink = next ? { placementId: next, role: link.role } : undefined
+    }
+    for (const keyframes of this.#tracks.values()) for (const kf of keyframes) remap(kf)
+    for (const keyframes of this.#materialTracks.values()) for (const kf of keyframes) remap(kf)
+    for (const keyframes of this.#dataLabelTracks.values()) for (const kf of keyframes) remap(kf)
+    for (const keyframes of this.#circleTracks.values()) for (const kf of keyframes) remap(kf)
+    for (const keyframes of this.#tableTracks.values()) for (const kf of keyframes) remap(kf)
+    for (const keyframes of this.#shadowTracks.values()) for (const kf of keyframes) remap(kf)
+    for (const keyframes of this.#controlTracks.values()) for (const kf of keyframes) remap(kf)
+    for (const kf of this.#visible) remap(kf)
+    for (const kf of this.#morph) remap(kf)
+    for (const kf of this.#symmetry) remap(kf)
+    for (const kf of this.#zIndex) remap(kf)
   }
 
   toJSON(): PropertyTrackJSON[] {
@@ -1254,7 +1283,38 @@ function copyKeyframe(keyframe: Keyframe): Keyframe {
     !!keyframe.disabled,
     keyframe.blend.length > 0 ? [...keyframe.blend] : [],
     !!keyframe.wrap,
+    keyframe.freezeLink ? { ...keyframe.freezeLink } : undefined,
   )
+}
+
+/** Copy preserving the keyframe id (slide duplicate remaps placement links after). */
+export function copyKeyframePreservingId(keyframe: Keyframe): Keyframe {
+  let value: import('./keyframe').KeyframeValue = keyframe.value
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    value = {
+      ...(value as unknown as Record<string, unknown>),
+    } as unknown as import('./keyframe').KeyframeValue
+  } else if (Array.isArray(value)) {
+    value = [...value] as unknown as import('./keyframe').KeyframeValue
+  }
+  return new KeyframeModel(
+    keyframe.id,
+    keyframe.time,
+    value,
+    keyframe.interpolation,
+    { time: keyframe.tangentIn.time, value: keyframe.tangentIn.value },
+    { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },
+    !!keyframe.disabled,
+    keyframe.blend.length > 0 ? [...keyframe.blend] : [],
+    !!keyframe.wrap,
+    keyframe.freezeLink ? { ...keyframe.freezeLink } : undefined,
+  )
+}
+
+/** Tolerant freeze-link attach for every fromJSON restore path. */
+function attachFreezeLink(keyframe: Keyframe, json: unknown): void {
+  const link = freezeLinkFromJSON((json as Record<string, unknown> | null)?.freezeLink)
+  if (link) keyframe.freezeLink = link
 }
 
 function trackKeyframeParser(
@@ -1294,7 +1354,7 @@ function trackKeyframeParser(
     const tangentOut =
       record.tangentOut === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentOut)
     const wrap = requireKeyframeWrap(record.wrap)
-    return new KeyframeModel(
+    const kf = new KeyframeModel(
       id,
       time,
       value,
@@ -1305,5 +1365,7 @@ function trackKeyframeParser(
       undefined,
       wrap,
     )
+    attachFreezeLink(kf, record)
+    return kf
   }
 }

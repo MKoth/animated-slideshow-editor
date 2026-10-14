@@ -108,14 +108,19 @@ export class SlideAnimation {
     this.#nodes.set(nodeId, animation)
   }
 
-  copyFor(nodeIdMap: ReadonlyMap<string, string>): SlideAnimation {
+  copyFor(
+    nodeIdMap: ReadonlyMap<string, string>,
+    placementIdMap?: ReadonlyMap<string, string>,
+  ): SlideAnimation {
     const copy = new SlideAnimation()
     for (const [nodeId, animation] of this.#nodes) {
       const copiedNodeId = nodeIdMap.get(nodeId)
       if (!copiedNodeId) {
         throw new Error(`No copied node for animation node: ${nodeId}`)
       }
-      copy.#nodes.set(copiedNodeId, animation.copy())
+      const animationCopy = animation.copy()
+      if (placementIdMap) animationCopy.remapFreezeLinks(placementIdMap)
+      copy.#nodes.set(copiedNodeId, animationCopy)
     }
     return copy
   }

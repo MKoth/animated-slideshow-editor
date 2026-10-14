@@ -168,6 +168,11 @@ export type {
 } from './setKeyframeDisabledCommand'
 export { SetKeyframeWrapCommand } from './setKeyframeWrapCommand'
 export type { SetKeyframeWrapInverse, SetKeyframeWrapParameters } from './setKeyframeWrapCommand'
+export { SetKeyframeFreezeLinkCommand } from './setKeyframeFreezeLinkCommand'
+export type {
+  SetKeyframeFreezeLinkInverse,
+  SetKeyframeFreezeLinkParameters,
+} from './setKeyframeFreezeLinkCommand'
 export { CreateClipCommand } from './createClipCommand'
 export { AiAnimationAssetBatchCommand } from './aiAnimationAssetBatchCommand'
 export {

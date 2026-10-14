@@ -1,5 +1,5 @@
 import type { MaterialOverrideValue } from './materialInstance'
-import type { InterpolationType, KeyframeTangent, KeyframeValue } from './keyframe'
+import type { FreezeLinkRole, InterpolationType, KeyframeTangent, KeyframeValue } from './keyframe'
 import type { KeyframeTarget } from './keyframeTarget'
 
 export type MaterialOverrideJSON = MaterialOverrideValue
@@ -203,6 +203,11 @@ export type SceneJSON = {
   readonly nodes: readonly NodeJSON[]
 }
 
+export type FreezeLinkJSON = {
+  readonly placementId: string
+  readonly role: FreezeLinkRole
+}
+
 export type KeyframeJSON = {
   readonly id: string
   readonly time: number
@@ -213,6 +218,7 @@ export type KeyframeJSON = {
   readonly disabled?: boolean
   readonly blend?: readonly number[]
   readonly wrap?: boolean
+  readonly freezeLink?: FreezeLinkJSON
 }
 
 export type ControlTrackJSON = {
