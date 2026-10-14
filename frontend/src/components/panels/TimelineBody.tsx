@@ -69,8 +69,11 @@ import { DeleteKeyframesInRangeModal } from './DeleteKeyframesInRangeModal'
 import type { RangeDeleteSelection } from './DeleteKeyframesInRangeModal'
 import { MoveKeyframesToRangeModal } from './MoveKeyframesToRangeModal'
 import type { RangeMoveSelection } from './MoveKeyframesToRangeModal'
+import { CopyKeyframesToRangeModal } from './CopyKeyframesToRangeModal'
+import type { RangeCopySelection } from './CopyKeyframesToRangeModal'
 import { buildRangeDeleteCommands } from '../../app/deleteKeyframesInRange'
 import { buildRangeMoveCommands } from '../../app/moveKeyframesInRange'
+import { buildRangeCopyCommands } from '../../app/copyKeyframesInRange'
 import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
 import { DeleteOrphansConfirmModal } from './DeleteOrphansConfirmModal'
 import {
@@ -206,6 +209,7 @@ export function TimelineBody({
   const [extraction, setExtraction] = useState<ExtractableKeyframe[] | null>(null)
   const [rangeDeleteNodeId, setRangeDeleteNodeId] = useState<string | null>(null)
   const [rangeMoveNodeId, setRangeMoveNodeId] = useState<string | null>(null)
+  const [rangeCopyNodeId, setRangeCopyNodeId] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{
     keyframes: readonly ExtractableKeyframe[]
     clipId: string
@@ -1249,6 +1253,19 @@ export function TimelineBody({
     }
     const commands = buildRangeMoveCommands(selection.plan)
     // Single undo step: one TransactionCommand wraps every track's moves.
+    const result = dispatchKeyframeCommands(dispatch, commands)
+    if (result && !result.ok) {
+      notify(result.error.message)
+    }
+  }
+
+  const confirmRangeCopy = (selection: RangeCopySelection) => {
+    setRangeCopyNodeId(null)
+    if (selection.plan.length === 0) {
+      return
+    }
+    const commands = buildRangeCopyCommands(selection.plan)
+    // Single undo step: one TransactionCommand wraps every track's pastes.
     const result = dispatchKeyframeCommands(dispatch, commands)
     if (result && !result.ok) {
       notify(result.error.message)
@@ -2592,6 +2609,14 @@ export function TimelineBody({
                 }
               : undefined
           }
+          onCopyInRange={
+            !menu.keyframeId && isObjectHeaderMenu(menu)
+              ? () => {
+                  setRangeCopyNodeId(menu.nodeId)
+                  setMenu(null)
+                }
+              : undefined
+          }
           onAddToClip={addToClipFromMenu}
           onEditMorph={() => {
             const m = menu
@@ -2656,6 +2681,15 @@ export function TimelineBody({
           slideDuration={duration}
           onClose={() => setRangeMoveNodeId(null)}
           onConfirm={confirmRangeMove}
+        />
+      )}
+      {rangeCopyNodeId && (
+        <CopyKeyframesToRangeModal
+          nodeId={rangeCopyNodeId}
+          slideId={slideId}
+          slideDuration={duration}
+          onClose={() => setRangeCopyNodeId(null)}
+          onConfirm={confirmRangeCopy}
         />
       )}
       {morphPicker &&
