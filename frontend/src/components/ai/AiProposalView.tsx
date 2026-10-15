@@ -172,10 +172,14 @@ export function AiProposalDetail({
   proposal,
   fingerprint,
   onDenyFeedback,
+  onDryRunFix,
+  fixDisabled,
 }: {
   proposal: AiProposal
   fingerprint: string
   onDenyFeedback?: (feedback: string) => void
+  onDryRunFix?: (errorText: string) => void
+  fixDisabled?: boolean
 }) {
   const proposalBusy = useAiStore((s) => s.proposalBusy)
   const proposalError = useAiStore((s) => s.proposalError)
@@ -221,6 +225,27 @@ export function AiProposalDetail({
   }, [proposal.commands, engine])
 
   const stale = isStale(proposal.validatedFingerprint, fingerprint)
+  // Fix-and-resubmit errors: dry-run failures plus server-side command
+  // validation — both mean the drafted source needs a corrected block from
+  // the assistant (same append-only pattern as the clip-batch fix button).
+  const fixableErrors = useMemo(() => {
+    const seen = new Set<string>()
+    const collected: string[] = []
+    const dryRunErrors =
+      proposal.dryRun && proposal.dryRun.ok === false ? (proposal.dryRun.errors ?? []) : []
+    const serverErrors =
+      proposal.validation && proposal.validation.ok === false
+        ? (proposal.validation.errors ?? [])
+        : []
+    for (const entry of [...dryRunErrors, ...serverErrors]) {
+      const message = typeof entry?.message === 'string' ? entry.message : ''
+      if (message && !seen.has(message)) {
+        seen.add(message)
+        collected.push(message)
+      }
+    }
+    return collected
+  }, [proposal.dryRun, proposal.validation])
   // A fresh draft has no validation yet — that is not project drift, so it
   // gets its own notice instead of the stale warning.
   const neverValidated = proposal.validatedFingerprint == null
@@ -500,6 +525,18 @@ export function AiProposalDetail({
               {e.message}
             </div>
           ))}
+        </div>
+      )}
+      {fixableErrors.length > 0 && onDryRunFix && (
+        <div data-testid="ai-proposal-fix-row">
+          <button
+            type="button"
+            data-testid={`ai-proposal-fix-${proposal.id}`}
+            disabled={proposalBusy || fixDisabled}
+            onClick={() => onDryRunFix(fixableErrors.join('\n'))}
+          >
+            Send fix to assistant
+          </button>
         </div>
       )}
       {proposalError && (

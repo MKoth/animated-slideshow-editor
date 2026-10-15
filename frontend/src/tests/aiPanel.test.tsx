@@ -162,8 +162,8 @@ describe('AiPanel foundation', () => {
     const stamp = new Date().toISOString()
     await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled())
     const seeded = [
-      { id: 'c-col', projectId, title: 'Walk batch', mode: 'collection', modified: stamp },
-      { id: 'c-anim', projectId, title: 'Cat walk', mode: 'animation', modified: stamp },
+      { id: 'c-col', projectId, title: 'Walk batch', mode: 'collection' as const, modified: stamp },
+      { id: 'c-anim', projectId, title: 'Cat walk', mode: 'animation' as const, modified: stamp },
     ]
     mockFetchConversations(seeded)
     useAiStore.setState({

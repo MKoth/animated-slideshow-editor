@@ -640,4 +640,146 @@ describe('AiPanel instant shape draft', () => {
     expect(within(card).getByTestId('ai-animation-asset-preview')).toBeInTheDocument()
     expect(within(card).getByTestId('ai-proposal-approve-and-apply')).toBeInTheDocument()
   })
+
+  describe('AiPanel proposal dry-run fix-and-resubmit', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', vi.fn())
+      useAiStore.setState({
+        conversations: [],
+        messagesById: {},
+        activeByProject: {},
+        drafts: {},
+        search: '',
+        panelOpen: true,
+        assistantMode: 'animation',
+        settingsOpen: false,
+        status: 'idle',
+        streamingConversationId: null,
+        streamingContent: '',
+        lastError: null,
+        proposals: [],
+        proposalById: {},
+        activeProposalId: null,
+      })
+      useBackendStore.setState({ status: 'available' })
+    })
+
+    function renderScriptPanel() {
+      const engine = createEngineInternal()
+      engine.createProject({ name: 'Demo' })
+      const slide = engine.createSlide('Room')
+      engine.createNode(slide.scene.id, slide.scene.root.id, 'cat')
+      const projectId = engine.project?.id ?? 'p-1'
+      const scriptMessage: AiMessage = {
+        id: 'm-script',
+        role: 'assistant',
+        content: [
+          '## Script',
+          '',
+          '```engine-command',
+          'slide: Room',
+          'script "Cat performance" from 0',
+          'jump from top to middle',
+          '```',
+        ].join('\n'),
+        stopped: false,
+        errorCode: null,
+        created: now(),
+      }
+      const dryRunMessage =
+        'command #0 (AiRunAnimationScript) failed dry-run validate at position 0: ' +
+        'Expected ".", found "jump" Fix it and re-validate before anything executes.'
+      const proposal = {
+        id: 'prop-script',
+        projectId,
+        conversationId: 'c-1',
+        messageId: 'm-script',
+        title: 'Cat performance',
+        status: 'draft',
+        commands: [{ type: 'AiRunAnimationScript', slideId: slide.id, source: 'jump from top' }],
+        validation: { ok: true, errors: [] },
+        baseFingerprint: 'fp-base',
+        validatedFingerprint: null,
+        dryRun: {
+          ok: false,
+          errors: [{ index: 0, type: 'AiRunAnimationScript', message: dryRunMessage }],
+        },
+        selectedIndexes: [],
+        executions: [],
+        created: now(),
+        modified: now(),
+      }
+      const seen: { chatBodies: unknown[] } = { chatBodies: [] }
+      vi.mocked(fetch).mockImplementation(async (url: unknown, init?: unknown) => {
+        const path = String(url)
+        const method = (init as RequestInit | undefined)?.method ?? 'GET'
+        if (method === 'POST' && path === '/api/ai/chat') {
+          seen.chatBodies.push(JSON.parse(String((init as RequestInit)?.body ?? '{}')))
+          return new Response('event: done\ndata: {"content":"fixed"}\n\n', { status: 200 })
+        }
+        if (path.includes('/api/ai/proposals'))
+          return new Response(JSON.stringify([proposal]), { status: 200 })
+        if (path.includes('/api/ai/conversations?'))
+          return new Response(
+            JSON.stringify([
+              { id: 'c-1', projectId, title: 'Chat', mode: 'animation', modified: now() },
+            ]),
+            { status: 200 },
+          )
+        if (path.endsWith('/messages'))
+          return new Response(JSON.stringify([userMessage, scriptMessage]), { status: 200 })
+        return new Response(JSON.stringify([]), { status: 200 })
+      })
+      useAiStore.setState({
+        conversations: [
+          { id: 'c-1', projectId, title: 'Chat', mode: 'animation', modified: now() },
+        ],
+        messagesById: { 'c-1': [userMessage, scriptMessage] },
+        activeByProject: { [`${projectId}:animation`]: 'c-1' },
+        proposals: [proposal as never],
+        proposalById: { 'prop-script': proposal as never },
+        activeProposalId: null,
+      })
+      const undoStack = new UndoStack()
+      const dispatcher = new CommandDispatcher(engine, undoStack, () => undefined)
+      const value: EngineContextValue = {
+        engine: toReadOnly(engine),
+        undoStack,
+        dispatch: (command) => dispatcher.dispatch(command),
+        persistence: {
+          save: vi.fn(),
+          onCommandSucceeded: () => undefined,
+          dispose: () => undefined,
+        },
+      }
+      render(
+        <EngineContext.Provider value={value}>
+          <AiPanel />
+        </EngineContext.Provider>,
+      )
+      return { seen, dryRunMessage }
+    }
+
+    it('shows Send fix to assistant on a failed animation-script dry-run and resubmits the error', async () => {
+      const { seen, dryRunMessage } = renderScriptPanel()
+      const user = userEvent.setup()
+      const card = await screen.findByTestId('ai-message-proposal-prop-script')
+      expect(card).toHaveTextContent('Expected "."')
+      const fixButton = await within(card).findByTestId('ai-proposal-fix-prop-script')
+      expect(fixButton).toHaveTextContent('Send fix to assistant')
+      await user.click(fixButton)
+      // Fix resubmits the validator failure as a new message carrying the
+      // error plus the member-call repair vocabulary (history appends).
+      await vi.waitFor(() => expect(seen.chatBodies).toHaveLength(1))
+      const sent = String((seen.chatBodies[0] as { message?: unknown }).message ?? '')
+      expect(sent).toContain('prop-script')
+      expect(sent).toContain(dryRunMessage)
+      expect(sent).toMatch(/engine-command/)
+      expect(sent).toMatch(/member call/)
+      // The failed source travels with the fix — the assistant never sees
+      // proposals, so a bare proposal id would be unresolvable.
+      expect(sent).toContain('Failed source')
+      expect(sent).toContain('jump from top')
+    })
+  })
 })

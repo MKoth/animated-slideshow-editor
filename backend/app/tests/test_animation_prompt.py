@@ -31,6 +31,28 @@ def test_animation_prompt_preserves_full_conversation_requirements() -> None:
     assert prompt.startswith(DEFAULT_ANIMATION_SYSTEM_PROMPT.lower())
 
 
+def test_animation_prompt_teaches_member_call_syntax() -> None:
+    prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "animation")
+
+    # Exact bind forms for all three resource kinds, by exact name.
+    assert 'bind cat = node("Cat")' in prompt
+    assert "bind wave = clip(" in prompt
+    assert "bind moves = collection(" in prompt
+    # Member calls with a dot — the only legal action lines.
+    assert "cat.play(wave)" in prompt
+    assert "cat.apply(moves)" in prompt
+    assert "cat.tween(" in prompt
+    # Bare prose verbs are named only to forbid them.
+    assert "`jump`" in prompt
+    assert "compile errors, never methods" in prompt
+    # Stages point at the split assistants, not the legacy Lesson tab.
+    assert "Scenario, Audio, and Blackboard assistants" in prompt
+    assert "Lesson assistant" not in prompt
+    # Repair mode: a validation-failure turn carries its own specification.
+    assert "failed source quoted in that message is the specification" in prompt
+    assert "never re-ask for node, clip, or collection" in prompt
+
+
 def test_animation_coverage_rules_also_apply_to_custom_prompts() -> None:
     prompt = _system_prompt_for_mode("Custom animation guidance", "animation")
 

@@ -435,6 +435,96 @@ export function AiPanel() {
     )
   }
 
+  // Same pattern for a broken ```engine-command block: the local draft could
+  // not be built (unresolvable slide, untranspilable legacy) so the assistant
+  // re-emits the block corrected. Animation Script statements are always
+  // member calls on a bound alias — never a bare verb.
+  const handleFixScript = (messageId: string) => {
+    if (!projectId || !activeId || isStreaming || unavailable) return
+    const err = draftErrorByMessage[messageId] ?? 'unknown drafting error'
+    clearDraftError(messageId)
+    void store.sendMessage(
+      projectId,
+      activeId,
+      `The animation script in your previous message failed to draft: ${err}\n\n` +
+        `Fix the \`\`\`engine-command block and reply with a corrected block (same beats, corrected). ` +
+        `Start with \`script "Name" from <seconds>\`, then \`bind alias = node("Exact Node Name")\` and ` +
+        `\`bind m = collection("Exact Collection Name")\` for reusable motion. ` +
+        `Every action line must be a member call on a bound alias with a dot — ` +
+        `alias.tween({ x, y }, duration), alias.play(clipAlias, { at, duration }), ` +
+        `alias.apply(collectionAlias, { at }) — never a bare verb like \`jump\` or \`walk\`, never prose. ` +
+        `Resolve the slide: header line first, then the source lines. ` +
+        `Do not claim anything was created.`,
+      context,
+      normalizeAiMode(assistantMode),
+    )
+  }
+
+  // Same pattern for a broken ```shape-step block.
+  const handleFixShape = (messageId: string) => {
+    if (!projectId || !activeId || isStreaming || unavailable) return
+    const err = draftErrorByMessage[messageId] ?? 'unknown drafting error'
+    clearDraftError(messageId)
+    void store.sendMessage(
+      projectId,
+      activeId,
+      `The shape step in your previous message failed to draft: ${err}\n\n` +
+        `Fix the \`\`\`shape-step block and reply with a corrected block (same step, corrected). ` +
+        `Use key: value lines — action: create|update|delete, node: <target node id or exact name>, ` +
+        `plus source: <source shape id or name> and name: <new shape name> for create. ` +
+        `The target node must have mesh Shapes; never invent coordinates. ` +
+        `Do not claim anything was created.`,
+      context,
+      normalizeAiMode(assistantMode),
+    )
+  }
+
+  // Fix-and-resubmit for dry-run / server validation failures on an already
+  // drafted proposal (e.g. AiRunAnimationScript source with pseudo-syntax).
+  // Sends the validator error plus the failed source back — the assistant
+  // cannot see proposals, only chat history, so a bare proposal id is an
+  // unresolvable pointer. The fix arrives as a new message; the broken
+  // proposal stays for the record.
+  const handleFixProposal = (proposalId: string, errorText: string) => {
+    if (!projectId || !activeId || isStreaming || unavailable) return
+    const err = errorText.trim() || 'unknown validation error'
+    const proposal = useAiStore.getState().proposals.find((p) => p.id === proposalId)
+    const scriptCommand = proposal?.commands.find(
+      (c) => c.type === 'AiRunAnimationScript' || c.type === 'SetSlideAnimationScript',
+    )
+    const rawSource =
+      scriptCommand && typeof scriptCommand.source === 'string' ? scriptCommand.source : ''
+    const slideId =
+      scriptCommand && typeof scriptCommand.slideId === 'string' ? scriptCommand.slideId : ''
+    const slideName = context.slides.find((s) => s.id === slideId)?.name ?? slideId
+    const source = rawSource.length > 3000 ? `${rawSource.slice(0, 3000)}\n…[truncated]` : rawSource
+    const repair =
+      mode === 'blackboard'
+        ? `Fix the failed board source below and reply with a corrected \`\`\`engine-command block (same beats, corrected). ` +
+          `Start with \`script "Name" from 0\`, then \`mark("part-N")\`, \`create text/table/image ... as alias\`, ` +
+          `\`reveal(alias)\` / \`mark(alias)\` / \`wipe(alias)\` member calls with a dot — never a bare verb, never prose. ` +
+          `Do not re-ask for names or timings already in this conversation or the context snapshot. ` +
+          `Do not claim anything was created.`
+        : `Fix the failed source below and reply with a corrected \`\`\`engine-command block (same beats, corrected). ` +
+          `Start with \`script "Name" from <seconds>\`, then \`bind alias = node("Exact Node Name")\` and ` +
+          `\`bind m = collection("Exact Collection Name")\` for reusable motion. ` +
+          `Every action line must be a member call on a bound alias with a dot — ` +
+          `alias.tween({ x, y }, duration), alias.play(clipAlias, { at, duration }), ` +
+          `alias.apply(collectionAlias, { at }) — never a bare verb like \`jump\` or \`walk\`, never prose. ` +
+          `Do not re-ask for names, timings, or positions already in this conversation or the context snapshot. ` +
+          `Do not claim anything was created.`
+    const failed = source
+      ? `Failed source (slide "${slideName || 'unknown'}", keep the same beats — fix this source, do not redesign):\n${source}\n\n`
+      : ''
+    void store.sendMessage(
+      projectId,
+      activeId,
+      `Proposal ${proposalId} failed validation: ${err}\n\n${failed}${repair}`,
+      context,
+      normalizeAiMode(assistantMode),
+    )
+  }
+
   if (!panelOpen) return null
 
   return (
@@ -745,6 +835,8 @@ export function AiPanel() {
                           <AiProposalDetail
                             proposal={proposal}
                             fingerprint={fingerprint}
+                            fixDisabled={isStreaming || unavailable}
+                            onDryRunFix={(errorText) => handleFixProposal(proposal.id, errorText)}
                             onDenyFeedback={(feedback) => {
                               if (!projectId || !activeId) return
                               void store.sendMessage(
@@ -826,7 +918,7 @@ export function AiPanel() {
                       {draftErrorByMessage[message.id] && (
                         <div data-testid={`ai-message-draft-error-${message.id}`}>
                           {draftErrorByMessage[message.id]}
-                          {clipBatch && (
+                          {clipBatch ? (
                             <button
                               data-testid={`ai-message-fix-batch-${message.id}`}
                               disabled={isStreaming || unavailable}
@@ -834,7 +926,23 @@ export function AiPanel() {
                             >
                               Send fix to assistant
                             </button>
-                          )}
+                          ) : shapeStep ? (
+                            <button
+                              data-testid={`ai-message-fix-shape-${message.id}`}
+                              disabled={isStreaming || unavailable}
+                              onClick={() => handleFixShape(message.id)}
+                            >
+                              Send fix to assistant
+                            </button>
+                          ) : scriptBlock ? (
+                            <button
+                              data-testid={`ai-message-fix-script-${message.id}`}
+                              disabled={isStreaming || unavailable}
+                              onClick={() => handleFixScript(message.id)}
+                            >
+                              Send fix to assistant
+                            </button>
+                          ) : null}
                         </div>
                       )}
                     </>
@@ -971,6 +1079,8 @@ export function AiPanel() {
               modal={proposalModal}
               onClose={() => setProposalModal(null)}
               onCreated={(proposalId) => setProposalModal({ mode: 'review', proposalId })}
+              fixDisabled={isStreaming || unavailable}
+              onDryRunFix={(proposalId, errorText) => handleFixProposal(proposalId, errorText)}
             />
           )}
         </>

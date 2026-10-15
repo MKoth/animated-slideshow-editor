@@ -16,6 +16,8 @@ interface AiProposalModalProps {
   modal: ProposalModalState
   onClose: () => void
   onCreated?: (proposalId: string) => void
+  onDryRunFix?: (proposalId: string, errorText: string) => void
+  fixDisabled?: boolean
 }
 
 /**
@@ -30,6 +32,8 @@ export function AiProposalModal({
   modal,
   onClose,
   onCreated,
+  onDryRunFix,
+  fixDisabled,
 }: AiProposalModalProps) {
   const { engine } = useEngine()
   const fingerprint = useFingerprint(engine)
@@ -84,6 +88,10 @@ export function AiProposalModal({
               key={`${proposal.id}-${proposal.modified}`}
               proposal={proposal}
               fingerprint={fingerprint}
+              fixDisabled={fixDisabled}
+              onDryRunFix={
+                onDryRunFix ? (errorText) => onDryRunFix(proposal.id, errorText) : undefined
+              }
             />
           ) : (
             <div data-testid="ai-proposal-modal-missing">
