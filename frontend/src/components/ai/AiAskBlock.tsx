@@ -50,33 +50,48 @@ export function AiAskBlock({ block, messageId, disabled, onAnswer }: AiAskBlockP
     onAnswer(formatAskAnswer(block, effectiveSelected, customInput))
   }
 
+  const kindLabel =
+    block.kind === 'single' ? 'Single choice' : block.kind === 'multi' ? 'Multiple' : 'Text'
+
   return (
     <div className="ai-ask" data-testid={base}>
-      <div className="ai-ask__question">{block.question}</div>
+      <div className="ai-ask__header">
+        <div className="ai-ask__question">{block.question}</div>
+        <span className="ai-ask__kind">{kindLabel}</span>
+      </div>
       {block.kind === 'single' && (
-        <div role="radiogroup" aria-label={block.question}>
-          {block.options.map((option) => (
-            <label key={option.id}>
-              <input
-                type="radio"
-                name={base}
-                data-testid={`${base}-option-${option.id}`}
-                checked={!customSelected && selected[0] === option.id}
-                disabled={disabled}
-                onChange={() => {
-                  setCustomSelected(false)
-                  setSelected([option.id])
-                }}
-              />
-              {option.label}
-              {option.detail && <span className="ai-ask__detail"> — {option.detail}</span>}
-            </label>
-          ))}
+        <div className="ai-ask__options" role="radiogroup" aria-label={block.question}>
+          {block.options.map((option) => {
+            const checked = !customSelected && selected[0] === option.id
+            return (
+              <label key={option.id} className={`ai-ask__option${checked ? ' is-selected' : ''}`}>
+                <input
+                  type="radio"
+                  name={base}
+                  className="ai-ask__check"
+                  data-testid={`${base}-option-${option.id}`}
+                  checked={checked}
+                  disabled={disabled}
+                  onChange={() => {
+                    setCustomSelected(false)
+                    setSelected([option.id])
+                  }}
+                />
+                <span className="ai-ask__option-body">
+                  <span className="ai-ask__label">{option.label}</span>
+                  {option.detail && <span className="ai-ask__detail">{option.detail}</span>}
+                </span>
+              </label>
+            )
+          })}
           {block.allowCustom && (
-            <label>
+            <label
+              className={`ai-ask__option ai-ask__option--custom${customSelected ? ' is-selected' : ''}`}
+            >
               <input
                 type="radio"
                 name={base}
+                className="ai-ask__check"
                 data-testid={`${base}-option-custom`}
                 checked={customSelected}
                 disabled={disabled}
@@ -85,65 +100,81 @@ export function AiAskBlock({ block, messageId, disabled, onAnswer }: AiAskBlockP
                   setSelected([])
                 }}
               />
-              Custom
-              <input
-                type="text"
-                data-testid={`${base}-custom`}
-                value={customText}
-                disabled={disabled}
-                placeholder="Type your own answer"
-                onChange={(e) => {
-                  setCustomText(e.target.value)
-                  setCustomSelected(true)
-                  setSelected([])
-                }}
-              />
+              <span className="ai-ask__option-body">
+                <span className="ai-ask__label">Custom</span>
+                <input
+                  type="text"
+                  className="ai-ask__custom-input"
+                  data-testid={`${base}-custom`}
+                  value={customText}
+                  disabled={disabled}
+                  placeholder="Type your own answer"
+                  onChange={(e) => {
+                    setCustomText(e.target.value)
+                    setCustomSelected(true)
+                    setSelected([])
+                  }}
+                />
+              </span>
             </label>
           )}
         </div>
       )}
       {block.kind === 'multi' && (
-        <div>
-          {block.options.map((option) => (
-            <label key={option.id}>
-              <input
-                type="checkbox"
-                data-testid={`${base}-option-${option.id}`}
-                checked={selected.includes(option.id)}
-                disabled={disabled}
-                onChange={() => toggleMulti(option.id)}
-              />
-              {option.label}
-              {option.detail && <span className="ai-ask__detail"> — {option.detail}</span>}
-            </label>
-          ))}
+        <div className="ai-ask__options">
+          {block.options.map((option) => {
+            const checked = selected.includes(option.id)
+            return (
+              <label key={option.id} className={`ai-ask__option${checked ? ' is-selected' : ''}`}>
+                <input
+                  type="checkbox"
+                  className="ai-ask__check"
+                  data-testid={`${base}-option-${option.id}`}
+                  checked={checked}
+                  disabled={disabled}
+                  onChange={() => toggleMulti(option.id)}
+                />
+                <span className="ai-ask__option-body">
+                  <span className="ai-ask__label">{option.label}</span>
+                  {option.detail && <span className="ai-ask__detail">{option.detail}</span>}
+                </span>
+              </label>
+            )
+          })}
           {block.allowCustom && (
-            <label>
+            <label
+              className={`ai-ask__option ai-ask__option--custom${customSelected ? ' is-selected' : ''}`}
+            >
               <input
                 type="checkbox"
+                className="ai-ask__check"
                 data-testid={`${base}-option-custom`}
                 checked={customSelected}
                 disabled={disabled}
                 onChange={(e) => setCustomSelected(e.target.checked)}
               />
-              Custom
-              <input
-                type="text"
-                data-testid={`${base}-custom`}
-                value={customText}
-                disabled={disabled}
-                placeholder="Type your own answer"
-                onChange={(e) => {
-                  setCustomText(e.target.value)
-                  if (e.target.value.trim()) setCustomSelected(true)
-                }}
-              />
+              <span className="ai-ask__option-body">
+                <span className="ai-ask__label">Custom</span>
+                <input
+                  type="text"
+                  className="ai-ask__custom-input"
+                  data-testid={`${base}-custom`}
+                  value={customText}
+                  disabled={disabled}
+                  placeholder="Type your own answer"
+                  onChange={(e) => {
+                    setCustomText(e.target.value)
+                    if (e.target.value.trim()) setCustomSelected(true)
+                  }}
+                />
+              </span>
             </label>
           )}
         </div>
       )}
       {block.kind === 'text' && (
         <textarea
+          className="ai-ask__text"
           data-testid={`${base}-text`}
           value={freeText}
           disabled={disabled}
@@ -151,9 +182,16 @@ export function AiAskBlock({ block, messageId, disabled, onAnswer }: AiAskBlockP
           onChange={(e) => setFreeText(e.target.value)}
         />
       )}
-      <button data-testid={`${base}-answer`} disabled={submitDisabled} onClick={handleAnswer}>
-        Answer
-      </button>
+      <div className="ai-ask__footer">
+        <button
+          className="ai-ask__answer"
+          data-testid={`${base}-answer`}
+          disabled={submitDisabled}
+          onClick={handleAnswer}
+        >
+          Answer
+        </button>
+      </div>
     </div>
   )
 }
