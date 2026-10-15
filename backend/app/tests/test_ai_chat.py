@@ -258,12 +258,15 @@ def test_chat_injects_linked_histories_from_other_modes(
         "/api/ai/conversations", json={"projectId": "p-1", "mode": "scenario"}
     ).json()
     assert scenario["mode"] == "scenario"
-    audio = client.post(
-        "/api/ai/conversations", json={"projectId": "p-1", "mode": "audio"}
-    ).json()
+    audio = client.post("/api/ai/conversations", json={"projectId": "p-1", "mode": "audio"}).json()
     client.post(
         "/api/ai/chat",
-        json={"conversationId": scenario["id"], "message": "teach cats", "mode": "send", "context": {}},
+        json={
+            "conversationId": scenario["id"],
+            "message": "teach cats",
+            "mode": "send",
+            "context": {},
+        },
     )
     r = client.post(
         "/api/ai/chat",

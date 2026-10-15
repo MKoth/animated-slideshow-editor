@@ -198,3 +198,17 @@ def test_proposal_asset_instructions_are_mode_scoped() -> None:
     assert '"operations"' in collection
     assert '"kind": "upsertClip"' in collection
     assert '"kind": "upsertCollection"' in collection
+
+
+def test_every_mode_prompt_teaches_ask_blocks() -> None:
+    for mode in ("scenario", "audio", "blackboard", "animation", "shape", "collection"):
+        prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, mode)
+        assert "```ask" in prompt, mode
+        assert "kind: single|multi|text" in prompt, mode
+        assert "allowCustom" in prompt, mode
+        assert "one block per question" in prompt, mode
+
+
+def test_animation_ask_blocks_keep_two_phase_policy() -> None:
+    assert "## Open questions" in DEFAULT_ANIMATION_SYSTEM_PROMPT
+    assert "instead of prose bullets" in DEFAULT_ANIMATION_SYSTEM_PROMPT

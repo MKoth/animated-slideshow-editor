@@ -4,6 +4,7 @@ import { animationAssetsFromConversationProposals } from '../../ai/animationAsse
 import { AiMarkdown } from '../../ai/markdown'
 import { extractLegacyScriptBlock, transpileLegacyScript } from '../../ai/legacyScript'
 import { extractScriptBlock, resolveScriptSlideId } from '../../ai/scriptBlock'
+import { extractAskBlocks } from '../../ai/askBlock'
 import { buildShapeStepOperation, extractShapeStepBlock } from '../../ai/shapeStep'
 import { buildClipBatchOperations, extractClipBatchBlock } from '../../ai/clipBatch'
 import { useFingerprint } from '../../ai/proposalFingerprint'
@@ -18,6 +19,7 @@ import { AiProposalModal, type ProposalModalState } from './AiProposalModal'
 import { AiProposalDetail } from './AiProposalView'
 import { AiAnimationView } from './AiAnimationView'
 import { AiBoardView } from './AiBoardView'
+import { AiAskBlock } from './AiAskBlock'
 import { AiCalibrationView } from './AiCalibrationView'
 import { AiNarrationView } from './AiNarrationView'
 import { AiReconciliationView } from './AiReconciliationView'
@@ -525,6 +527,14 @@ export function AiPanel() {
     )
   }
 
+  // Ask-block answers: appends ONE user message via the normal send path
+  // (history stays append-only) — the assistant replies with the next step.
+  const handleAnswerAsk = (text: string) => {
+    if (!projectId || !activeId || isStreaming || unavailable) return
+    if (!text.trim()) return
+    void store.sendMessage(projectId, activeId, text, context, normalizeAiMode(assistantMode))
+  }
+
   if (!panelOpen) return null
 
   return (
@@ -798,6 +808,8 @@ export function AiPanel() {
                 message.role === 'assistant' && !scriptBlock && !shapeStep
                   ? extractClipBatchBlock(message.content)
                   : null
+              const askBlocks =
+                message.role === 'assistant' ? extractAskBlocks(message.content) : []
               return (
                 <div
                   key={message.id}
@@ -815,6 +827,15 @@ export function AiPanel() {
                       (stopped — partial response kept)
                     </div>
                   )}
+                  {askBlocks.map((block, index) => (
+                    <AiAskBlock
+                      key={`${block.id}-${index}`}
+                      block={block}
+                      messageId={message.id}
+                      disabled={isStreaming || unavailable}
+                      onAnswer={handleAnswerAsk}
+                    />
+                  ))}
                   {message.errorCode && (
                     <div data-testid={`ai-error-${message.id}`}>
                       {message.content}
