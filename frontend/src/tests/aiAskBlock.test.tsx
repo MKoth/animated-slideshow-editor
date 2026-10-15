@@ -81,6 +81,49 @@ describe('extractAskBlocks', () => {
     expect(blocks[1]?.options).toHaveLength(0)
   })
 
+  it('parses compact single-line options separated by slashes or pipes', () => {
+    const slash = [
+      '```ask',
+      'id: start-spot',
+      'question: Start lying on sofa top?',
+      'kind: single',
+      'options:',
+      '- id: sofa/label: Sofa/detail: Top of sofa',
+      '- id: floor/label: Floor/detail: Start on floor',
+      'allowCustom: true',
+      '```',
+    ].join('\n')
+    const blocks = extractAskBlocks(slash)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]?.options).toHaveLength(2)
+    expect(blocks[0]?.options[0]).toMatchObject({
+      id: 'sofa',
+      label: 'Sofa',
+      detail: 'Top of sofa',
+    })
+    expect(blocks[0]?.options[1]).toMatchObject({
+      id: 'floor',
+      label: 'Floor',
+      detail: 'Start on floor',
+    })
+
+    const pipe = [
+      '```ask',
+      'id: jump-walk',
+      'question: Jump mid-sofa then floor then walk to blackboard?',
+      'kind: single',
+      'options:',
+      '- id: yes | label: Yes | detail: Two-stage jump then frontal walk',
+      '- id: adjust | label: Adjust | detail: Specify spots',
+      'allowCustom: true',
+      '```',
+    ].join('\n')
+    const piped = extractAskBlocks(pipe)
+    expect(piped).toHaveLength(1)
+    expect(piped[0]?.options).toHaveLength(2)
+    expect(piped[0]?.options[0]).toMatchObject({ id: 'yes', label: 'Yes' })
+  })
+
   it('ignores malformed blocks but keeps the well-formed ones', () => {
     expect(extractAskBlocks('## Open questions\n- yawn in or silent?')).toEqual([])
     expect(extractAskBlocks('```typescript\nconst x = 1\n```')).toEqual([])

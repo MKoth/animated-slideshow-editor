@@ -60,6 +60,32 @@ interface DraftOption {
   detail: string | null
 }
 
+/**
+ * Parses one `- ...` line inside `options:`. Supports both the canonical
+ * multi-line form (`- id: x` followed by `label:`/`detail:` lines) and the
+ * compact single-line form models often emit (`- id: x / label: Y / detail: Z`,
+ * with `/`, `|`, or `,` separators). Returns null when the line carries no
+ * option id. A returned option may still miss its label/detail — those can
+ * arrive on the following lines.
+ */
+function parseOptionLine(content: string): DraftOption | null {
+  const keyRe = /(id|label|detail)\s*[:=]\s*/gi
+  const hits = [...content.matchAll(keyRe)]
+  if (hits.length === 0) return null
+  const values: Record<string, string> = {}
+  for (let i = 0; i < hits.length; i += 1) {
+    const hit = hits[i]!
+    const key = hit[1]!.toLowerCase()
+    const start = (hit.index ?? 0) + hit[0].length
+    const end = i + 1 < hits.length ? (hits[i + 1]!.index ?? content.length) : content.length
+    const cleaned = clean(content.slice(start, end).replace(/[\s|/,;]+$/, ''))
+    if (cleaned && values[key] === undefined) values[key] = cleaned
+  }
+  const optionId = values.id
+  if (!optionId) return null
+  return { id: optionId, label: values.label ?? null, detail: values.detail ?? null }
+}
+
 /** Parse one ```ask body; returns null when the block is malformed. */
 function parseBlock(body: string): AskBlock | null {
   let id: string | null = null
@@ -83,15 +109,10 @@ function parseBlock(body: string): AskBlock | null {
   for (const line of body.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) continue
-    const item = /^-+\s*id\s*[:=]\s*(.+?)\s*$/.exec(trimmed)
-    if (item?.[1] && inOptions) {
+    if (/^[-*]\s*/.test(trimmed) && inOptions) {
+      const inline = parseOptionLine(trimmed.replace(/^[-*]\s*/, ''))
       flush()
-      const optionId = clean(item[1])
-      if (!optionId) {
-        current = null
-        continue
-      }
-      current = { id: optionId, label: null, detail: null }
+      current = inline
       continue
     }
     const field = /^\s*([A-Za-z][A-Za-z_-]*)\s*[:=]\s*(.*)?\s*$/.exec(line)
