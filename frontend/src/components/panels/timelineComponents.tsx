@@ -300,6 +300,7 @@ export function TimelineContextMenu({
   onCopyInRange,
   onAddToClip,
   onAttachToCollection,
+  onDetachFromCollection,
   onEditMorph,
   onEditSymmetry,
   onEditValue,
@@ -318,6 +319,7 @@ export function TimelineContextMenu({
   onCopyInRange?: () => void
   onAddToClip?: () => void
   onAttachToCollection?: () => void
+  onDetachFromCollection?: () => void
   onEditMorph?: () => void
   onEditSymmetry?: () => void
   onEditValue?: () => void
@@ -398,6 +400,15 @@ export function TimelineContextMenu({
                 onClick={onAttachToCollection}
               >
                 Attach to collection…
+              </button>
+            )}
+            {onDetachFromCollection && (
+              <button
+                className="timeline-context-menu__item"
+                data-testid="detach-keyframes-from-collection"
+                onClick={onDetachFromCollection}
+              >
+                Detach from collection
               </button>
             )}
           </>

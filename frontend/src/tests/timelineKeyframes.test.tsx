@@ -307,6 +307,7 @@ describe('TimelinePanel creating keyframes', () => {
     useTimelineSelectionStore.getState().toggleKeyframe(keyframes[1]!.id, { time: 2, rowIndex: 0 })
 
     fireEvent.contextMenu(markers[0]!, { clientX: 100, clientY: 100 })
+    expect(screen.queryByTestId('detach-keyframes-from-collection')).not.toBeInTheDocument()
     fireEvent.click(await screen.findByTestId('attach-keyframes-to-collection'))
     const collectionSelect = await screen.findByRole('combobox', { name: 'Collection' })
     expect(collectionSelect).toHaveTextContent('Walk (1.00–3.00s)')
@@ -322,6 +323,55 @@ describe('TimelinePanel creating keyframes', () => {
         normalizedTime: 0.5,
       })
     })
+
+    const rightHandle = await screen.findByTestId(`timeline-collection-handle-right-${placementId}`)
+    fireEvent.pointerDown(rightHandle, { button: 0, clientX: 300, clientY: 0 })
+    act(() => {
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: 250, clientY: 0 }))
+      window.dispatchEvent(new PointerEvent('pointerup'))
+    })
+    expect(keyframes[0]!.time).toBeCloseTo(1.375, 5)
+    expect(keyframes[1]!.time).toBeCloseTo(1.75, 5)
+    expect(
+      screen
+        .getAllByTestId('keyframe-marker')
+        .find((marker) => marker.getAttribute('data-keyframe-id') === keyframes[0]!.id),
+    ).toHaveAttribute('data-time', '1.375')
+
+    const collectionBlock = screen.getByTestId(`timeline-collection-block-${placementId}`)
+    fireEvent.pointerDown(collectionBlock, { button: 0, clientX: 100, clientY: 0 })
+    act(() => {
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: 200, clientY: 0 }))
+      window.dispatchEvent(new PointerEvent('pointerup'))
+    })
+    expect(keyframes[0]!.time).toBeCloseTo(2.375, 5)
+    expect(keyframes[1]!.time).toBeCloseTo(2.75, 5)
+    expect(
+      screen
+        .getAllByTestId('keyframe-marker')
+        .find((marker) => marker.getAttribute('data-keyframe-id') === keyframes[0]!.id),
+    ).toHaveAttribute('data-time', '2.375')
+
+    const leftHandle = screen.getByTestId(`timeline-collection-handle-left-${placementId}`)
+    fireEvent.pointerDown(leftHandle, { button: 0, clientX: 200, clientY: 0 })
+    act(() => {
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: 250, clientY: 0 }))
+      window.dispatchEvent(new PointerEvent('pointerup'))
+    })
+    expect(keyframes[0]!.time).toBeCloseTo(2.75, 5)
+    expect(keyframes[1]!.time).toBeCloseTo(3, 5)
+
+    const firstMarker = screen
+      .getAllByTestId('keyframe-marker')
+      .find((marker) => marker.getAttribute('data-keyframe-id') === keyframes[0]!.id)!
+    fireEvent.contextMenu(firstMarker, { clientX: 100, clientY: 100 })
+    fireEvent.click(await screen.findByTestId('detach-keyframes-from-collection'))
+    await waitFor(() => {
+      expect(keyframes[0]!.collectionTimingLink).toBeUndefined()
+      expect(keyframes[1]!.collectionTimingLink).toBeUndefined()
+    })
+    expect(keyframes[0]!.time).toBeCloseTo(2.75, 5)
+    expect(keyframes[1]!.time).toBeCloseTo(3, 5)
   })
 
   it('right-clicking a node track creates pose keyframes for every animatable property', async () => {

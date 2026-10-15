@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
-import type { AnimationProperty, Scene } from '../../engine'
+import type { AnimationProperty, EnginePublic, Scene } from '../../engine'
 import { addKeyframeAtPlayhead, addPoseKeyframesAtPlayhead } from '../../app/keyframeActions'
 import { radiansToDegrees, rotationDegreesToRadians } from '../../app/inspectorActions'
 import {
@@ -130,6 +130,84 @@ function sceneNodesForCollectionAttachment(
   const nodes = [root]
   for (const child of root.children) nodes.push(...sceneNodesForCollectionAttachment(child))
   return nodes
+}
+
+function collectionAttachmentRefs(
+  engine: EnginePublic,
+  scene: Scene,
+  wantedIds: readonly string[],
+  fallback?: { keyframeId: string; target: KeyframeTarget | null },
+): CollectionAttachmentRef[] {
+  const refs: CollectionAttachmentRef[] = [
+    ...keyframeRefsOfScene(engine, scene).map((ref) => ({
+      target: { kind: 'node' as const, nodeId: ref.nodeId, property: ref.property },
+      keyframeId: ref.keyframeId,
+      time: ref.time,
+    })),
+    ...materialKeyframeRefsOfScene(engine, scene).map((ref) => ({
+      target: { kind: 'node' as const, nodeId: ref.nodeId, parameter: ref.parameter },
+      keyframeId: ref.keyframeId,
+      time: ref.time,
+    })),
+    ...dataLabelKeyframeRefsOfScene(engine, scene).map((ref) => ({
+      target: { kind: 'dataLabel' as const, nodeId: ref.nodeId, label: ref.label },
+      keyframeId: ref.keyframeId,
+      time: ref.time,
+    })),
+    ...circleKeyframeRefsOfScene(engine, scene).map((ref) => ({
+      target: { kind: 'circle' as const, nodeId: ref.nodeId, property: ref.property },
+      keyframeId: ref.keyframeId,
+      time: ref.time,
+    })),
+    ...shadowKeyframeRefsOfScene(engine, scene).map((ref) => ({
+      target: { kind: 'shadow' as const, nodeId: ref.nodeId, property: ref.property },
+      keyframeId: ref.keyframeId,
+      time: ref.time,
+    })),
+    ...visibleKeyframeRefsOfScene(engine, scene).map((ref) => ({
+      target: { kind: 'visible' as const, nodeId: ref.nodeId },
+      keyframeId: ref.keyframeId,
+      time: ref.time,
+    })),
+    ...zIndexKeyframeRefsOfScene(engine, scene).map((ref) => ({
+      target: { kind: 'zIndex' as const, nodeId: ref.nodeId },
+      keyframeId: ref.keyframeId,
+      time: ref.time,
+    })),
+    ...symmetryKeyframeRefsOfScene(engine, scene).map((ref) => ({
+      target: { kind: 'symmetry' as const, nodeId: ref.nodeId },
+      keyframeId: ref.keyframeId,
+      time: ref.time,
+    })),
+    ...morphKeyframeRefsOfScene(engine, scene).map((ref) => ({
+      target: { kind: 'morph' as const, nodeId: ref.nodeId },
+      keyframeId: ref.keyframeId,
+      time: ref.time,
+    })),
+    ...sceneNodesForCollectionAttachment(scene.root).flatMap((node) =>
+      TABLE_ANIMATABLE_PROPERTIES.flatMap((property) =>
+        engine.getTableKeyframes(node.id, property).map((keyframe) => ({
+          target: { kind: 'table' as const, nodeId: node.id, property },
+          keyframeId: keyframe.id,
+          time: keyframe.time,
+        })),
+      ),
+    ),
+    ...selectedControlKeyframeRefs(engine).map((ref) => ({
+      target: { kind: 'control' as const, nodeId: ref.nodeId, controlKey: ref.controlKey },
+      keyframeId: ref.keyframeId,
+      time: ref.time,
+    })),
+  ].filter((ref) => wantedIds.includes(ref.keyframeId))
+  if (fallback && !refs.some((ref) => ref.keyframeId === fallback.keyframeId) && fallback.target) {
+    const keyframe = engine
+      .getKeyframesOf(fallback.target)
+      .find((item) => item.id === fallback.keyframeId)
+    if (keyframe) {
+      refs.push({ target: fallback.target, keyframeId: keyframe.id, time: keyframe.time })
+    }
+  }
+  return refs
 }
 
 function MorphSubtrackHeader({
@@ -1360,77 +1438,10 @@ export function TimelineBody({
     if (!target?.keyframeId) return
     const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
     const wantedIds = selectedIds.includes(target.keyframeId) ? selectedIds : [target.keyframeId]
-    const refs: CollectionAttachmentRef[] = [
-      ...keyframeRefsOfScene(engine, scene).map((ref) => ({
-        target: { kind: 'node' as const, nodeId: ref.nodeId, property: ref.property },
-        keyframeId: ref.keyframeId,
-        time: ref.time,
-      })),
-      ...materialKeyframeRefsOfScene(engine, scene).map((ref) => ({
-        target: { kind: 'node' as const, nodeId: ref.nodeId, parameter: ref.parameter },
-        keyframeId: ref.keyframeId,
-        time: ref.time,
-      })),
-      ...dataLabelKeyframeRefsOfScene(engine, scene).map((ref) => ({
-        target: { kind: 'dataLabel' as const, nodeId: ref.nodeId, label: ref.label },
-        keyframeId: ref.keyframeId,
-        time: ref.time,
-      })),
-      ...circleKeyframeRefsOfScene(engine, scene).map((ref) => ({
-        target: { kind: 'circle' as const, nodeId: ref.nodeId, property: ref.property },
-        keyframeId: ref.keyframeId,
-        time: ref.time,
-      })),
-      ...shadowKeyframeRefsOfScene(engine, scene).map((ref) => ({
-        target: { kind: 'shadow' as const, nodeId: ref.nodeId, property: ref.property },
-        keyframeId: ref.keyframeId,
-        time: ref.time,
-      })),
-      ...visibleKeyframeRefsOfScene(engine, scene).map((ref) => ({
-        target: { kind: 'visible' as const, nodeId: ref.nodeId },
-        keyframeId: ref.keyframeId,
-        time: ref.time,
-      })),
-      ...zIndexKeyframeRefsOfScene(engine, scene).map((ref) => ({
-        target: { kind: 'zIndex' as const, nodeId: ref.nodeId },
-        keyframeId: ref.keyframeId,
-        time: ref.time,
-      })),
-      ...symmetryKeyframeRefsOfScene(engine, scene).map((ref) => ({
-        target: { kind: 'symmetry' as const, nodeId: ref.nodeId },
-        keyframeId: ref.keyframeId,
-        time: ref.time,
-      })),
-      ...morphKeyframeRefsOfScene(engine, scene).map((ref) => ({
-        target: { kind: 'morph' as const, nodeId: ref.nodeId },
-        keyframeId: ref.keyframeId,
-        time: ref.time,
-      })),
-      ...sceneNodesForCollectionAttachment(scene.root).flatMap((node) =>
-        TABLE_ANIMATABLE_PROPERTIES.flatMap((property) =>
-          engine.getTableKeyframes(node.id, property).map((keyframe) => ({
-            target: { kind: 'table' as const, nodeId: node.id, property },
-            keyframeId: keyframe.id,
-            time: keyframe.time,
-          })),
-        ),
-      ),
-      ...selectedControlKeyframeRefs(engine).map((ref) => ({
-        target: { kind: 'control' as const, nodeId: ref.nodeId, controlKey: ref.controlKey },
-        keyframeId: ref.keyframeId,
-        time: ref.time,
-      })),
-    ].filter((ref) => wantedIds.includes(ref.keyframeId))
-    if (!refs.some((ref) => ref.keyframeId === target.keyframeId)) {
-      const keyframeTarget = targetFromMenu(target)
-      if (keyframeTarget) {
-        const keyframe = engine
-          .getKeyframesOf(keyframeTarget)
-          .find((item) => item.id === target.keyframeId)
-        if (keyframe)
-          refs.push({ target: keyframeTarget, keyframeId: keyframe.id, time: keyframe.time })
-      }
-    }
+    const refs = collectionAttachmentRefs(engine, scene, wantedIds, {
+      keyframeId: target.keyframeId,
+      target: targetFromMenu(target),
+    })
     const hasAttachedKeyframes = refs.some((ref) =>
       engine
         .getKeyframesOf(ref.target)
@@ -1568,6 +1579,53 @@ export function TimelineBody({
     if (m.parameter) return { kind: 'node', nodeId: m.nodeId, parameter: m.parameter }
     if (m.label) return { kind: 'dataLabel', nodeId: m.nodeId, label: m.label }
     return null
+  }
+
+  const attachmentRefsForMenu = (target: TimelineMenuState | null) => {
+    if (!target?.keyframeId) return []
+    const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+    const wantedIds = selectedIds.includes(target.keyframeId) ? selectedIds : [target.keyframeId]
+    return collectionAttachmentRefs(engine, scene, wantedIds, {
+      keyframeId: target.keyframeId,
+      target: targetFromMenu(target),
+    })
+  }
+
+  const menuHasCollectionAttachment = attachmentRefsForMenu(menu).some((ref) =>
+    engine
+      .getKeyframesOf(ref.target)
+      .some(
+        (keyframe) => keyframe.id === ref.keyframeId && keyframe.collectionTimingLink !== undefined,
+      ),
+  )
+
+  const detachCollectionFromMenu = () => {
+    const refs = attachmentRefsForMenu(menu)
+    const attachedRefs = refs.filter((ref) =>
+      engine
+        .getKeyframesOf(ref.target)
+        .some(
+          (keyframe) =>
+            keyframe.id === ref.keyframeId && keyframe.collectionTimingLink !== undefined,
+        ),
+    )
+    if (attachedRefs.length === 0) return
+    const commands = attachedRefs.map(
+      (ref) =>
+        new SetKeyframeCollectionTimingLinkCommand({
+          target: ref.target,
+          keyframeId: ref.keyframeId,
+          link: null,
+        }),
+    )
+    const result = dispatch(new TransactionCommand(commands))
+    setMenu(null)
+    if (!result.ok) notify(result.error.message)
+    else {
+      notify(
+        `Detached ${attachedRefs.length} keyframe${attachedRefs.length === 1 ? '' : 's'} from collection`,
+      )
+    }
   }
 
   const pasteFromMenu = () => {
@@ -2836,6 +2894,9 @@ export function TimelineBody({
           }
           onAddToClip={addToClipFromMenu}
           onAttachToCollection={menu.keyframeId ? attachToCollectionFromMenu : undefined}
+          onDetachFromCollection={
+            menu.keyframeId && menuHasCollectionAttachment ? detachCollectionFromMenu : undefined
+          }
           onEditMorph={() => {
             const m = menu
             if (m?.keyframeId && (m as unknown as { morph?: boolean }).morph) {

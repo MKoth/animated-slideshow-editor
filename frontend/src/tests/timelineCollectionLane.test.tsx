@@ -9,6 +9,7 @@ import {
   PlaceCollectionCommand,
   SetCollectionPlacementStartTimeCommand,
   DeleteCollectionPlacementCommand,
+  AddKeyframeCommand,
 } from '../engine/commands'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { Keyframe } from '../engine/keyframe'
@@ -125,6 +126,45 @@ describe('timeline collection lane drag commits once', () => {
     expect(placement.startTime).toBeCloseTo(3, 5)
     const members = engine.getPlacementMembers(placementId)
     expect(members[0]!.instance.startTime).toBeCloseTo(3, 5)
+  })
+
+  it('keeps linked keyframes proportional when resized from the main timeline lane', async () => {
+    const { engine, undoStack, dispatcher, parent, paw, placementId } = setupPlaced()
+    const added = dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId: paw.id, property: 'positionX' },
+        time: 3,
+        value: 8,
+      }),
+    )
+    if (!added.ok) throw new Error('keyframe setup failed')
+    const keyframe = engine.getKeyframes(paw.id, 'positionX')[0]!
+    engine.setKeyframeCollectionTimingLink(
+      { kind: 'node', nodeId: paw.id, property: 'positionX' },
+      keyframe.id,
+      { placementId, normalizedTime: 0.5 },
+    )
+    const value: EngineContextValue = {
+      engine: toReadOnly(engine),
+      undoStack,
+      dispatch: (c) => dispatcher.dispatch(c as never) as never,
+      persistence: noopPersistence,
+    }
+    render(
+      <EngineContext.Provider value={value}>
+        <TimelineCollectionBlocks node={parent} duration={20} pps={100} />
+      </EngineContext.Provider>,
+    )
+
+    const rightHandle = await screen.findByTestId(`timeline-collection-handle-right-${placementId}`)
+    fireEvent.pointerDown(rightHandle, { button: 0, clientX: 200, clientY: 0 })
+    act(() => {
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: 150, clientY: 0 }))
+      window.dispatchEvent(new PointerEvent('pointerup'))
+    })
+
+    expect(engine.getPlacementMembers(placementId)[0]!.instance.speed).toBeCloseTo(4 / 3, 5)
+    expect(keyframe.time).toBeCloseTo(2.75, 5)
   })
 
   it('move past the slide end clamps to the duration', async () => {
