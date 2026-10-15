@@ -8,6 +8,14 @@ import {
   isKeyframeDisabled,
   keyframeRefsOfScene,
   materialKeyframeRefsOfScene,
+  dataLabelKeyframeRefsOfScene,
+  circleKeyframeRefsOfScene,
+  shadowKeyframeRefsOfScene,
+  visibleKeyframeRefsOfScene,
+  zIndexKeyframeRefsOfScene,
+  symmetryKeyframeRefsOfScene,
+  morphKeyframeRefsOfScene,
+  selectedControlKeyframeRefs,
   pasteKeyframesAtTarget,
   setSelectedKeyframesDisabled,
   setSingleKeyframeDisabled,
@@ -82,6 +90,12 @@ import {
 } from '../../app/clipExtractionActions'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 import { useKeyframeClipboardStore } from '../../stores/keyframeClipboardStore'
+import { visualDurationForCollectionPlacement } from '../../engine/animationManagerModel'
+import { SetKeyframeCollectionTimingLinkCommand } from '../../engine/commands'
+import { CollectionKeyframePickerModal } from './CollectionKeyframePickerModal'
+import type { CollectionKeyframeChoice } from './CollectionKeyframePickerModal'
+import type { KeyframeTarget } from '../../engine/keyframeTarget'
+import { TABLE_ANIMATABLE_PROPERTIES } from '../../engine/animationProperties'
 
 const MARQUEE_START_DISTANCE = 4
 
@@ -102,6 +116,20 @@ function isObjectHeaderMenu(menu: TimelineMenuState): boolean {
     discriminant['zIndex'] == null &&
     discriminant['controlKey'] == null
   )
+}
+
+interface CollectionAttachmentRef {
+  readonly target: KeyframeTarget
+  readonly keyframeId: string
+  readonly time: number
+}
+
+function sceneNodesForCollectionAttachment(
+  root: import('../../engine').SceneNode,
+): import('../../engine').SceneNode[] {
+  const nodes = [root]
+  for (const child of root.children) nodes.push(...sceneNodesForCollectionAttachment(child))
+  return nodes
 }
 
 function MorphSubtrackHeader({
@@ -225,6 +253,12 @@ export function TimelineBody({
     nodeId: string
     controlKey: string
     keyframeId: string
+  } | null>(null)
+  const [collectionPicker, setCollectionPicker] = useState<{
+    refs: CollectionAttachmentRef[]
+    choices: CollectionKeyframeChoice[]
+    hasAttachedKeyframes: boolean
+    initialPlacementId?: string
   } | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<{
     readonly x: number
@@ -1319,6 +1353,189 @@ export function TimelineBody({
       return
     }
     setExtraction(extractable)
+  }
+
+  const attachToCollectionFromMenu = () => {
+    const target = menu
+    if (!target?.keyframeId) return
+    const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+    const wantedIds = selectedIds.includes(target.keyframeId) ? selectedIds : [target.keyframeId]
+    const refs: CollectionAttachmentRef[] = [
+      ...keyframeRefsOfScene(engine, scene).map((ref) => ({
+        target: { kind: 'node' as const, nodeId: ref.nodeId, property: ref.property },
+        keyframeId: ref.keyframeId,
+        time: ref.time,
+      })),
+      ...materialKeyframeRefsOfScene(engine, scene).map((ref) => ({
+        target: { kind: 'node' as const, nodeId: ref.nodeId, parameter: ref.parameter },
+        keyframeId: ref.keyframeId,
+        time: ref.time,
+      })),
+      ...dataLabelKeyframeRefsOfScene(engine, scene).map((ref) => ({
+        target: { kind: 'dataLabel' as const, nodeId: ref.nodeId, label: ref.label },
+        keyframeId: ref.keyframeId,
+        time: ref.time,
+      })),
+      ...circleKeyframeRefsOfScene(engine, scene).map((ref) => ({
+        target: { kind: 'circle' as const, nodeId: ref.nodeId, property: ref.property },
+        keyframeId: ref.keyframeId,
+        time: ref.time,
+      })),
+      ...shadowKeyframeRefsOfScene(engine, scene).map((ref) => ({
+        target: { kind: 'shadow' as const, nodeId: ref.nodeId, property: ref.property },
+        keyframeId: ref.keyframeId,
+        time: ref.time,
+      })),
+      ...visibleKeyframeRefsOfScene(engine, scene).map((ref) => ({
+        target: { kind: 'visible' as const, nodeId: ref.nodeId },
+        keyframeId: ref.keyframeId,
+        time: ref.time,
+      })),
+      ...zIndexKeyframeRefsOfScene(engine, scene).map((ref) => ({
+        target: { kind: 'zIndex' as const, nodeId: ref.nodeId },
+        keyframeId: ref.keyframeId,
+        time: ref.time,
+      })),
+      ...symmetryKeyframeRefsOfScene(engine, scene).map((ref) => ({
+        target: { kind: 'symmetry' as const, nodeId: ref.nodeId },
+        keyframeId: ref.keyframeId,
+        time: ref.time,
+      })),
+      ...morphKeyframeRefsOfScene(engine, scene).map((ref) => ({
+        target: { kind: 'morph' as const, nodeId: ref.nodeId },
+        keyframeId: ref.keyframeId,
+        time: ref.time,
+      })),
+      ...sceneNodesForCollectionAttachment(scene.root).flatMap((node) =>
+        TABLE_ANIMATABLE_PROPERTIES.flatMap((property) =>
+          engine.getTableKeyframes(node.id, property).map((keyframe) => ({
+            target: { kind: 'table' as const, nodeId: node.id, property },
+            keyframeId: keyframe.id,
+            time: keyframe.time,
+          })),
+        ),
+      ),
+      ...selectedControlKeyframeRefs(engine).map((ref) => ({
+        target: { kind: 'control' as const, nodeId: ref.nodeId, controlKey: ref.controlKey },
+        keyframeId: ref.keyframeId,
+        time: ref.time,
+      })),
+    ].filter((ref) => wantedIds.includes(ref.keyframeId))
+    if (!refs.some((ref) => ref.keyframeId === target.keyframeId)) {
+      const keyframeTarget = targetFromMenu(target)
+      if (keyframeTarget) {
+        const keyframe = engine
+          .getKeyframesOf(keyframeTarget)
+          .find((item) => item.id === target.keyframeId)
+        if (keyframe)
+          refs.push({ target: keyframeTarget, keyframeId: keyframe.id, time: keyframe.time })
+      }
+    }
+    const hasAttachedKeyframes = refs.some((ref) =>
+      engine
+        .getKeyframesOf(ref.target)
+        .some(
+          (keyframe) =>
+            keyframe.id === ref.keyframeId && keyframe.collectionTimingLink !== undefined,
+        ),
+    )
+    const initialPlacementId = refs
+      .map(
+        (ref) =>
+          engine.getKeyframesOf(ref.target).find((item) => item.id === ref.keyframeId)
+            ?.collectionTimingLink?.placementId,
+      )
+      .find((id): id is string => id !== undefined)
+    const choices: CollectionKeyframeChoice[] = []
+    const visit = (node: import('../../engine').SceneNode) => {
+      for (const placement of node.collectionPlacements) {
+        try {
+          const collection = engine.getClipCollection(placement.collectionId)
+          const visualDuration = visualDurationForCollectionPlacement(placement, node, (clipId) =>
+            engine.getClip(clipId),
+          )
+          choices.push({
+            placementId: placement.id,
+            name: collection.name,
+            start: placement.startTime,
+            end: placement.startTime + visualDuration,
+          })
+        } catch {
+          // Ignore placements whose collection or member clips are missing.
+        }
+      }
+      node.children.forEach(visit)
+    }
+    visit(scene.root)
+    if (refs.length === 0) {
+      notify('Select at least one node keyframe to attach')
+      return
+    }
+    if (choices.length === 0 && !hasAttachedKeyframes) {
+      notify('Place a Clip Collection on this slide first')
+      return
+    }
+    setMenu(null)
+    setCollectionPicker({ refs, choices, hasAttachedKeyframes, initialPlacementId })
+  }
+
+  const confirmCollectionAttachment = (placementId: string, deleteAttached = false) => {
+    const picker = collectionPicker
+    if (!picker) return
+    const commands: (SetKeyframeCollectionTimingLinkCommand | DeleteKeyframesCommand)[] = []
+    const attached = picker.refs.filter((ref) =>
+      engine
+        .getKeyframesOf(ref.target)
+        .some(
+          (keyframe) =>
+            keyframe.id === ref.keyframeId && keyframe.collectionTimingLink !== undefined,
+        ),
+    )
+    if (deleteAttached && attached.length > 0) {
+      const byTarget = new Map<string, { target: KeyframeTarget; keyframeIds: string[] }>()
+      for (const ref of attached) {
+        const key = JSON.stringify(ref.target)
+        const group = byTarget.get(key) ?? { target: ref.target, keyframeIds: [] }
+        group.keyframeIds.push(ref.keyframeId)
+        byTarget.set(key, group)
+      }
+      for (const { target, keyframeIds } of byTarget.values()) {
+        commands.push(new DeleteKeyframesCommand({ target, keyframeIds }))
+      }
+    }
+    const attachedIds = new Set(attached.map((ref) => ref.keyframeId))
+    const placement = placementId ? engine.getCollectionPlacement(placementId) : undefined
+    const choice = picker.choices.find((item) => item.placementId === placementId)
+    const duration = placement && choice ? choice.end - choice.start : 0
+    for (const ref of picker.refs) {
+      if (deleteAttached && attachedIds.has(ref.keyframeId)) continue
+      if (!placement && !attachedIds.has(ref.keyframeId)) continue
+      commands.push(
+        new SetKeyframeCollectionTimingLinkCommand({
+          target: ref.target,
+          keyframeId: ref.keyframeId,
+          link:
+            placement && duration > 0
+              ? {
+                  placementId,
+                  normalizedTime: (ref.time - placement.startTime) / duration,
+                }
+              : null,
+        }),
+      )
+    }
+    if (commands.length === 0) {
+      setCollectionPicker(null)
+      return
+    }
+    const result = dispatch(new TransactionCommand(commands))
+    if (!result.ok) notify(result.error.message)
+    else {
+      notify(
+        `Attached ${picker.refs.length} keyframe${picker.refs.length === 1 ? '' : 's'} to collection`,
+      )
+      setCollectionPicker(null)
+    }
   }
 
   const targetFromMenu = (
@@ -2618,6 +2835,7 @@ export function TimelineBody({
               : undefined
           }
           onAddToClip={addToClipFromMenu}
+          onAttachToCollection={menu.keyframeId ? attachToCollectionFromMenu : undefined}
           onEditMorph={() => {
             const m = menu
             if (m?.keyframeId && (m as unknown as { morph?: boolean }).morph) {
@@ -2785,6 +3003,15 @@ export function TimelineBody({
             return null
           }
         })()}
+      {collectionPicker && (
+        <CollectionKeyframePickerModal
+          choices={collectionPicker.choices}
+          hasAttachedKeyframes={collectionPicker.hasAttachedKeyframes}
+          initialPlacementId={collectionPicker.initialPlacementId}
+          onClose={() => setCollectionPicker(null)}
+          onAttach={confirmCollectionAttachment}
+        />
+      )}
       {extraction && (
         <ClipExtractionModal
           keyframes={extraction}

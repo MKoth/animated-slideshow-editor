@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EngineContext } from '../app/engineContext'
 import type { EngineContextValue } from '../app/engineContext'
 import { TimelinePanel } from '../components/panels/TimelinePanel'
-import { CommandDispatcher, UndoStack } from '../engine/commands'
+import { CommandDispatcher, UndoStack, PlaceCollectionCommand } from '../engine/commands'
 import { AddKeyframeCommand } from '../engine/commands'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
@@ -13,6 +13,7 @@ import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
 import { DEFAULT_TIMELINE_HEIGHT } from '../stores/uiPrefs'
 import { useTimelineViewStore } from '../stores/timelineViewStore'
+import { useTimelineSelectionStore } from '../stores/timelineSelectionStore'
 
 const SUBTRACK_LABELS = ['Position X', 'Position Y', 'Rotation', 'Scale X', 'Scale Y', 'Opacity']
 
@@ -277,6 +278,50 @@ describe('TimelinePanel creating keyframes', () => {
     expect(keyframe.time).toBe(1.5)
     expect(keyframe.value).toBe(12)
     expect(logger).toHaveBeenCalledWith(expect.stringContaining('AddKeyframe'))
+  })
+
+  it('attaches all selected keyframes to a picked collection placement', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine, 'Boy')
+    engine.setSemanticName(nodeId, 'boy')
+    const clip = engine.createClip('Walk clip', 2, '', [], [{ property: 'positionX' }])
+    const collection = engine.createClipCollection('Walk', { boy: clip.id })
+    const placed = dispatcher.dispatch(
+      new PlaceCollectionCommand({
+        collectionId: collection.id,
+        parentNodeId: nodeId,
+        startTime: 1,
+      }),
+    )
+    if (!placed.ok) throw new Error('expected collection placement to succeed')
+    const placementId = (placed.inverse as { placementId: string }).placementId
+    addKeyframe(dispatcher, nodeId, 'positionX', 1.5, 5)
+    addKeyframe(dispatcher, nodeId, 'positionX', 2, 8)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    const markers = await screen.findAllByTestId('keyframe-marker')
+    const keyframes = engine.getKeyframes(nodeId, 'positionX')
+    useTimelineSelectionStore
+      .getState()
+      .selectKeyframe(keyframes[0]!.id, { time: 1.5, rowIndex: 0 })
+    useTimelineSelectionStore.getState().toggleKeyframe(keyframes[1]!.id, { time: 2, rowIndex: 0 })
+
+    fireEvent.contextMenu(markers[0]!, { clientX: 100, clientY: 100 })
+    fireEvent.click(await screen.findByTestId('attach-keyframes-to-collection'))
+    const collectionSelect = await screen.findByRole('combobox', { name: 'Collection' })
+    expect(collectionSelect).toHaveTextContent('Walk (1.00–3.00s)')
+    fireEvent.click(screen.getByTestId('confirm-collection-attachment'))
+
+    await waitFor(() => {
+      expect(keyframes[0]!.collectionTimingLink).toEqual({
+        placementId,
+        normalizedTime: 0.25,
+      })
+      expect(keyframes[1]!.collectionTimingLink).toEqual({
+        placementId,
+        normalizedTime: 0.5,
+      })
+    })
   })
 
   it('right-clicking a node track creates pose keyframes for every animatable property', async () => {

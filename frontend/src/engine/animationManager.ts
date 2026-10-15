@@ -294,6 +294,19 @@ export class AnimationManager {
     return old
   }
 
+  setKeyframeCollectionTimingLink(
+    target: KeyframeTarget,
+    keyframeId: string,
+    link: import('./keyframe').CollectionTimingLink | undefined,
+  ): import('./keyframe').CollectionTimingLink | undefined {
+    const resolved = this.#resolve(target)
+    const keyframe = this.#requireKeyframe(resolved, keyframeId)
+    const old = keyframe.collectionTimingLink ? { ...keyframe.collectionTimingLink } : undefined
+    keyframe.collectionTimingLink = link ? { ...link } : undefined
+    this.#bus.emit({ type: 'KeyframeMoved', target, keyframeId })
+    return old
+  }
+
   scaleKeyframes(
     target: KeyframeTarget,
     keyframeIds: readonly string[],

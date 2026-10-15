@@ -299,6 +299,7 @@ export function TimelineContextMenu({
   onMoveInRange,
   onCopyInRange,
   onAddToClip,
+  onAttachToCollection,
   onEditMorph,
   onEditSymmetry,
   onEditValue,
@@ -316,6 +317,7 @@ export function TimelineContextMenu({
   onMoveInRange?: () => void
   onCopyInRange?: () => void
   onAddToClip?: () => void
+  onAttachToCollection?: () => void
   onEditMorph?: () => void
   onEditSymmetry?: () => void
   onEditValue?: () => void
@@ -387,6 +389,15 @@ export function TimelineContextMenu({
                 onClick={onAddToClip}
               >
                 Add to clip
+              </button>
+            )}
+            {onAttachToCollection && (
+              <button
+                className="timeline-context-menu__item"
+                data-testid="attach-keyframes-to-collection"
+                onClick={onAttachToCollection}
+              >
+                Attach to collection…
               </button>
             )}
           </>

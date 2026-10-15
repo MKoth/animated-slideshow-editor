@@ -2184,7 +2184,24 @@ export class Engine {
   }
 
   moveKeyframes(target: KeyframeTarget, moves: readonly KeyframeMove[]): KeyframeMoveResult[] {
-    return this.#animations.moveKeyframes(target, moves)
+    const results = this.#animations.moveKeyframes(target, moves)
+    for (const result of results) {
+      const keyframe = this.getKeyframesOf(target).find((item) => item.id === result.keyframeId)
+      const link = keyframe?.collectionTimingLink
+      if (!keyframe || !link) continue
+      try {
+        const placement = this.getCollectionPlacement(link.placementId)
+        const duration = this.#collectionPlacementDuration(link.placementId)
+        const normalizedTime = duration > 0 ? (keyframe.time - placement.startTime) / duration : 0
+        this.#animations.setKeyframeCollectionTimingLink(target, keyframe.id, {
+          placementId: link.placementId,
+          normalizedTime,
+        })
+      } catch {
+        // Keep the saved link if its placement has been removed.
+      }
+    }
+    return results
   }
 
   scaleKeyframes(
@@ -2231,6 +2248,14 @@ export class Engine {
     link: import('./keyframe').FreezeLink | undefined,
   ): import('./keyframe').FreezeLink | undefined {
     return this.#animations.setKeyframeFreezeLink(target, keyframeId, link)
+  }
+
+  setKeyframeCollectionTimingLink(
+    target: KeyframeTarget,
+    keyframeId: string,
+    link: import('./keyframe').CollectionTimingLink | undefined,
+  ): import('./keyframe').CollectionTimingLink | undefined {
+    return this.#animations.setKeyframeCollectionTimingLink(target, keyframeId, link)
   }
 
   /**
@@ -2290,6 +2315,110 @@ export class Engine {
       }
     }
     return out
+  }
+
+  getCollectionTimingKeyframes(
+    placementId: string,
+  ): readonly { target: KeyframeTarget; keyframe: Keyframe }[] {
+    let placement: CollectionPlacement
+    try {
+      placement = this.getCollectionPlacement(placementId)
+    } catch {
+      return []
+    }
+    const slide = this.getSlideOfNode(placement.parentNodeId)
+    const out: { target: KeyframeTarget; keyframe: Keyframe }[] = []
+    const collect = (target: KeyframeTarget, keyframes: readonly Keyframe[]) => {
+      for (const keyframe of keyframes) {
+        if (keyframe.collectionTimingLink?.placementId === placementId) {
+          out.push({ target, keyframe })
+        }
+      }
+    }
+    for (const node of walkPreOrder(slide.scene.root)) {
+      const animation = slide.animation.node(node.id)
+      if (!animation) continue
+      const nodeId = node.id
+      for (const property of ANIMATABLE_PROPERTIES) {
+        collect({ kind: 'node', nodeId, property }, animation.keyframes(property))
+      }
+      for (const parameter of animation.materialTrackParameterKeys()) {
+        collect({ kind: 'node', nodeId, parameter }, animation.materialKeyframes(parameter))
+      }
+      for (const label of animation.dataLabelTrackLabels()) {
+        collect({ kind: 'dataLabel', nodeId, label }, animation.dataLabelKeyframes(label))
+      }
+      for (const property of animation.circleTrackKeys()) {
+        collect({ kind: 'circle', nodeId, property }, animation.circleKeyframes(property))
+      }
+      for (const property of animation.tableTrackKeys()) {
+        collect({ kind: 'table', nodeId, property }, animation.tableKeyframes(property))
+      }
+      collect({ kind: 'visible', nodeId }, animation.visibleKeyframes())
+      collect({ kind: 'morph', nodeId }, animation.morphKeyframes())
+      for (const property of animation.shadowTrackKeys()) {
+        collect({ kind: 'shadow', nodeId, property }, animation.shadowKeyframes(property))
+      }
+      collect({ kind: 'symmetry', nodeId }, animation.symmetryKeyframes())
+      collect({ kind: 'zIndex', nodeId }, animation.zIndexKeyframes())
+      for (const key of animation.controlTrackKeys()) {
+        collect({ kind: 'control', nodeId, controlKey: key }, animation.controlKeyframes(key))
+      }
+    }
+    return out
+  }
+
+  #collectionPlacementDuration(placementId: string): number {
+    const placement = this.getCollectionPlacement(placementId)
+    const parent = this.getNode(placement.parentNodeId)
+    let duration = 0
+    for (const node of walkPreOrder(parent)) {
+      for (const instance of node.clipInstances) {
+        if (instance.placementId !== placementId) continue
+        try {
+          const clip = this.getClip(instance.clipId)
+          const effectiveSpeed = instance.speed < 1e-4 ? 1e-4 : instance.speed
+          duration = Math.max(duration, clip.duration / effectiveSpeed)
+        } catch {
+          // Ignore dangling member clips.
+        }
+      }
+    }
+    return Math.max(duration, 0.25)
+  }
+
+  #syncCollectionTimingKeyframes(placementId: string, duration: number): void {
+    const placement = this.getCollectionPlacement(placementId)
+    const byTarget = new Map<
+      string,
+      { target: KeyframeTarget; moves: { keyframeId: string; newTime: number }[] }
+    >()
+    for (const { target, keyframe } of this.getCollectionTimingKeyframes(placementId)) {
+      const nodeId = 'nodeId' in target ? target.nodeId : ''
+      const targetKey = `${JSON.stringify(target)}`
+      const group = byTarget.get(targetKey) ?? { target, moves: [] }
+      const slideDuration = this.getSlideOfNode(nodeId).duration
+      group.moves.push({
+        keyframeId: keyframe.id,
+        newTime: Math.max(
+          0,
+          Math.min(
+            slideDuration,
+            placement.startTime + keyframe.collectionTimingLink!.normalizedTime * duration,
+          ),
+        ),
+      })
+      byTarget.set(targetKey, group)
+    }
+    for (const { target, moves } of byTarget.values()) {
+      const actualMoves = moves.filter((move) => {
+        const current = this.getKeyframesOf(target).find(
+          (keyframe) => keyframe.id === move.keyframeId,
+        )
+        return current && current.time !== move.newTime
+      })
+      if (actualMoves.length > 0) this.moveKeyframes(target, actualMoves)
+    }
   }
 
   pasteKeyframes(target: KeyframeTarget, payload: PastePayload, atTime: number): Keyframe[] {
@@ -4469,7 +4598,9 @@ export class Engine {
       throw new Error('startTime must be non-negative finite')
     const placement = this.getCollectionPlacement(placementId)
     const old = placement.startTime
+    const duration = this.#collectionPlacementDuration(placementId)
     placement.startTime = startTime
+    this.#syncCollectionTimingKeyframes(placementId, duration)
     this.#bus.emit({
       type: 'CollectionPlacementMoved',
       placementId,
@@ -6439,7 +6570,15 @@ export class Engine {
 
   setClipInstanceSpeed(nodeId: string, instanceId: string, speed: number): void {
     const instance = this.getClipInstance(nodeId, instanceId)
+    const placementId = instance.placementId
+    const oldDuration = placementId ? this.#collectionPlacementDuration(placementId) : 0
     instance.speed = speed
+    if (placementId) {
+      const newDuration = this.#collectionPlacementDuration(placementId)
+      if (Math.abs(newDuration - oldDuration) > 1e-9) {
+        this.#syncCollectionTimingKeyframes(placementId, newDuration)
+      }
+    }
     this.#bus.emit({ type: 'ClipInstanceSpeedChanged', nodeId, instanceId })
   }
 
@@ -7018,6 +7157,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
       engine.setKeyframeDisabled(target, keyframeId, disabled),
     setKeyframeFreezeLink: (target, keyframeId, link) =>
       engine.setKeyframeFreezeLink(target, keyframeId, link),
+    setKeyframeCollectionTimingLink: (target, keyframeId, link) =>
+      engine.setKeyframeCollectionTimingLink(target, keyframeId, link),
     getFreezeKeyframes: (placementId) => engine.getFreezeKeyframes(placementId),
   }
 }

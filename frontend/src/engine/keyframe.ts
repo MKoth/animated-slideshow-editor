@@ -35,6 +35,22 @@ export interface FreezeLink {
   readonly role: FreezeLinkRole
 }
 
+/** A keyframe's time is anchored proportionally within a collection placement. */
+export interface CollectionTimingLink {
+  readonly placementId: string
+  readonly normalizedTime: number
+}
+
+export function collectionTimingLinkFromJSON(value: unknown): CollectionTimingLink | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.placementId !== 'string' || record.placementId === '') return undefined
+  if (typeof record.normalizedTime !== 'number' || !Number.isFinite(record.normalizedTime)) {
+    return undefined
+  }
+  return { placementId: record.placementId, normalizedTime: record.normalizedTime }
+}
+
 export function requireFreezeLinkRole(value: unknown): FreezeLinkRole {
   if (value === 'first' || value === 'last' || value === 'prefix') return value
   throw new Error(`Unknown freeze link role: ${String(value)}`)
@@ -116,6 +132,7 @@ export class Keyframe {
    * positional call sites keep working.
    */
   freezeLink?: FreezeLink | undefined
+  collectionTimingLink?: CollectionTimingLink | undefined
 
   constructor(
     id: string,
@@ -128,6 +145,7 @@ export class Keyframe {
     blend?: readonly number[],
     wrap = false,
     freezeLink?: FreezeLink,
+    collectionTimingLink?: CollectionTimingLink,
   ) {
     this.id = id
     this.time = time
@@ -139,6 +157,7 @@ export class Keyframe {
     this.blend = blend ? [...blend] : []
     this.wrap = wrap
     if (freezeLink) this.freezeLink = { ...freezeLink }
+    if (collectionTimingLink) this.collectionTimingLink = { ...collectionTimingLink }
   }
 
   toJSON(): KeyframeJSON {
@@ -152,6 +171,9 @@ export class Keyframe {
       ...(this.blend.length > 0 ? { blend: [...this.blend] } : {}),
       ...(this.wrap ? { wrap: true } : {}),
       ...(this.freezeLink ? { freezeLink: { ...this.freezeLink } } : {}),
+      ...(this.collectionTimingLink
+        ? { collectionTimingLink: { ...this.collectionTimingLink } }
+        : {}),
     }
   }
 }
@@ -172,6 +194,7 @@ export interface KeyframeSnapshot {
   readonly blend?: readonly number[]
   readonly wrap?: boolean
   readonly freezeLink?: FreezeLink
+  readonly collectionTimingLink?: CollectionTimingLink
 }
 
 export function snapshotOf(keyframe: Keyframe): KeyframeSnapshot {
@@ -186,6 +209,9 @@ export function snapshotOf(keyframe: Keyframe): KeyframeSnapshot {
     ...(keyframe.blend.length > 0 ? { blend: [...keyframe.blend] } : {}),
     ...(keyframe.wrap ? { wrap: true } : {}),
     ...(keyframe.freezeLink ? { freezeLink: { ...keyframe.freezeLink } } : {}),
+    ...(keyframe.collectionTimingLink
+      ? { collectionTimingLink: { ...keyframe.collectionTimingLink } }
+      : {}),
   }
 }
 

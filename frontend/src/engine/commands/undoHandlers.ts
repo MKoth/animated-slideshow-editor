@@ -800,6 +800,13 @@ export function applyUndo(
       engine.setKeyframeFreezeLink(target, keyframeId, oldLink)
       return
     }
+    case 'SetKeyframeCollectionTimingLink': {
+      const target = inv.target as import('../keyframeTarget').KeyframeTarget
+      const keyframeId = inv.keyframeId as string
+      const oldLink = inv.oldLink as import('../keyframe').CollectionTimingLink | undefined
+      engine.setKeyframeCollectionTimingLink(target, keyframeId, oldLink)
+      return
+    }
     case 'CreateClip': {
       const clipId = inv.clipId as string
       try {
@@ -3406,6 +3413,12 @@ export function applyRedo(
       const targetL = params.target as import('../keyframeTarget').KeyframeTarget
       const link = params.freezeLink as import('../keyframe').FreezeLink | undefined
       engine.setKeyframeFreezeLink(targetL, params.keyframeId as string, link)
+      return
+    }
+    case 'SetKeyframeCollectionTimingLink': {
+      const target = params.target as import('../keyframeTarget').KeyframeTarget
+      const link = params.link as import('../keyframe').CollectionTimingLink | undefined
+      engine.setKeyframeCollectionTimingLink(target, params.keyframeId as string, link)
       return
     }
     case 'CreateClip': {

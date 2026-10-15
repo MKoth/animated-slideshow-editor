@@ -3,6 +3,7 @@ import type { Keyframe } from './keyframe'
 import {
   Keyframe as KeyframeModel,
   freezeLinkFromJSON,
+  collectionTimingLinkFromJSON,
   requireKeyframeBlend,
   requireKeyframeInterpolation,
   requireKeyframeTangent,
@@ -1365,6 +1366,7 @@ export function controlTrackKeyframeFromJSON(
       blend,
       requireKeyframeWrap(record.wrap),
       freezeLinkFromJSON(record.freezeLink),
+      collectionTimingLinkFromJSON(record.collectionTimingLink),
     )
   } catch {
     return undefined

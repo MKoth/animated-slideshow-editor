@@ -8,6 +8,7 @@ import {
   requireKeyframeTangent,
   requireKeyframeWrap,
   freezeLinkFromJSON,
+  collectionTimingLinkFromJSON,
   ZERO_TANGENT,
 } from './keyframe'
 import type {
@@ -1284,6 +1285,7 @@ function copyKeyframe(keyframe: Keyframe): Keyframe {
     keyframe.blend.length > 0 ? [...keyframe.blend] : [],
     !!keyframe.wrap,
     keyframe.freezeLink ? { ...keyframe.freezeLink } : undefined,
+    keyframe.collectionTimingLink ? { ...keyframe.collectionTimingLink } : undefined,
   )
 }
 
@@ -1308,6 +1310,7 @@ export function copyKeyframePreservingId(keyframe: Keyframe): Keyframe {
     keyframe.blend.length > 0 ? [...keyframe.blend] : [],
     !!keyframe.wrap,
     keyframe.freezeLink ? { ...keyframe.freezeLink } : undefined,
+    keyframe.collectionTimingLink ? { ...keyframe.collectionTimingLink } : undefined,
   )
 }
 
@@ -1315,6 +1318,10 @@ export function copyKeyframePreservingId(keyframe: Keyframe): Keyframe {
 function attachFreezeLink(keyframe: Keyframe, json: unknown): void {
   const link = freezeLinkFromJSON((json as Record<string, unknown> | null)?.freezeLink)
   if (link) keyframe.freezeLink = link
+  const timingLink = collectionTimingLinkFromJSON(
+    (json as Record<string, unknown> | null)?.collectionTimingLink,
+  )
+  if (timingLink) keyframe.collectionTimingLink = timingLink
 }
 
 function trackKeyframeParser(

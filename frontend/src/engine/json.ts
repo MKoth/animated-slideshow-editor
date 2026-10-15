@@ -208,6 +208,11 @@ export type FreezeLinkJSON = {
   readonly role: FreezeLinkRole
 }
 
+export type CollectionTimingLinkJSON = {
+  readonly placementId: string
+  readonly normalizedTime: number
+}
+
 export type KeyframeJSON = {
   readonly id: string
   readonly time: number
@@ -219,6 +224,7 @@ export type KeyframeJSON = {
   readonly blend?: readonly number[]
   readonly wrap?: boolean
   readonly freezeLink?: FreezeLinkJSON
+  readonly collectionTimingLink?: CollectionTimingLinkJSON
 }
 
 export type ControlTrackJSON = {

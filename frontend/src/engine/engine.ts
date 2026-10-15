@@ -346,6 +346,11 @@ export interface EnginePublic {
     keyframeId: string,
     link: import('./keyframe').FreezeLink | undefined,
   ): import('./keyframe').FreezeLink | undefined
+  setKeyframeCollectionTimingLink(
+    target: KeyframeTarget,
+    keyframeId: string,
+    link: import('./keyframe').CollectionTimingLink | undefined,
+  ): import('./keyframe').CollectionTimingLink | undefined
   getFreezeKeyframes(placementId: string): readonly { target: KeyframeTarget; keyframe: Keyframe }[]
 }
 

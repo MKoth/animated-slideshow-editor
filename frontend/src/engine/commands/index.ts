@@ -162,6 +162,7 @@ export type {
   SetKeyframeTangentsParameters,
 } from './setKeyframeTangentsCommand'
 export { SetKeyframeDisabledCommand } from './setKeyframeDisabledCommand'
+export { SetKeyframeCollectionTimingLinkCommand } from './setKeyframeCollectionTimingLinkCommand'
 export type {
   SetKeyframeDisabledInverse,
   SetKeyframeDisabledParameters,
