@@ -114,6 +114,15 @@ describe('Animation Manager 15-06 – Collection Lane single bar, uniform stretc
     // Hidden internals: lane should show collection name only, not per-channel breakdown
     const label = within(lane).getByTestId(`collection-lane-label-${placementId}`)
     expect(label.textContent).toBe('MyCollection')
+    const initialSpeed = engine.getPlacementMembers(placementId)[0]!.instance.speed
+    fireEvent.pointerDown(within(section).getByTestId(`collection-handle-right-${placementId}`), {
+      button: 0,
+      clientX: 100,
+      clientY: 10,
+    })
+    fireEvent.pointerMove(window, { clientX: 150, clientY: 10 })
+    fireEvent.pointerUp(window)
+    expect(engine.getPlacementMembers(placementId)[0]!.instance.speed).not.toBe(initialSpeed)
     // Back to clips tab for row assertions below
     fireEvent.click(within(modal).getByTestId('manager-tab-clips'))
     // Per-object Clip Lanes for child1/child2 should still exist in clips tab? But collection lane is single bar, not per child

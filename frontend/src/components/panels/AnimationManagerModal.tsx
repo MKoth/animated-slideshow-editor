@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import {
   getManagerRows,
@@ -3057,8 +3057,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     }
   }, [orphanMarquee])
 
-  // Window drag listeners
-  useEffect(() => {
+  // Window drag listeners must be replaced synchronously with each preview
+  // render. A passive effect leaves a window where an in-flight pointer event
+  // can reach stale listeners (or miss the latest drag state), especially
+  // while resizing a lane whose preview rerenders on every pointermove.
+  useLayoutEffect(() => {
     if (!dragState) return
     const onPointerMove = (e: PointerEvent) => {
       const deltaPx = e.clientX - dragState.startX
@@ -4027,9 +4030,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     }
     window.addEventListener('pointermove', onPointerMove as unknown as EventListener)
     window.addEventListener('pointerup', onPointerUp as unknown as EventListener)
+    window.addEventListener('pointercancel', onPointerUp as unknown as EventListener)
     return () => {
       window.removeEventListener('pointermove', onPointerMove as unknown as EventListener)
       window.removeEventListener('pointerup', onPointerUp as unknown as EventListener)
+      window.removeEventListener('pointercancel', onPointerUp as unknown as EventListener)
     }
   }, [
     dragState,
@@ -4833,6 +4838,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     if (!result.ok) {
                       notify(result.error.message)
                     } else {
+                      setSelectedPlacementId(
+                        (result.inverse as { placementId: string }).placementId,
+                      )
+                      setDragState(null)
+                      setCollectionPlacementMenu(null)
                       notify(`Placed collection at ${playhead.toFixed(2)}s`)
                       setPlaceCollectionId('')
                     }
@@ -7898,6 +7908,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             if (!result.ok) {
                               notify(result.error.message)
                             } else {
+                              setSelectedPlacementId(
+                                (result.inverse as { placementId: string }).placementId,
+                              )
+                              setDragState(null)
+                              setCollectionPlacementMenu(null)
                               notify(`Placed collection at ${playhead.toFixed(2)}s`)
                             }
                           }}
