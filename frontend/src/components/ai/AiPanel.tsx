@@ -19,7 +19,7 @@ import { AiProposalModal, type ProposalModalState } from './AiProposalModal'
 import { AiProposalDetail } from './AiProposalView'
 import { AiAnimationView } from './AiAnimationView'
 import { AiBoardView } from './AiBoardView'
-import { AiAskBlock } from './AiAskBlock'
+import { AiAskGroup } from './AiAskBlock'
 import { AiCalibrationView } from './AiCalibrationView'
 import { AiNarrationView } from './AiNarrationView'
 import { AiReconciliationView } from './AiReconciliationView'
@@ -827,15 +827,14 @@ export function AiPanel() {
                       (stopped — partial response kept)
                     </div>
                   )}
-                  {askBlocks.map((block, index) => (
-                    <AiAskBlock
-                      key={`${block.id}-${index}`}
-                      block={block}
+                  {askBlocks.length > 0 && (
+                    <AiAskGroup
+                      blocks={askBlocks}
                       messageId={message.id}
                       disabled={isStreaming || unavailable}
                       onAnswer={handleAnswerAsk}
                     />
-                  ))}
+                  )}
                   {message.errorCode && (
                     <div data-testid={`ai-error-${message.id}`}>
                       {message.content}

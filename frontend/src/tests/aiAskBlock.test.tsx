@@ -2,13 +2,16 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  emptyAskDraft,
   extractAskBlocks,
   formatAskAnswer,
+  formatAskAnswers,
   hasAskBlocks,
   isAskAnswerEmpty,
+  isAskDraftEmpty,
   type AskBlock,
 } from '../ai/askBlock'
-import { AiAskBlock } from '../components/ai/AiAskBlock'
+import { AiAskGroup } from '../components/ai/AiAskBlock'
 
 const SINGLE_MESSAGE = [
   '## Open questions',
@@ -130,9 +133,32 @@ describe('formatAskAnswer', () => {
     expect(isAskAnswerEmpty(['a'], '')).toBe(false)
     expect(isAskAnswerEmpty([], 'x')).toBe(false)
   })
+
+  it('joins per-question drafts into one newline message', () => {
+    const second: AskBlock = { ...block, id: 'timing', kind: 'text', options: [] }
+    expect(
+      formatAskAnswers(
+        [block, second],
+        [
+          { ...emptyAskDraft(), selected: ['keep-current'] },
+          { ...emptyAskDraft(), freeText: 'three seconds' },
+        ],
+      ),
+    ).toBe('Q (landing-xy): Keep current Cat XY\nQ (timing): three seconds')
+  })
+
+  it('detects empty drafts per kind', () => {
+    const text: AskBlock = { ...block, kind: 'text', options: [] }
+    expect(isAskDraftEmpty(block, emptyAskDraft())).toBe(true)
+    expect(isAskDraftEmpty(text, emptyAskDraft())).toBe(true)
+    expect(isAskDraftEmpty(text, { ...emptyAskDraft(), freeText: 'hi' })).toBe(false)
+    expect(
+      isAskDraftEmpty(block, { ...emptyAskDraft(), customSelected: true, customText: '  ' }),
+    ).toBe(true)
+  })
 })
 
-describe('AiAskBlock', () => {
+describe('AiAskGroup', () => {
   const block: AskBlock = {
     id: 'landing-xy',
     question: 'Mid-sofa landing XY for the Cat root?',
@@ -144,11 +170,12 @@ describe('AiAskBlock', () => {
     allowCustom: true,
   }
   const base = 'ai-ask-m-1-landing-xy'
+  const groupAnswer = 'ai-ask-m-1-answer'
 
   it('disables Answer until a choice is made, then appends the exact message', async () => {
     const onAnswer = vi.fn()
-    render(<AiAskBlock block={block} messageId="m-1" onAnswer={onAnswer} />)
-    const answer = screen.getByTestId(`${base}-answer`)
+    render(<AiAskGroup blocks={[block]} messageId="m-1" onAnswer={onAnswer} />)
+    const answer = screen.getByTestId(groupAnswer)
     expect(answer).toBeDisabled()
     expect(onAnswer).not.toHaveBeenCalled()
 
@@ -161,24 +188,24 @@ describe('AiAskBlock', () => {
 
   it('sends custom text alongside or instead of a selection', async () => {
     const onAnswer = vi.fn()
-    render(<AiAskBlock block={block} messageId="m-1" onAnswer={onAnswer} />)
+    render(<AiAskGroup blocks={[block]} messageId="m-1" onAnswer={onAnswer} />)
     await userEvent.click(screen.getByTestId(`${base}-option-custom`))
     // Custom selected but empty is still a no-op.
-    expect(screen.getByTestId(`${base}-answer`)).toBeDisabled()
+    expect(screen.getByTestId(groupAnswer)).toBeDisabled()
     await userEvent.type(screen.getByTestId(`${base}-custom`), 'nudge left')
-    await userEvent.click(screen.getByTestId(`${base}-answer`))
+    await userEvent.click(screen.getByTestId(groupAnswer))
     expect(onAnswer).toHaveBeenCalledWith('Q (landing-xy): custom: nudge left')
   })
 
   it('supports multi-select answers joined by label', async () => {
     const onAnswer = vi.fn()
     const multi: AskBlock = { ...block, kind: 'multi' }
-    render(<AiAskBlock block={multi} messageId="m-1" onAnswer={onAnswer} />)
-    expect(screen.getByTestId(`${base}-answer`)).toBeDisabled()
+    render(<AiAskGroup blocks={[multi]} messageId="m-1" onAnswer={onAnswer} />)
+    expect(screen.getByTestId(groupAnswer)).toBeDisabled()
     await userEvent.click(screen.getByTestId(`${base}-option-use-sofa-center`))
     await userEvent.click(screen.getByTestId(`${base}-option-keep-current`))
     await userEvent.type(screen.getByTestId(`${base}-custom`), 'nudge left')
-    await userEvent.click(screen.getByTestId(`${base}-answer`))
+    await userEvent.click(screen.getByTestId(groupAnswer))
     expect(onAnswer).toHaveBeenCalledWith(
       'Q (landing-xy): Sofa center from live context, Keep current Cat XY + custom: nudge left',
     )
@@ -187,10 +214,38 @@ describe('AiAskBlock', () => {
   it('renders text-kind answers from the textarea', async () => {
     const onAnswer = vi.fn()
     const text: AskBlock = { ...block, kind: 'text', options: [] }
-    render(<AiAskBlock block={text} messageId="m-1" onAnswer={onAnswer} />)
-    expect(screen.getByTestId(`${base}-answer`)).toBeDisabled()
+    render(<AiAskGroup blocks={[text]} messageId="m-1" onAnswer={onAnswer} />)
+    expect(screen.getByTestId(groupAnswer)).toBeDisabled()
     await userEvent.type(screen.getByTestId(`${base}-text`), 'three seconds')
-    await userEvent.click(screen.getByTestId(`${base}-answer`))
+    await userEvent.click(screen.getByTestId(groupAnswer))
     expect(onAnswer).toHaveBeenCalledWith('Q (landing-xy): three seconds')
+  })
+
+  it('forces every question answered before the shared send', async () => {
+    const onAnswer = vi.fn()
+    const timing: AskBlock = {
+      id: 'timing',
+      question: 'Hold how long?',
+      kind: 'text',
+      options: [],
+      allowCustom: false,
+    }
+    render(<AiAskGroup blocks={[block, timing]} messageId="m-1" onAnswer={onAnswer} />)
+    const answer = screen.getByTestId(groupAnswer)
+    expect(answer).toBeDisabled()
+    expect(answer).toHaveTextContent('Answer all (2)')
+
+    // Answering only the first question keeps the shared button inactive.
+    await userEvent.click(screen.getByTestId(`${base}-option-keep-current`))
+    expect(answer).toBeDisabled()
+    expect(onAnswer).not.toHaveBeenCalled()
+
+    await userEvent.type(screen.getByTestId('ai-ask-m-1-timing-text'), 'three seconds')
+    expect(answer).not.toBeDisabled()
+    await userEvent.click(answer)
+    expect(onAnswer).toHaveBeenCalledTimes(1)
+    expect(onAnswer).toHaveBeenCalledWith(
+      'Q (landing-xy): Keep current Cat XY\nQ (timing): three seconds',
+    )
   })
 })

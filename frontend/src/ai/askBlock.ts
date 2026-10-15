@@ -189,3 +189,45 @@ export function formatAskAnswer(
 export function isAskAnswerEmpty(selectedIds: readonly string[], customText: string): boolean {
   return selectedIds.length === 0 && !customText.trim()
 }
+
+/** Per-question draft backing one ask block in a grouped answer. */
+export interface AskAnswerDraft {
+  readonly selected: readonly string[]
+  readonly customSelected: boolean
+  readonly customText: string
+  readonly freeText: string
+}
+
+export function emptyAskDraft(): AskAnswerDraft {
+  return { selected: [], customSelected: false, customText: '', freeText: '' }
+}
+
+/** True while the draft for one block has no answer yet. */
+export function isAskDraftEmpty(block: AskBlock, draft: AskAnswerDraft): boolean {
+  if (block.kind === 'text') return !draft.freeText.trim()
+  if (block.kind === 'single' && draft.customSelected) return !draft.customText.trim()
+  return isAskAnswerEmpty(draft.selected, draft.customSelected ? draft.customText : '')
+}
+
+/**
+ * Formats one block's draft as its `Q (<id>): ...` line. Single-choice is
+ * exclusive: a selected Custom carries only the custom text.
+ */
+export function formatAskDraft(block: AskBlock, draft: AskAnswerDraft): string {
+  if (block.kind === 'text') return formatAskAnswer(block, [], draft.freeText)
+  const customInput = draft.customSelected ? draft.customText : ''
+  const effectiveSelected = block.kind === 'single' && draft.customSelected ? [] : draft.selected
+  return formatAskAnswer(block, effectiveSelected, customInput)
+}
+
+/**
+ * Formats the combined send for every block under one assistant message:
+ * one `Q (<id>): ...` line per question, in block order, sent as a single
+ * user message so history stays append-only.
+ */
+export function formatAskAnswers(
+  blocks: readonly AskBlock[],
+  drafts: readonly AskAnswerDraft[],
+): string {
+  return blocks.map((block, index) => formatAskDraft(block, drafts[index]!)).join('\n')
+}

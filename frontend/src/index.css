@@ -4530,6 +4530,22 @@ button:disabled {
   margin-top: 10px;
 }
 
+.ai-ask-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.ai-ask-group .ai-ask {
+  margin-top: 0;
+}
+
+.ai-ask-group .ai-ask + .ai-ask {
+  margin-top: 0;
+}
+
 .ai-ask__header {
   display: flex;
   align-items: flex-start;
@@ -4640,7 +4656,12 @@ button:disabled {
   justify-content: flex-end;
 }
 
-.ai-ask__footer .ai-ask__answer {
+.ai-ask-group__footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ai-ask-group__footer .ai-ask__answer {
   background: var(--color-accent);
   border-color: var(--color-accent);
   color: var(--color-accent-text);
