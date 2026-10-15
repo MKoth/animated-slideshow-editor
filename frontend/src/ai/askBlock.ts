@@ -184,6 +184,22 @@ export function hasAskBlocks(content: string): boolean {
 }
 
 /**
+ * Removes raw ```ask fences so the message shows just the interactive UI
+ * (plus any surrounding prose) instead of the fence source and the UI.
+ * Non-ask fences are left untouched.
+ */
+const STRIP_RE = /```(\w[\w-]*)\s*\n([\s\S]*?)```/g
+
+export function stripAskBlocks(content: string): string {
+  if (!content || !hasAskBlocks(content)) return content
+  return content
+    .replace(STRIP_RE, (match, lang) => (String(lang ?? '').toLowerCase() === 'ask' ? '' : match))
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/**
  * Formats one Answer submit as a single user message:
  * `Q (<id>): <selected labels> [+ custom: <text>]`. A lone custom answer on
  * a text block carries the raw text without the `custom:` prefix.

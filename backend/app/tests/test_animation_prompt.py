@@ -207,6 +207,8 @@ def test_every_mode_prompt_teaches_ask_blocks() -> None:
         assert "kind: single|multi|text" in prompt, mode
         assert "allowCustom" in prompt, mode
         assert "one block per question" in prompt, mode
+        assert "example" in prompt, mode
+        assert "detail:" in prompt, mode
 
 
 def test_animation_ask_blocks_keep_two_phase_policy() -> None:

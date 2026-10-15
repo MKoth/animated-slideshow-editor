@@ -9,6 +9,7 @@ import {
   hasAskBlocks,
   isAskAnswerEmpty,
   isAskDraftEmpty,
+  stripAskBlocks,
   type AskBlock,
 } from '../ai/askBlock'
 import { AiAskGroup } from '../components/ai/AiAskBlock'
@@ -139,6 +140,25 @@ describe('extractAskBlocks', () => {
     // One bad block does not sink a good one.
     const mixed = ['```ask', 'id: bad', 'kind: single', '```', '', SINGLE_MESSAGE].join('\n')
     expect(extractAskBlocks(mixed).map((b) => b.id)).toEqual(['landing-xy'])
+  })
+})
+
+describe('stripAskBlocks', () => {
+  it('removes raw ask fences but keeps prose and other fences', () => {
+    const content = ['## Open questions', '', SINGLE_MESSAGE, '', 'done'].join('\n')
+    const stripped = stripAskBlocks(content)
+    expect(stripped).toContain('## Open questions')
+    expect(stripped).toContain('done')
+    expect(stripped).not.toContain('```ask')
+    expect(stripped).not.toContain('landing-xy')
+    expect(extractAskBlocks(content)).toHaveLength(1)
+  })
+
+  it('leaves non-ask fences untouched and trims fence-only messages', () => {
+    const other = '```engine-command\nslide: Slide 1\n```'
+    expect(stripAskBlocks(other)).toBe(other)
+    expect(stripAskBlocks(SINGLE_MESSAGE).trim()).not.toContain('```')
+    expect(stripAskBlocks('just prose')).toBe('just prose')
   })
 })
 

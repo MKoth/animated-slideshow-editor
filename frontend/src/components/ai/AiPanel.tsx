@@ -4,7 +4,7 @@ import { animationAssetsFromConversationProposals } from '../../ai/animationAsse
 import { AiMarkdown } from '../../ai/markdown'
 import { extractLegacyScriptBlock, transpileLegacyScript } from '../../ai/legacyScript'
 import { extractScriptBlock, resolveScriptSlideId } from '../../ai/scriptBlock'
-import { extractAskBlocks } from '../../ai/askBlock'
+import { extractAskBlocks, stripAskBlocks } from '../../ai/askBlock'
 import { buildShapeStepOperation, extractShapeStepBlock } from '../../ai/shapeStep'
 import { buildClipBatchOperations, extractClipBatchBlock } from '../../ai/clipBatch'
 import { useFingerprint } from '../../ai/proposalFingerprint'
@@ -810,6 +810,12 @@ export function AiPanel() {
                   : null
               const askBlocks =
                 message.role === 'assistant' ? extractAskBlocks(message.content) : []
+              // Raw ```ask fences are stripped: the message shows the
+              // interactive UI (plus any surrounding prose), not the fence source.
+              const shownContent =
+                message.role === 'assistant' && askBlocks.length > 0
+                  ? stripAskBlocks(message.content)
+                  : message.content
               return (
                 <div
                   key={message.id}
@@ -818,7 +824,9 @@ export function AiPanel() {
                 >
                   <div className="ai-message__role">{message.role}</div>
                   {message.role === 'assistant' ? (
-                    <AiMarkdown content={message.content} />
+                    shownContent ? (
+                      <AiMarkdown content={shownContent} />
+                    ) : null
                   ) : (
                     <div>{message.content}</div>
                   )}
