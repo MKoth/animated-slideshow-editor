@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AssetDefinition } from '../api'
-import { captureAssetSnapshot, ensureReferencedEmbedded } from '../app/assetSnapshot'
+import {
+  captureAssetSnapshot,
+  ensureReferencedEmbedded,
+  resolveAssetUrl,
+} from '../app/assetSnapshot'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
 import { createEngine } from '../engine/internal'
 import { deserialize, serialize } from '../engine/lessonSerializer'
@@ -55,6 +59,7 @@ function stubAssetImage(url: string): void {
 function setLibraryDefinitions(definitions: readonly AssetDefinition[]): void {
   useAssetLibraryStore.setState({
     definitions: [...definitions],
+    allDefinitions: [...definitions],
     loaded: true,
     unavailable: false,
   })
@@ -69,6 +74,7 @@ describe('captureAssetSnapshot', () => {
     vi.stubGlobal('fetch', vi.fn())
     useAssetLibraryStore.setState({
       definitions: [],
+      allDefinitions: [],
       loaded: false,
       unavailable: false,
     })
@@ -76,7 +82,12 @@ describe('captureAssetSnapshot', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
-    useAssetLibraryStore.setState({ definitions: [], loaded: false, unavailable: false })
+    useAssetLibraryStore.setState({
+      definitions: [],
+      allDefinitions: [],
+      loaded: false,
+      unavailable: false,
+    })
   })
 
   it('captures the definition metadata and image bytes into the project snapshot', async () => {
@@ -98,6 +109,25 @@ describe('captureAssetSnapshot', () => {
       original_filename: 'boy.png',
     })
     expect(engine.project?.embeddedAssets).toHaveLength(1)
+  })
+
+  it('resolves assets from the full library when the Assets panel is in another folder', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    setLibraryDefinitions([])
+    useAssetLibraryStore.setState({ allDefinitions: [BOY] })
+
+    expect(resolveAssetUrl(engine, BOY.id)).toBe(BOY.original_url)
+    expect(resolveAssetUrl(engine, 'missing')).toBeNull()
+  })
+
+  it('prefers an embedded snapshot over the live library URL', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    engine.embedAsset({ id: BOY.id, name: BOY.name, data: 'QUJD', mimeType: 'image/png' })
+    setLibraryDefinitions([BOY])
+
+    expect(resolveAssetUrl(engine, BOY.id)).toBe('data:image/png;base64,QUJD')
   })
 
   it('excludes the library folder_id from the portable snapshot', async () => {

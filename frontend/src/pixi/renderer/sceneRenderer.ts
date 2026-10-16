@@ -241,6 +241,7 @@ export class SceneRenderer {
       this.#pixi,
       this.#textureCache,
       (nodeId, time) => this.#revealPerformerAssetState(nodeId, time),
+      this.#resolveAssetUrl,
     )
     void useShapePreviewStore.subscribe(() => {
       this.refreshDeformedMeshSizes()

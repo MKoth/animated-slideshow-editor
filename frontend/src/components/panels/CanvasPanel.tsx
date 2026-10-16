@@ -1,5 +1,8 @@
 import { useEffect, useRef } from 'react'
-import { captureAssetSnapshot, embeddedDataUrl } from '../../app/assetSnapshot'
+import {
+  captureAssetSnapshot,
+  resolveAssetUrl as resolveAssetUrlForRender,
+} from '../../app/assetSnapshot'
 import { resolveShaderSourceForRender } from '../../app/definitionSnapshot'
 import { useEngine } from '../../app/useEngine'
 import { realPixi } from '../../pixi/renderer/pixi'
@@ -33,14 +36,7 @@ export function CanvasPanel() {
       return
     }
     const resolveAssetUrl = (definitionId: string): string | null => {
-      const embedded = engine.getEmbeddedAsset(definitionId)
-      if (embedded) {
-        return embeddedDataUrl(embedded)
-      }
-      const definition = useAssetLibraryStore
-        .getState()
-        .definitions.find((entry) => entry.id === definitionId)
-      const url = definition?.original_url ?? null
+      const url = resolveAssetUrlForRender(engine, definitionId)
       if (url) {
         void captureAssetSnapshot(engine, definitionId)
       }
@@ -70,10 +66,10 @@ export function CanvasPanel() {
       },
       resolveShaderSource,
     )
-    let knownDefinitions = useAssetLibraryStore.getState().definitions
+    let knownDefinitions = useAssetLibraryStore.getState().allDefinitions
     const unsubscribeLibrary = useAssetLibraryStore.subscribe((state) => {
-      if (state.definitions !== knownDefinitions) {
-        knownDefinitions = state.definitions
+      if (state.allDefinitions !== knownDefinitions) {
+        knownDefinitions = state.allDefinitions
         renderer.refreshAssetTextures()
       }
     })

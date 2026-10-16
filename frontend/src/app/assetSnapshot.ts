@@ -133,11 +133,26 @@ export function embeddedDataUrl(asset: {
   return `data:${asset.mimeType};base64,${asset.data}`
 }
 
+/** Resolve renderable image bytes independently of the Assets panel's folder. */
+export function resolveAssetUrl(engine: EnginePublic, definitionId: string): string | null {
+  const embedded = engine.getEmbeddedAsset(definitionId)
+  if (embedded) return embeddedDataUrl(embedded)
+  const { allDefinitions, definitions } = useAssetLibraryStore.getState()
+  const definition =
+    allDefinitions.find((entry) => entry.id === definitionId) ??
+    definitions.find((entry) => entry.id === definitionId)
+  return definition?.original_url ?? null
+}
+
 function libraryDefinition(definitionId: string): AssetDefinition | null {
   return (
     useAssetLibraryStore
       .getState()
-      .definitions.find((definition) => definition.id === definitionId) ?? null
+      .allDefinitions.find((definition) => definition.id === definitionId) ??
+    useAssetLibraryStore
+      .getState()
+      .definitions.find((definition) => definition.id === definitionId) ??
+    null
   )
 }
 

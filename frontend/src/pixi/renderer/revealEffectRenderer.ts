@@ -26,12 +26,13 @@ export class RevealEffectRenderer {
   readonly #pixi: RendererPixi
   readonly #textureCache: TextureCache
   readonly #resolveAssetState: (nodeId: string, time: number) => RevealPerformerAssetState | null
+  readonly #resolveAssetUrl: (assetId: string) => string | null
   readonly #masks = new Map<string, PixiGraphics>()
   readonly #marks = new Map<string, PixiGraphics>()
   readonly #paws = new Map<string, PixiGraphics>()
   readonly #assetPerformers = new Map<
     string,
-    { readonly nodeId: string; readonly sprite: PixiSprite }
+    { readonly nodeId: string; readonly assetId: string; readonly sprite: PixiSprite }
   >()
 
   constructor(
@@ -39,11 +40,13 @@ export class RevealEffectRenderer {
     pixi: RendererPixi,
     textureCache: TextureCache,
     resolveAssetState: (nodeId: string, time: number) => RevealPerformerAssetState | null,
+    resolveAssetUrl: (assetId: string) => string | null,
   ) {
     this.#world = world
     this.#pixi = pixi
     this.#textureCache = textureCache
     this.#resolveAssetState = resolveAssetState
+    this.#resolveAssetUrl = resolveAssetUrl
   }
 
   clear(containers: ReadonlyMap<string, PixiContainer>): void {
@@ -203,7 +206,7 @@ export class RevealEffectRenderer {
         .map((effect) => effect.id),
     )
     const assetEffects = new Map(
-      performers
+      [...performers, ...activeMarks]
         .filter((effect) => effect.visual.kind === 'asset')
         .map((effect) => [effect.id, effect] as const),
     )
@@ -282,7 +285,7 @@ export class RevealEffectRenderer {
     const state = this.#resolveAssetState(nodeId, time)
     if (!state) return
     let performer = this.#assetPerformers.get(effect.id)
-    if (performer?.nodeId !== nodeId) {
+    if (performer?.nodeId !== nodeId || performer.assetId !== state.assetId) {
       if (performer) {
         this.#world.removeChild(performer.sprite)
         performer.sprite.destroy()
@@ -290,8 +293,20 @@ export class RevealEffectRenderer {
       const sprite = new this.#pixi.Sprite(this.#textureCache.get(state.assetId))
       sprite.zIndex = Number.MAX_SAFE_INTEGER
       this.#world.addChild(sprite)
-      performer = { nodeId, sprite }
+      performer = { nodeId, assetId: state.assetId, sprite }
       this.#assetPerformers.set(effect.id, performer)
+      const url = this.#resolveAssetUrl(state.assetId)
+      if (url) {
+        void this.#textureCache.load(url, state.assetId).then((loaded) => {
+          if (
+            loaded.real &&
+            this.#assetPerformers.get(effect.id)?.sprite === sprite &&
+            !sprite.destroyed
+          ) {
+            sprite.texture = loaded.texture
+          }
+        })
+      }
     }
     const sprite = performer.sprite
     sprite.anchor.set(0.5)
