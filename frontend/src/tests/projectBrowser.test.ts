@@ -77,7 +77,12 @@ beforeEach(() => {
     playbackSpeed: 1,
     loopEnabled: false,
   })
-  useAssetLibraryStore.setState({ definitions: [], loaded: false, unavailable: false })
+  useAssetLibraryStore.setState({
+    definitions: [],
+    allDefinitions: [],
+    loaded: false,
+    unavailable: false,
+  })
 })
 
 afterEach(() => {
@@ -133,10 +138,18 @@ describe('openLibraryProject', () => {
     const { project } = makeProjectWithAssets('With Assets', [
       { name: 'Boy', definitionId: 'def-boy' },
     ])
-    useAssetLibraryStore.setState({ definitions: [], loaded: true, unavailable: false })
+    useAssetLibraryStore.setState({
+      definitions: [],
+      allDefinitions: [],
+      loaded: true,
+      unavailable: false,
+    })
     stubProjects([SUMMARY_1], { 'p-1': serialize(project) })
 
     await openLibraryProject(engine, 'p-1')
+    // Reconciliation refreshes the global mirror (fetch stub rejects → the
+    // stubbed mirror stands) before reporting.
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(useMissingAssetsStore.getState().report?.names).toEqual(['Boy'])
     expect(useMissingAssetsStore.getState().dialogVisible).toBe(true)

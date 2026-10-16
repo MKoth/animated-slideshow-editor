@@ -36,15 +36,15 @@ export function restoreProjectInEditor(engine: EnginePublic): void {
 }
 
 function reconcileWhenLibraryReady(engine: EnginePublic, project: Project): void {
+  // Drop any previous project's report so a stale dialog never lingers over
+  // the newly opened project; the fresh verdict arrives below.
+  useMissingAssetsStore.getState().setReport(null)
   const library = useAssetLibraryStore.getState()
   if (library.unavailable) {
-    useMissingAssetsStore.getState().setReport(null)
     return
   }
   if (library.loaded) {
-    useMissingAssetsStore
-      .getState()
-      .setReport(reconcileAgainstLibrary(engine, project, library.definitions))
+    void reconcileAgainstFullLibrary(engine, project)
     return
   }
   let settled = false
@@ -57,14 +57,24 @@ function reconcileWhenLibraryReady(engine: EnginePublic, project: Project): void
     }
     settled = true
     unsubscribe()
-    if (state.unavailable) {
-      useMissingAssetsStore.getState().setReport(null)
-    } else {
-      useMissingAssetsStore
-        .getState()
-        .setReport(reconcileAgainstLibrary(engine, project, state.definitions))
+    if (!state.unavailable) {
+      void reconcileAgainstFullLibrary(engine, project)
     }
   })
+}
+
+async function reconcileAgainstFullLibrary(engine: EnginePublic, project: Project): Promise<void> {
+  // The panel-scoped `definitions` only mirror what the Assets panel is
+  // browsing (the root listing by default), so reconciling against them
+  // reports live library assets as missing. Refresh the global mirror and
+  // reconcile against the full picture — the same one script Check/Run
+  // resolve `create asset` against.
+  await useAssetLibraryStore.getState().loadAllDefinitions()
+  if (engine.project?.id !== project.id) {
+    return
+  }
+  const definitions = useAssetLibraryStore.getState().allDefinitions
+  useMissingAssetsStore.getState().setReport(reconcileAgainstLibrary(engine, project, definitions))
 }
 
 function reconcileAgainstLibrary(

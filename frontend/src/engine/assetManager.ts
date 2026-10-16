@@ -39,6 +39,15 @@ export class AssetManager {
     return definition
   }
 
+  /**
+   * Drop a library registration (the asset was deleted from the library).
+   * Scene nodes referencing the id keep their `assetDefinitionId` string;
+   * only name resolution loses the entry. Returns true when one was removed.
+   */
+  unregister(id: string): boolean {
+    return this.#definitions.delete(id)
+  }
+
   createInstance(
     sceneId: string,
     parentId: string,

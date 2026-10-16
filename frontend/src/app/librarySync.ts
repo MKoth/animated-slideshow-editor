@@ -9,8 +9,13 @@ import { useShaderLibraryStore } from '../stores/shaderLibraryStore'
 export type Unsubscribe = () => void
 
 export function registerLibrarySync(sync: AssetLibrarySync): Unsubscribe {
-  const apply = (): void => sync.apply(useAssetLibraryStore.getState().definitions)
+  const apply = (): void => sync.syncAll(useAssetLibraryStore.getState().allDefinitions)
   apply()
+  // Converge to the whole library even if the Assets panel is never opened:
+  // script Check resolves `create asset "Name"` against the full, current
+  // picture, not just the browsed folder — and deleted assets vanish from
+  // resolution instead of lingering as ghosts.
+  void useAssetLibraryStore.getState().loadAllDefinitions()
   return useAssetLibraryStore.subscribe(apply)
 }
 

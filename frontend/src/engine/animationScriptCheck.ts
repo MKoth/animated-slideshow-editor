@@ -111,7 +111,13 @@ export function checkAnimationScript(
     })) ?? []
   // Assets a `create asset "Name"` may resolve: the registered library
   // definitions plus the project's embedded snapshots, deduplicated by id.
-  // Embedded bytes win; they are what Run would use.
+  // Embedded bytes win; they are what Run would use. An embedded snapshot
+  // whose id is gone from the library is an orphan of a deleted asset: when
+  // a live library asset already carries the same name, the orphan is
+  // skipped so a delete-and-reupload cycle resolves to the actual picture
+  // instead of reporting a phantom ambiguity. Orphans with no live
+  // same-named competitor are kept, so portable lessons still resolve
+  // offline.
   const assetsById = new Map<
     string,
     { id: string; name: string; embedded?: boolean; mimeType?: string }
@@ -126,14 +132,18 @@ export function checkAnimationScript(
         : { embedded: false }),
     })
   }
+  const libraryIds = new Set(assetsById.keys())
+  const takenNames = new Set([...assetsById.values()].map((asset) => asset.name))
   for (const embedded of engine.embeddedAssets) {
     if (!assetsById.has(embedded.id)) {
+      if (!libraryIds.has(embedded.id) && takenNames.has(embedded.name)) continue
       assetsById.set(embedded.id, {
         id: embedded.id,
         name: embedded.name,
         embedded: true,
         mimeType: embedded.mimeType,
       })
+      takenNames.add(embedded.name)
     }
   }
   // Materials `material("Name")` may resolve: library-registered definitions

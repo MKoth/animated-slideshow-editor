@@ -26,6 +26,12 @@ function errorMessage(error: unknown): string {
 
 interface AssetLibraryState {
   definitions: AssetDefinition[]
+  /**
+   * The complete library across all folders and search scopes: what script
+   * resolution syncs into the engine, so `create asset "Name"` sees the
+   * whole, current picture instead of just the browsed folder.
+   */
+  allDefinitions: AssetDefinition[]
   folders: AssetFolder[]
   currentFolderId: string | null
   loaded: boolean
@@ -37,6 +43,8 @@ interface AssetLibraryState {
   order: AssetSortOrder
   selectedId: string | null
   loadLibrary: () => Promise<void>
+  /** Refresh the full-library mirror without touching the panel display. */
+  loadAllDefinitions: () => Promise<void>
   loadFolders: () => Promise<void>
   setCurrentFolder: (folderId: string | null) => void
   setSearch: (search: string) => void
@@ -56,6 +64,7 @@ let requestSeq = 0
 
 export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
   definitions: [],
+  allDefinitions: [],
   folders: [],
   currentFolderId: null,
   loaded: false,
@@ -107,6 +116,18 @@ export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
     }
   },
 
+  loadAllDefinitions: async () => {
+    try {
+      // Global scope: no folder or search filter, so the mirror holds every
+      // library asset no matter what the panel is browsing.
+      const allDefinitions = await assetsApi.listAssets({ sort: 'name', order: 'asc' })
+      set({ allDefinitions })
+    } catch {
+      // Silent: display flows already report backend outages; the sync mirror
+      // simply stays at its last known picture until the next refresh.
+    }
+  },
+
   setCurrentFolder: (folderId) => {
     if (get().currentFolderId === folderId) return
     set({ currentFolderId: folderId, selectedId: null })
@@ -150,6 +171,7 @@ export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
     }
     if (result.created.length > 0) {
       await get().loadLibrary()
+      await get().loadAllDefinitions()
     }
     return result
   },
@@ -165,6 +187,7 @@ export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
     }
     set((state) => ({
       definitions: state.definitions.filter((definition) => definition.id !== assetId),
+      allDefinitions: state.allDefinitions.filter((definition) => definition.id !== assetId),
       selectedId: state.selectedId === assetId ? null : state.selectedId,
     }))
     libraryEventBus.emit({ type: 'AssetDeleted', id: assetId })

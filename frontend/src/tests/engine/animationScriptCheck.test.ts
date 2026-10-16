@@ -458,3 +458,58 @@ describe('Animation Script Check — statement diagnostics', () => {
     expect(result.summary.keyframeCount).toBe(0)
   })
 })
+
+describe('Animation Script Check — asset name resolution sees the whole library', () => {
+  const source = ['script "Demo" from 0', 'create asset "Paw" as paw at (10, 10) {}'].join('\n')
+  const errorsOf = (result: ReturnType<typeof checkAnimationScript>) =>
+    result.diagnostics.filter((diagnostic) => diagnostic.severity === 'error')
+
+  it('resolves assets synced outside any folder browsing', () => {
+    const { system, slideId } = setup()
+    system.assetLibrarySync.apply([{ id: 'live-id', name: 'Paw' }])
+
+    const result = checkAnimationScript(system.engine, slideId, source)
+
+    expect(errorsOf(result)).toEqual([])
+    expect(result.runnable).toBe(true)
+    expect(result.creations.nodes.map((node) => node.assetDefinitionId)).toEqual(['live-id'])
+  })
+
+  it('ignores an orphaned embedded snapshot shadowed by a live same-named asset', () => {
+    const { system, slideId } = setup()
+    system.assetLibrarySync.apply([{ id: 'live-id', name: 'Paw' }])
+    system.engine.embedAsset({ id: 'old-id', name: 'Paw', data: 'QUJD', mimeType: 'image/png' })
+
+    const result = checkAnimationScript(system.engine, slideId, source)
+
+    expect(errorsOf(result)).toEqual([])
+    expect(result.runnable).toBe(true)
+    expect(result.creations.nodes.map((node) => node.assetDefinitionId)).toEqual(['live-id'])
+  })
+
+  it('still resolves an embedded-only snapshot with no live competitor', () => {
+    const { system, slideId } = setup()
+    system.engine.embedAsset({ id: 'old-id', name: 'Paw', data: 'QUJD', mimeType: 'image/png' })
+
+    const result = checkAnimationScript(system.engine, slideId, source)
+
+    expect(errorsOf(result)).toEqual([])
+    expect(result.runnable).toBe(true)
+    expect(result.creations.nodes.map((node) => node.assetDefinitionId)).toEqual(['old-id'])
+  })
+
+  it('still reports ambiguity for two genuinely live same-named assets', () => {
+    const { system, slideId } = setup()
+    system.assetLibrarySync.apply([
+      { id: 'live-1', name: 'Paw' },
+      { id: 'live-2', name: 'Paw' },
+    ])
+
+    const result = checkAnimationScript(system.engine, slideId, source)
+
+    expect(result.runnable).toBe(false)
+    expect(errorsOf(result).map((diagnostic) => diagnostic.message)).toEqual([
+      'Asset name "Paw" is ambiguous — 2 library assets share it',
+    ])
+  })
+})

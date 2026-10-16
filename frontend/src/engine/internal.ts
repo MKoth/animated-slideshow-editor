@@ -3373,6 +3373,10 @@ export class Engine {
     return this.#assets.register(definitionId, name)
   }
 
+  unregisterAssetDefinition(definitionId: string): boolean {
+    return this.#assets.unregister(definitionId)
+  }
+
   registerMaterialDefinition(
     definitionId: string,
     name: string,

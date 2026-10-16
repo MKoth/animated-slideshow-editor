@@ -46,6 +46,8 @@ describe('assetLibraryStore', () => {
     vi.stubGlobal('fetch', vi.fn())
     useAssetLibraryStore.setState({
       definitions: [],
+      allDefinitions: [],
+      currentFolderId: null,
       loading: false,
       error: null,
       unavailable: false,
@@ -202,6 +204,7 @@ describe('assetLibraryStore', () => {
     expect(result.created).toEqual([created])
     expect(events).toEqual([{ type: 'AssetImported', asset: created }])
     expect(useAssetLibraryStore.getState().definitions).toEqual([created])
+    expect(useAssetLibraryStore.getState().allDefinitions).toEqual([created])
   })
 
   it('surfaces per-file import errors as notifications', async () => {
@@ -279,11 +282,15 @@ describe('assetLibraryStore', () => {
     })
     await useAssetLibraryStore.getState().loadLibrary()
     useAssetLibraryStore.getState().selectAsset('a1')
+    useAssetLibraryStore.setState({
+      allDefinitions: [makeDefinition(), makeDefinition({ id: 'a2', name: 'Girl' })],
+    })
     const events = listen()
 
     await useAssetLibraryStore.getState().deleteAsset('a1')
 
     expect(useAssetLibraryStore.getState().definitions.map((d) => d.id)).toEqual(['a2'])
+    expect(useAssetLibraryStore.getState().allDefinitions.map((d) => d.id)).toEqual(['a2'])
     expect(useAssetLibraryStore.getState().selectedId).toBeNull()
     expect(events).toEqual([{ type: 'AssetDeleted', id: 'a1' }])
   })
@@ -326,6 +333,45 @@ describe('assetLibraryStore', () => {
     ])
     expect(useAssetLibraryStore.getState().definitions).toEqual([makeDefinition()])
     expect(useAssetLibraryStore.getState().unavailable).toBe(false)
+  })
+
+  it('mirrors the full library for script resolution regardless of the browsed folder', async () => {
+    const urls: string[] = []
+    stubFetch((url) => {
+      if (url.includes('/api/assets')) {
+        urls.push(url)
+        return Promise.resolve(new Response(JSON.stringify([makeDefinition()]), { status: 200 }))
+      }
+      return Promise.reject(new Error(url))
+    })
+    // Inside a folder: the panel display is scoped but the mirror is global.
+    useAssetLibraryStore.setState({ currentFolderId: 'folder-1' })
+
+    await useAssetLibraryStore.getState().loadLibrary()
+    await useAssetLibraryStore.getState().loadAllDefinitions()
+
+    const scoped = new URLSearchParams(urls[0].split('?')[1])
+    expect(scoped.get('folder_id')).toBe('folder-1')
+    const global = new URLSearchParams(urls[urls.length - 1].split('?')[1])
+    expect(global.get('folder_id')).toBeNull()
+    expect(global.get('search')).toBeNull()
+    const state = useAssetLibraryStore.getState()
+    expect(state.allDefinitions).toEqual([makeDefinition()])
+  })
+
+  it('keeps the last full mirror and leaves the display alone when its refresh fails', async () => {
+    stubFetch(() => Promise.reject(new Error('connection refused')))
+    useAssetLibraryStore.setState({
+      definitions: [makeDefinition()],
+      allDefinitions: [makeDefinition({ id: 'a9', name: 'Kept' })],
+    })
+
+    await useAssetLibraryStore.getState().loadAllDefinitions()
+
+    const state = useAssetLibraryStore.getState()
+    expect(state.allDefinitions).toEqual([makeDefinition({ id: 'a9', name: 'Kept' })])
+    expect(state.definitions).toEqual([makeDefinition()])
+    expect(state.unavailable).toBe(false)
   })
 
   it('marks the library unavailable when the backend is down during delete', async () => {

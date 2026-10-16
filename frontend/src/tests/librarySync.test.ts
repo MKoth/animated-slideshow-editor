@@ -29,11 +29,11 @@ const BOY: AssetDefinition = {
 const GIRL: AssetDefinition = { ...BOY, id: 'lib-2', name: 'Girl' }
 
 function setLibrary(definitions: AssetDefinition[]): void {
-  useAssetLibraryStore.setState({ definitions })
+  useAssetLibraryStore.setState({ allDefinitions: definitions })
 }
 
 beforeEach(() => {
-  useAssetLibraryStore.setState({ definitions: [] })
+  useAssetLibraryStore.setState({ definitions: [], allDefinitions: [] })
 })
 
 describe('library sync', () => {
@@ -70,7 +70,18 @@ describe('library sync', () => {
     expect(engine.getAssetDefinition('lib-1').name).toBe('Boy Updated')
   })
 
-  it('never removes definitions the store no longer lists, so project definitions stay intact', () => {
+  it('removes library definitions the backend no longer lists, so deleted assets stop resolving', () => {
+    const engine = createEngine()
+    registerLibrarySync(new AssetLibrarySync(engine))
+    setLibrary([BOY, GIRL])
+
+    setLibrary([GIRL])
+
+    expect(engine.assetDefinitions.map((definition) => definition.id)).toEqual(['lib-2'])
+    expect(() => engine.getAssetDefinition('lib-1')).toThrow()
+  })
+
+  it('keeps project definitions that the sync never added, even when ids overlap the removals', () => {
     const engine = createEngine()
     const projectDefinition = engine.defineAsset('From Lesson File')
     registerLibrarySync(new AssetLibrarySync(engine))
@@ -80,10 +91,31 @@ describe('library sync', () => {
 
     expect(engine.assetDefinitions.map((definition) => definition.id)).toEqual([
       projectDefinition.id,
-      'lib-1',
       'lib-2',
     ])
-    expect(engine.getAssetDefinition('lib-1').name).toBe('Boy')
+    expect(engine.getAssetDefinition(projectDefinition.id).name).toBe('From Lesson File')
+  })
+
+  it('syncs the full library even when the scoped panel display is empty', () => {
+    const engine = createEngine()
+    registerLibrarySync(new AssetLibrarySync(engine))
+
+    // Browsing an empty folder: display list is empty but the full mirror is not.
+    useAssetLibraryStore.setState({ definitions: [], allDefinitions: [BOY] })
+
+    expect(engine.assetDefinitions.map((definition) => definition.name)).toEqual(['Boy'])
+  })
+
+  it('drops ids added by apply once a full sync no longer lists them', () => {
+    const engine = createEngine()
+    const sync = new AssetLibrarySync(engine)
+    registerLibrarySync(sync)
+    sync.apply([{ id: 'lib-1', name: 'Boy' }])
+    expect(engine.assetDefinitions).toHaveLength(1)
+
+    setLibrary([])
+
+    expect(engine.assetDefinitions).toHaveLength(0)
   })
 
   it('stops syncing after dispose', () => {
