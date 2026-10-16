@@ -3,10 +3,13 @@
 // Runs on slide 1 of the project "Animation Script test".
 // 1. Fades in the blackboard background (asset "blackboar-background",
 //    asset-library folder "Backgrounds").
-// 2. Shows the lesson title, then fades it away.
-// 3. Fades in an empty conjugation table and fills it cell by cell:
+// 2. Parks the three paw effect-performers off-screen (assets "paw with
+//    chalk", "paw with rag", "paw empty"): the effects script binds them by
+//    scene node name and sweeps them over its targets.
+// 3. Shows the lesson title, then fades it away.
+// 4. Fades in an empty conjugation table and fills it cell by cell:
 //    pronoun | SER | ESTAR (six persons).
-// 4. Below the table, six examples (three SER, three ESTAR) with their
+// 5. Below the table, six examples (three SER, three ESTAR) with their
 //    translations; the conjugated verb is tinted to match its column.
 //
 // Everything except the background lives under the "Lesson board" group, and
@@ -29,6 +32,16 @@ let tableScale = 1.5
 
 // ── Background ────────────────────────────────────────────────────────────
 create asset "blackboar-background" as bg at (cw / 2, ch / 2) { scaleX: ch / 4320, scaleY: ch / 4320, opacity: 0 }
+
+// ── Effect performers (bound by name in the effects script) ────────────────
+// Parked off-screen at full opacity: the source instances stay out of frame
+// while the renderer draws their sprites along each effect sweep. They live
+// at the scene root (outside "Lesson board") so the Chalk grain shader does
+// not apply to the paw photos. Scale 0.12 ≈ 100px tall on this 1090x893
+// canvas.
+create asset "paw with chalk" as pawchalk at (1500, 1200) { scaleX: 0.12, scaleY: 0.12 }
+create asset "paw with rag" as pawrag at (1640, 1200) { scaleX: 0.12, scaleY: 0.12 }
+create asset "paw empty" as pawempty at (1780, 1200) { scaleX: 0.12, scaleY: 0.12 }
 
 // ── Chalk group: title, table, examples and recap all filter through Chalk ─
 create group "Lesson board" as board

@@ -8,16 +8,32 @@
 // everything without duplication, and one undo restores the prior output.
 //
 // The flow still needs two Runs: first the base lesson alone (so the table,
-// sentence, and title exist and the renderer has measured bounds), then the
-// combined source (so effect Check samples the rendered scene).
+// sentence, title, AND the parked paw performers exist and the renderer has
+// measured bounds), then the combined source (so effect Check samples the
+// rendered scene and resolves the performer bindings).
 //
-// Demonstrates one of each effect:
+// Demonstrates one of each effect, each swept by a paw asset performer
+// (instances created by the base lesson, parked off-screen so only their
+// sweep sprites show):
 //
 // - reveal on the conjugation table as a composite subtree (cell text is
-//   ordinary renderable content; empty layout slots stay out),
+//   ordinary renderable content; empty layout slots stay out), drawn by the
+//   "paw with chalk" asset,
 // - wipe on one example translation sentence (a single text node holding the
-//   full sentence),
-// - mark on the lesson title as a temporary overlay.
+//   full sentence), wiped by the "paw with rag" asset,
+// - mark on the lesson title as a temporary overlay, circled by the
+//   "paw empty" asset.
+//
+// Performer bindings use `node("...")` by scene name on purpose: effect Check
+// only accepts visuals that already exist in the scene as Asset Instances, so
+// the snippet cannot reference the base script's `create` aliases directly —
+// the base Run must create them first.
+//
+// Laser note for the mark: the renderer always centers the performer sprite
+// on the mark pen point, so a shoot-from-a-distance look has to be baked into
+// the "paw empty" image itself — put the beam tip at the image center with the
+// paw body offset into transparent padding, and the on-screen paw will float
+// at a distance while its tip touches the mark circle.
 //
 // Timing sits inside the base lesson so seeks stay meaningful: the mark draws
 // while the title is shown, the table reveal runs once the table is fully
@@ -30,7 +46,10 @@
 bind egrid = table("Grammar table")
 bind esentence = node("ex1t")
 bind etitle = node("Lesson title")
+bind echalk = node("paw with chalk")
+bind erag = node("paw with rag")
+bind eempty = node("paw empty")
 bind esfx = audio("Scratch")
-mark(etitle, at: 1, over: 1, visual: none)
-reveal(egrid, at: 14.5, over: 1, visual: none, sound: esfx)
-wipe(esentence, at: 18, over: 1, visual: none)
+mark(etitle, at: 1, over: 1, visual: eempty)
+reveal(egrid, at: 14.5, over: 1, visual: echalk, sound: esfx)
+wipe(esentence, at: 18, over: 1, visual: erag)

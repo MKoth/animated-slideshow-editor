@@ -1,0 +1,37 @@
+// Paw visuals test — standalone demo for an empty project.
+//
+// The saved source creates the complete, portable demo: backdrop, performers,
+// text, and mark / wipe / reveal effects. Run the creation portion once first
+// so the checker has rendered bounds for the text before checking effects.
+//
+// Scrub to ~1.5 (empty paw circling the title), ~3.5 (rag wiping the first
+// sentence), ~5.5 (chalk paw revealing the second sentence).
+//
+// Laser note: the renderer always centers the performer sprite on the effect
+// point, so a shoot-from-a-distance look has to be baked into the "paw empty"
+// image itself — beam tip at the image center, paw body offset into
+// transparent padding.
+script "Paw visuals test" from 0
+let cw = 1090
+let ch = 893
+create asset "blackboar-background" as bg at (cw / 2, ch / 2) { scaleX: ch / 4320, scaleY: ch / 4320, opacity: 0 }
+create asset "paw with chalk" as chalk at (-500, -500) { scaleX: 0.12, scaleY: 0.12 }
+create asset "paw with rag" as rag at (-500, -500) { scaleX: 0.12, scaleY: 0.12 }
+create asset "paw empty" as empty at (-500, -500) { scaleX: 0.12, scaleY: 0.12 }
+create text "Demo title" as title at (545, 120) { content: "Ser y estar", fontSize: 56, alignment: "center" }
+create text "Wipe me" as sentence1 at (200, 400) { content: "Yo soy estudiante.", fontSize: 30 }
+create text "Reveal me" as sentence2 at (200, 520) { content: "Ellos están cansados.", fontSize: 30 }
+at(0) bg.fadeIn(1.0)
+at(0.8) title.fadeIn(1.0)
+at(0) sentence1.fadeIn(1.0)
+at(0) sentence2.fadeIn(1.0)
+// ── EFFECTS ──
+bind etitle = node("Demo title")
+bind esentence = node("Wipe me")
+bind ereveal = node("Reveal me")
+bind echalk = node("paw with chalk")
+bind erag = node("paw with rag")
+bind eempty = node("paw empty")
+mark(etitle, at: 1.5, over: 1, visual: eempty)
+wipe(esentence, at: 3.5, over: 1, visual: erag)
+reveal(ereveal, at: 5.5, over: 1, visual: echalk)

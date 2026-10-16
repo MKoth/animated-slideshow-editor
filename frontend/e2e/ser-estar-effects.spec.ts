@@ -243,8 +243,8 @@ test.describe('ser and estar effects acceptance', () => {
     // One undo restores the prior output: edit the reveal duration, rerun,
     // then undo back to the 1s reveal footprint in a single step.
     const editedSnippet = effectsSnippet.replace(
-      'over: 1, visual: none, sound',
-      'over: 0.5, visual: none, sound',
+      'over: 1, visual: echalk, sound',
+      'over: 0.5, visual: echalk, sound',
     )
     await checkAndRun(page, combinedSource(editedSnippet))
     const editedSlide = await readSlide()
