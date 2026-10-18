@@ -1,5 +1,28 @@
 import { isRecord, requireFiniteNumber, requireString } from './guards'
 
+function optionalVisualNumber(
+  raw: unknown,
+  what: string,
+  fallback: number,
+  allowZero: boolean,
+): Record<string, number> {
+  if (raw === undefined) return {}
+  const value = requireFiniteNumber(raw, what)
+  if (!allowZero && !(value > 0)) throw new Error(`${what} must be greater than 0`)
+  if (value === fallback) return {}
+  const key = what.endsWith('.scale') ? 'scale' : what.endsWith('.dx') ? 'dx' : 'dy'
+  return { [key]: value }
+}
+
+function optionalVisualAnchor(raw: unknown, what: string): Record<string, number> {
+  if (raw === undefined) return {}
+  const value = requireFiniteNumber(raw, what)
+  if (value < 0 || value > 1) throw new Error(`${what} must be between 0 and 1`)
+  if (value === 0.5) return {}
+  const key = what.endsWith('anchorX') ? 'anchorX' : 'anchorY'
+  return { [key]: value }
+}
+
 interface SweepEffect {
   readonly kind: 'reveal' | 'wipe' | 'mark'
   readonly id: string
@@ -20,7 +43,15 @@ interface SweepEffect {
     | { readonly kind: 'cloth' }
     | { readonly kind: 'marker' }
     | { readonly kind: 'none' }
-    | { readonly kind: 'asset'; readonly nodeId: string }
+    | {
+        readonly kind: 'asset'
+        readonly nodeId: string
+        readonly scale?: number
+        readonly anchorX?: number
+        readonly anchorY?: number
+        readonly dx?: number
+        readonly dy?: number
+      }
 }
 
 export interface RevealEffect extends Omit<SweepEffect, 'kind' | 'visual'> {
@@ -28,7 +59,18 @@ export interface RevealEffect extends Omit<SweepEffect, 'kind' | 'visual'> {
   readonly visual:
     | { readonly kind: 'paw' }
     | { readonly kind: 'none' }
-    | { readonly kind: 'asset'; readonly nodeId: string }
+    | {
+        readonly kind: 'asset'
+        readonly nodeId: string
+        /** Multiplier over the parked performer's own scale. Omitted when 1. */
+        readonly scale?: number
+        /** Normalized sprite anchor (0..1). Omitted when centered (0.5, 0.5). */
+        readonly anchorX?: number
+        readonly anchorY?: number
+        /** World-unit nudge applied to the pen point. Omitted when 0. */
+        readonly dx?: number
+        readonly dy?: number
+      }
 }
 
 export interface WipeEffect extends Omit<SweepEffect, 'kind' | 'visual'> {
@@ -36,7 +78,18 @@ export interface WipeEffect extends Omit<SweepEffect, 'kind' | 'visual'> {
   readonly visual:
     | { readonly kind: 'cloth' }
     | { readonly kind: 'none' }
-    | { readonly kind: 'asset'; readonly nodeId: string }
+    | {
+        readonly kind: 'asset'
+        readonly nodeId: string
+        /** Multiplier over the parked performer's own scale. Omitted when 1. */
+        readonly scale?: number
+        /** Normalized sprite anchor (0..1). Omitted when centered (0.5, 0.5). */
+        readonly anchorX?: number
+        readonly anchorY?: number
+        /** World-unit nudge applied to the pen point. Omitted when 0. */
+        readonly dx?: number
+        readonly dy?: number
+      }
 }
 
 export interface TemporaryMark extends Omit<SweepEffect, 'kind' | 'visual'> {
@@ -44,7 +97,18 @@ export interface TemporaryMark extends Omit<SweepEffect, 'kind' | 'visual'> {
   readonly visual:
     | { readonly kind: 'marker' }
     | { readonly kind: 'none' }
-    | { readonly kind: 'asset'; readonly nodeId: string }
+    | {
+        readonly kind: 'asset'
+        readonly nodeId: string
+        /** Multiplier over the parked performer's own scale. Omitted when 1. */
+        readonly scale?: number
+        /** Normalized sprite anchor (0..1). Omitted when centered (0.5, 0.5). */
+        readonly anchorX?: number
+        readonly anchorY?: number
+        /** World-unit nudge applied to the pen point. Omitted when 0. */
+        readonly dx?: number
+        readonly dy?: number
+      }
 }
 
 export type SceneEffect = RevealEffect | WipeEffect | TemporaryMark
@@ -95,6 +159,11 @@ export function sceneEffectFromJSON(value: unknown): SceneEffect {
         ? {
             kind: 'asset' as const,
             nodeId: requireString(value.visual.nodeId, 'Reveal visual.nodeId'),
+            ...optionalVisualNumber(value.visual.scale, 'Reveal visual.scale', 0, false),
+            ...optionalVisualAnchor(value.visual.anchorX, 'Reveal visual.anchorX'),
+            ...optionalVisualAnchor(value.visual.anchorY, 'Reveal visual.anchorY'),
+            ...optionalVisualNumber(value.visual.dx, 'Reveal visual.dx', 0, true),
+            ...optionalVisualNumber(value.visual.dy, 'Reveal visual.dy', 0, true),
           }
         : (() => {
             throw new Error(`${label} visual.kind must be paw, cloth, marker, none, or asset`)

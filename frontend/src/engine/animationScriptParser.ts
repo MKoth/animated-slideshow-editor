@@ -416,6 +416,10 @@ export interface RevealNode {
   readonly at?: ScriptExpression
   readonly over?: ScriptExpression
   readonly visual?: ScriptExpression
+  readonly visualScale?: ScriptExpression
+  readonly visualAnchor?: ScriptExpression
+  readonly visualDx?: ScriptExpression
+  readonly visualDy?: ScriptExpression
   readonly sound?: ScriptExpression
   readonly span: SourceSpan
 }
@@ -896,10 +900,16 @@ class Parser {
     let at: ScriptExpression | undefined
     let over: ScriptExpression | undefined
     let visual: ScriptExpression | undefined
+    let visualScale: ScriptExpression | undefined
+    let visualAnchor: ScriptExpression | undefined
+    let visualDx: ScriptExpression | undefined
+    let visualDy: ScriptExpression | undefined
     let sound: ScriptExpression | undefined
     const seen = new Set<string>()
     while (this.#matchPunctuation(',')) {
-      const option = this.#expectIdentifier(`a ${kind} option (at, over, visual, sound)`)
+      const option = this.#expectIdentifier(
+        `a ${kind} option (at, over, visual, visualScale, visualAnchor, visualDx, visualDy, sound)`,
+      )
       if (option === null || !this.#expectPunctuation(':')) return null
       if (seen.has(option.text))
         this.#report(`${kind} option "${option.text}" is written twice`, option.span)
@@ -909,10 +919,14 @@ class Parser {
       if (option.text === 'at') at = value
       else if (option.text === 'over') over = value
       else if (option.text === 'visual') visual = value
+      else if (option.text === 'visualScale') visualScale = value
+      else if (option.text === 'visualAnchor') visualAnchor = value
+      else if (option.text === 'visualDx') visualDx = value
+      else if (option.text === 'visualDy') visualDy = value
       else if (option.text === 'sound') sound = value
       else
         this.#report(
-          `Unknown ${kind} option "${option.text}". Available options: at, over, visual, sound.`,
+          `Unknown ${kind} option "${option.text}". Available options: at, over, visual, visualScale, visualAnchor, visualDx, visualDy, sound.`,
           option.span,
         )
     }
@@ -924,6 +938,10 @@ class Parser {
       ...(at ? { at } : {}),
       ...(over ? { over } : {}),
       ...(visual ? { visual } : {}),
+      ...(visualScale ? { visualScale } : {}),
+      ...(visualAnchor ? { visualAnchor } : {}),
+      ...(visualDx ? { visualDx } : {}),
+      ...(visualDy ? { visualDy } : {}),
       ...(sound ? { sound } : {}),
       span: { start, end: this.#previousEnd() },
     }

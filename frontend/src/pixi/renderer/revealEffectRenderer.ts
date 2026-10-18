@@ -309,11 +309,13 @@ export class RevealEffectRenderer {
       }
     }
     const sprite = performer.sprite
-    sprite.anchor.set(0.5)
-    sprite.position.set(x, y)
+    const tuning = effect.visual.kind === 'asset' ? effect.visual : null
+    const scale = tuning?.scale ?? 1
+    sprite.anchor.set(tuning?.anchorX ?? 0.5, tuning?.anchorY ?? 0.5)
+    sprite.position.set(x + (tuning?.dx ?? 0), y + (tuning?.dy ?? 0))
     sprite.rotation = state.rotation
-    sprite.width = state.size.width * Math.abs(state.scaleX)
-    sprite.height = state.size.height * Math.abs(state.scaleY)
+    sprite.width = state.size.width * Math.abs(state.scaleX) * scale
+    sprite.height = state.size.height * Math.abs(state.scaleY) * scale
     sprite.tint = state.tint
     sprite.alpha = state.alpha
   }

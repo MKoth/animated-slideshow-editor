@@ -24,6 +24,7 @@ export interface AnimationScriptRevealCompileContext {
   readonly effectIndex: number
   readonly nodes: readonly RevealCompileNode[]
   readonly evaluateNumber: (expression: ScriptExpression, what: string) => number | null
+  readonly evaluateString: (expression: ScriptExpression, what: string) => string | null
   readonly resolveTarget: (
     expression: ScriptExpression,
     allowGroup: boolean,
@@ -45,6 +46,33 @@ export interface CompiledRevealEffect {
   readonly cursor: number
   readonly effect?: SceneEffect
   readonly audioClips?: readonly PlannedEffectAudioClip[]
+}
+
+/** Named sprite anchors for an asset visual: which point of the image sits on the pen point. */
+export const VISUAL_ANCHOR_NAMES = [
+  'center',
+  'top-left',
+  'top-center',
+  'top-right',
+  'center-left',
+  'center-right',
+  'bottom-left',
+  'bottom-center',
+  'bottom-right',
+] as const
+
+export type VisualAnchorName = (typeof VISUAL_ANCHOR_NAMES)[number]
+
+const VISUAL_ANCHOR_POINTS: Record<VisualAnchorName, { readonly x: number; readonly y: number }> = {
+  center: { x: 0.5, y: 0.5 },
+  'top-left': { x: 0, y: 0 },
+  'top-center': { x: 0.5, y: 0 },
+  'top-right': { x: 1, y: 0 },
+  'center-left': { x: 0, y: 0.5 },
+  'center-right': { x: 1, y: 0.5 },
+  'bottom-left': { x: 0, y: 1 },
+  'bottom-center': { x: 0.5, y: 1 },
+  'bottom-right': { x: 1, y: 1 },
 }
 
 /** Compile one reveal call into a fixed, measurable effect target. */
@@ -120,6 +148,7 @@ export function compileAnimationScriptReveal(
 
   let visual: SceneEffect['visual'] =
     label === 'wipe' ? { kind: 'cloth' } : label === 'mark' ? { kind: 'marker' } : { kind: 'paw' }
+  let visualNodeId: string | null = null
   if (statement.visual !== undefined) {
     if (statement.visual.kind === 'identifier' && statement.visual.name === 'none') {
       visual = { kind: 'none' }
@@ -138,7 +167,7 @@ export function compileAnimationScriptReveal(
         ? context.nodes.find((node) => node.id === visualNode.nodeId)
         : undefined
       if (visualNode && visualInfo?.isAssetInstance) {
-        visual = { kind: 'asset', nodeId: visualNode.nodeId }
+        visualNodeId = visualNode.nodeId
       } else {
         context.reportError(
           `${label} visual must be an Asset Instance binding or none`,
@@ -146,6 +175,91 @@ export function compileAnimationScriptReveal(
         )
       }
       if (!visualNode || !visualInfo?.isAssetInstance) return { cursor: Math.max(cursor, end) }
+    }
+  }
+
+  const hasVisualTuning =
+    statement.visualScale !== undefined ||
+    statement.visualAnchor !== undefined ||
+    statement.visualDx !== undefined ||
+    statement.visualDy !== undefined
+  let visualScale = 1
+  let anchorX = 0.5
+  let anchorY = 0.5
+  let visualDx = 0
+  let visualDy = 0
+  if (hasVisualTuning && visualNodeId === null) {
+    const span =
+      statement.visualScale?.span ??
+      statement.visualAnchor?.span ??
+      statement.visualDx?.span ??
+      statement.visualDy?.span ??
+      statement.span
+    context.reportError(
+      `${label} visualScale, visualAnchor, visualDx and visualDy need an asset visual — bind one like visual: paw where bind paw = asset("Paw")`,
+      span,
+    )
+    return { cursor: Math.max(cursor, end) }
+  }
+  if (statement.visualScale !== undefined) {
+    const scale = context.evaluateNumber(statement.visualScale, `a ${label} visualScale multiplier`)
+    if (scale === null) return { cursor: Math.max(cursor, end) }
+    if (!Number.isFinite(scale) || scale <= 0) {
+      context.reportError(`${label} visualScale must be greater than 0`, statement.visualScale.span)
+      return { cursor: Math.max(cursor, end) }
+    }
+    visualScale = scale
+  }
+  if (statement.visualAnchor !== undefined) {
+    const anchor = context.evaluateString(
+      statement.visualAnchor,
+      `a ${label} visualAnchor name (${VISUAL_ANCHOR_NAMES.join(', ')})`,
+    )
+    if (anchor === null) return { cursor: Math.max(cursor, end) }
+    const point = VISUAL_ANCHOR_POINTS[anchor as VisualAnchorName]
+    if (!point) {
+      context.reportError(
+        `Unknown ${label} visualAnchor "${anchor}". Available anchors: ${VISUAL_ANCHOR_NAMES.join(', ')}.`,
+        statement.visualAnchor.span,
+      )
+      return { cursor: Math.max(cursor, end) }
+    }
+    anchorX = point.x
+    anchorY = point.y
+  }
+  if (statement.visualDx !== undefined) {
+    const dx = context.evaluateNumber(statement.visualDx, `a ${label} visualDx offset`)
+    if (dx === null) return { cursor: Math.max(cursor, end) }
+    if (!Number.isFinite(dx)) {
+      context.reportError(
+        `${label} visualDx must be a finite number of world units`,
+        statement.visualDx.span,
+      )
+      return { cursor: Math.max(cursor, end) }
+    }
+    visualDx = dx
+  }
+  if (statement.visualDy !== undefined) {
+    const dy = context.evaluateNumber(statement.visualDy, `a ${label} visualDy offset`)
+    if (dy === null) return { cursor: Math.max(cursor, end) }
+    if (!Number.isFinite(dy)) {
+      context.reportError(
+        `${label} visualDy must be a finite number of world units`,
+        statement.visualDy.span,
+      )
+      return { cursor: Math.max(cursor, end) }
+    }
+    visualDy = dy
+  }
+  if (visualNodeId !== null) {
+    visual = {
+      kind: 'asset',
+      nodeId: visualNodeId,
+      ...(visualScale !== 1 ? { scale: visualScale } : {}),
+      ...(anchorX !== 0.5 ? { anchorX } : {}),
+      ...(anchorY !== 0.5 ? { anchorY } : {}),
+      ...(visualDx !== 0 ? { dx: visualDx } : {}),
+      ...(visualDy !== 0 ? { dy: visualDy } : {}),
     }
   }
 

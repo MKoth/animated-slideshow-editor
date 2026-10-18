@@ -5601,6 +5601,7 @@ class Compiler {
       effectIndex: this.#effects.length,
       nodes: this.#context.nodes,
       evaluateNumber: (expression, what) => this.#evaluateNumber(expression, what),
+      evaluateString: (expression, what) => this.#evaluateString(expression, what),
       resolveTarget: (expression, allowGroup, what) =>
         this.#resolveReadTarget(expression, allowGroup, what),
       resolveAudio: (expression, what) => this.#resolveEffectAudio(expression, what),
