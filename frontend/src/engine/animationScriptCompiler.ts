@@ -848,6 +848,8 @@ class Compiler {
     string,
     { x: number; y: number; rotation: number; scaleX: number; scaleY: number; opacity: number }
   >()
+  /** Deterministic renderer-compatible size estimates for prospective text. */
+  readonly #createdTextSizes = new Map<string, { width: number; height: number }>()
   /** Declared table styles on created tables and cells, for tween start pins. */
   readonly #createdTableStyles = new Map<string, { borderRadius: number; padding: number }>()
   /** Created-node metadata for the async run prep (asset embed, mesh generation). */
@@ -4495,9 +4497,14 @@ class Compiler {
       isCamera: false,
       parentId,
       isText: true,
+      isRenderable: true,
       isGroup: false,
       ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
     }
+    this.#createdTextSizes.set(id, {
+      width: Math.max(content.length * fontSize * 0.6, fontSize),
+      height: fontSize * 1.2,
+    })
     this.#recordCreatedNode(
       info,
       order,
@@ -4683,6 +4690,8 @@ class Compiler {
       isBone: false,
       isCamera: false,
       parentId,
+      isRenderable: true,
+      isAssetInstance: true,
       isMesh: meshRequest !== undefined,
       isGroup: false,
       ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
@@ -5594,12 +5603,37 @@ class Compiler {
   }
 
   #lowerReveal(statement: RevealNode | WipeNode | MarkEffectNode, cursor: number): number {
+    // A create inserted earlier in the script can shift deterministic IDs,
+    // while Check still sees the previous run's scene. For bounds/visibility
+    // reads, bridge a prospective node to the previous node with the same name
+    // so the renderer's measurements remain usable until the next Run renders
+    // the prospective scene.
+    const readNodeId = (nodeId: string): string => {
+      const prospective = this.#createdNodes.find((node) => node.id === nodeId)
+      if (!prospective) return nodeId
+      const previous = this.#context.nodes.find((node) => node.name === prospective.name)
+      return previous?.id ?? nodeId
+    }
+    const plannedTextBounds = (nodeId: string) => {
+      const size = this.#createdTextSizes.get(nodeId)
+      const initial = this.#createdInitial.get(nodeId)
+      if (!size || !initial) return null
+      const halfWidth = (size.width * Math.abs(initial.scaleX)) / 2
+      const halfHeight = (size.height * Math.abs(initial.scaleY)) / 2
+      return {
+        minX: initial.x - halfWidth,
+        minY: initial.y - halfHeight,
+        maxX: initial.x + halfWidth,
+        maxY: initial.y + halfHeight,
+      }
+    }
     const compiled = compileAnimationScriptReveal(statement, cursor, {
       from: this.#from,
       slideDuration: this.#context.slideDuration,
       slideScope: this.#context.createScope ?? 'slide',
       effectIndex: this.#effects.length,
-      nodes: this.#context.nodes,
+      nodes: this.#allNodes(),
+      findNode: (nodeId) => this.#allNodes().find((node) => node.id === nodeId),
       evaluateNumber: (expression, what) => this.#evaluateNumber(expression, what),
       evaluateString: (expression, what) => this.#evaluateString(expression, what),
       resolveTarget: (expression, allowGroup, what) =>
@@ -5607,8 +5641,14 @@ class Compiler {
       resolveAudio: (expression, what) => this.#resolveEffectAudio(expression, what),
       bindingKind: (expression) =>
         expression.kind === 'identifier' ? this.#lookupBinding(expression.name)?.kind : undefined,
-      isVisible: this.#context.isVisible,
-      nodeBounds: (nodeId, time) => this.#context.reads.nodeBounds(nodeId, time),
+      isVisible: (nodeId, time) => {
+        const readId = readNodeId(nodeId)
+        const initial = this.#createdInitial.get(nodeId)
+        if (readId === nodeId && initial?.opacity === 0) return false
+        return this.#context.isVisible(readId, time)
+      },
+      nodeBounds: (nodeId, time) =>
+        this.#context.reads.nodeBounds(readNodeId(nodeId), time) ?? plannedTextBounds(nodeId),
       roundTime,
       formatSeconds,
       reportError: (message, span) => this.#error(message, span),

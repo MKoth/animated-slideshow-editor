@@ -23,6 +23,7 @@ export interface AnimationScriptRevealCompileContext {
   readonly slideScope: string
   readonly effectIndex: number
   readonly nodes: readonly RevealCompileNode[]
+  readonly findNode?: (nodeId: string) => RevealCompileNode | undefined
   readonly evaluateNumber: (expression: ScriptExpression, what: string) => number | null
   readonly evaluateString: (expression: ScriptExpression, what: string) => string | null
   readonly resolveTarget: (
@@ -164,7 +165,8 @@ export function compileAnimationScriptReveal(
       }
       const visualNode = visualTarget.members[0]
       const visualInfo = visualNode
-        ? context.nodes.find((node) => node.id === visualNode.nodeId)
+        ? (context.findNode?.(visualNode.nodeId) ??
+          context.nodes.find((node) => node.id === visualNode.nodeId))
         : undefined
       if (visualNode && visualInfo?.isAssetInstance) {
         visualNodeId = visualNode.nodeId

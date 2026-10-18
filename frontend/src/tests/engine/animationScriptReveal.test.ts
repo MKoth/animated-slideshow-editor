@@ -12,6 +12,7 @@ import type { CreateNodeParameters } from '../../engine/commands/createNodeComma
 import { runAnimationScript } from '../../engine/animationScriptRun'
 import { checkAnimationScript } from '../../engine/animationScriptCheck'
 import { markLifecycle, revealCoverage } from '../../engine/sceneEffect'
+import { walkPreOrder } from '../../engine/sceneNode'
 import { deserialize, serialize, validate } from '../../engine/lessonSerializer'
 
 function setup() {
@@ -112,6 +113,75 @@ describe('Animation Script reveal', () => {
     expect(system.engine.getSlide(slide.id).effects).toEqual([priorEffect])
     expect(system.dispatcher.undo()).toBe(true)
     expect(system.engine.getSlide(slide.id).effects).toEqual([])
+  })
+
+  it('accepts an asset created earlier in the same script as a mark visual', () => {
+    const { system, slide, first, measure } = setup()
+    system.assetLibrarySync.apply([{ id: 'asset-paw', name: 'Paw' }])
+    const source = [
+      'script "Mark" from 0',
+      'create asset "Paw" as paw',
+      'bind target = node("First")',
+      'mark(target, visual: paw)',
+    ].join('\n')
+
+    const result = checkAnimationScript(system.engine, slide.id, source, { measure })
+
+    expect(result.diagnostics.filter((item) => item.severity === 'error')).toEqual([])
+    expect(result.effects).toHaveLength(1)
+    expect(result.effects[0]).toMatchObject({ kind: 'mark', scopeNodeIds: [first.id] })
+  })
+
+  it('keeps old rendered target measurements when an inserted create shifts script IDs', () => {
+    const { system, slide } = setup()
+    system.assetLibrarySync.apply([{ id: 'asset-paw', name: 'Paw' }])
+    const original = [
+      'script "Builder" from 0',
+      'create text "Demo title" as title at (100, 100) { content: "Title", fontSize: 30 }',
+    ].join('\n')
+    system.dispatcher.dispatch(
+      new SetSlideAnimationScriptCommand({ slideId: slide.id, source: original }),
+    )
+    expect(
+      runAnimationScript(
+        system.engine,
+        (command) => system.dispatcher.dispatch(command),
+        slide.id,
+        original,
+      ).ran,
+    ).toBe(true)
+    const previousTitle = [...walkPreOrder(system.engine.getSlide(slide.id).scene.root)].find(
+      (node) => node.name === 'Demo title',
+    )!
+    const inserted = [
+      'script "Builder" from 0',
+      'create asset "Paw" as paw',
+      'create text "Demo title" as title at (100, 100) { content: "Title", fontSize: 30 }',
+      'mark(title, visual: paw)',
+    ].join('\n')
+
+    const result = checkAnimationScript(system.engine, slide.id, inserted, {
+      measure: (nodeId) => (nodeId === previousTitle.id ? { width: 100, height: 30 } : null),
+    })
+
+    expect(result.diagnostics.filter((item) => item.severity === 'error')).toEqual([])
+    expect(result.effects).toHaveLength(1)
+  })
+
+  it('checks a newly created text target before the first render measurement exists', () => {
+    const { system, slide } = setup()
+    system.assetLibrarySync.apply([{ id: 'asset-paw', name: 'Paw' }])
+    const source = [
+      'script "Builder" from 0',
+      'create text "Demo title" as title at (100, 100) { content: "Title", fontSize: 30 }',
+      'create asset "Paw" as paw',
+      'mark(title, visual: paw)',
+    ].join('\n')
+
+    const result = checkAnimationScript(system.engine, slide.id, source)
+
+    expect(result.diagnostics.filter((item) => item.severity === 'error')).toEqual([])
+    expect(result.effects).toHaveLength(1)
   })
 
   it('compiles wipe calls with deterministic timing and a cloth performer', () => {
