@@ -38,6 +38,18 @@ export interface AnimationScriptCheckOptions {
    */
   readonly measure?: AnimationScriptMeasure
   /**
+   * Global library audio (imported uploads) an effect `sound:` may also
+   * resolve by name. Check otherwise sees only project-embedded audio, so a
+   * freshly imported MP3/WAV stays invisible until something embeds it.
+   * The app passes the library store's audio definitions here; embedded
+   * snapshots win on id collisions.
+   */
+  readonly globalAudioAssets?: readonly {
+    readonly id: string
+    readonly name: string
+    readonly duration: number
+  }[]
+  /**
    * Tunable compile budgets, overriding the `SCRIPT_MAX_*` defaults. Tests use
    * small budgets to trigger diagnostics quickly; production uses defaults.
    * Validation is identical no matter who authored the source — hand or AI —
@@ -156,16 +168,30 @@ export function checkAnimationScript(
     materialsById.set(embedded.id, { id: embedded.id, name: embedded.name })
   }
   // Audio assets an effect `sound:` may reference: the project's embedded
-  // audio (including snapshotted library audio). Duration comes from metadata;
+  // audio (including snapshotted library audio) plus freshly imported global
+  // library audio that nothing has embedded yet. Duration comes from metadata;
   // assets without a usable duration are still listed so the compiler can
   // report them instead of claiming they are missing.
-  const audioAssets = engine.embeddedAssets
+  const embeddedAudio = engine.embeddedAssets
     .filter((asset) => asset.mimeType.startsWith('audio/'))
     .map((asset) => {
       const raw = (asset.metadata as Record<string, unknown> | undefined)?.duration
       const duration = typeof raw === 'number' ? raw : Number.NaN
       return { id: asset.id, name: asset.name, duration }
     })
+  const embeddedIds = new Set(embeddedAudio.map((asset) => asset.id))
+  // Fresh library imports share ids with their future snapshots, so dedupe by
+  // id with embedded winning; an embedded orphan of a deleted asset loses to a
+  // live global reusing its name (same rule as `create asset` resolution).
+  const globalAudio = (options.globalAudioAssets ?? []).filter(
+    (asset) => !embeddedIds.has(asset.id),
+  )
+  const globalNames = new Set(globalAudio.map((asset) => asset.name))
+  const globalIds = new Set(globalAudio.map((asset) => asset.id))
+  const audioAssets = [
+    ...embeddedAudio.filter((asset) => globalIds.has(asset.id) || !globalNames.has(asset.name)),
+    ...globalAudio,
+  ]
   return compileAnimationScript(source, {
     slideDuration: slide.duration,
     nodes,

@@ -54,6 +54,12 @@ export interface AnimationScriptRunOptions extends AnimationScriptCheckOptions {
    */
   readonly captureMaterial?: (definitionId: string) => boolean | Promise<boolean>
   /**
+   * Embed an audio snapshot for an effect `sound:` resolved to a global
+   * library asset. The app wires this to `captureAudioSnapshot`; best-effort
+   * like image capture — playback falls back to the library URL when it fails.
+   */
+  readonly captureAudio?: (assetId: string) => boolean | Promise<boolean>
+  /**
    * Image loader seam for mesh generation, so tests can supply pixels without
    * a canvas. Defaults to the renderer's data-URL loader.
    */
@@ -140,6 +146,20 @@ export async function runAnimationScriptAsync(
       await options.captureMaterial(material.id)
     } catch {
       // Fall through: the assignment validates against the library instead.
+    }
+  }
+  // Embed global audio an effect `sound:` resolved so the project stays
+  // self-contained. Playback can still fetch the library URL when this fails.
+  if (options.captureAudio !== undefined) {
+    const seen = new Set<string>()
+    for (const clip of compiled.audioClips) {
+      if (seen.has(clip.assetId) || engine.getEmbeddedAsset(clip.assetId) !== undefined) continue
+      seen.add(clip.assetId)
+      try {
+        await options.captureAudio(clip.assetId)
+      } catch {
+        // Fall through: dispatch references the global id directly.
+      }
     }
   }
   return dispatchCompiled(engine, dispatch, slideId, compiled, extrasByOrder, outcome)

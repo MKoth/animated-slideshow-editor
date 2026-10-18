@@ -9,6 +9,25 @@ import { checkAnimationScript } from '../../engine/animationScriptCheck'
 import { computeProjectFingerprint } from '../../ai/proposals'
 import { useEngine } from '../../app/useEngine'
 import { useAiStore } from '../../stores/aiStore'
+import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
+
+function collectGlobalAudioAssets(): readonly { id: string; name: string; duration: number }[] {
+  const out: { id: string; name: string; duration: number }[] = []
+  for (const definition of useAssetLibraryStore.getState().allDefinitions) {
+    const isAudio =
+      definition.category === 'audio' ||
+      definition.mimeType?.startsWith('audio/') === true ||
+      /\.(wav|mp3|mpeg|ogg|webm)$/i.test(definition.original_filename ?? '')
+    if (!isAudio) continue
+    const raw = (definition.metadata as Record<string, unknown> | undefined)?.duration
+    out.push({
+      id: definition.id,
+      name: definition.name,
+      duration: typeof raw === 'number' ? raw : Number.NaN,
+    })
+  }
+  return out
+}
 
 interface AiBoardViewProps {
   projectId: string
@@ -149,7 +168,9 @@ export function AiBoardView({
           footprints.push({ from: 0, to: 0, effects: [], entryVersions: {} })
           continue
         }
-        const checked = checkAnimationScript(engine, slideId, script.source)
+        const checked = checkAnimationScript(engine, slideId, script.source, {
+          globalAudioAssets: collectGlobalAudioAssets(),
+        })
         footprints.push({
           from: checked.summary.from,
           to: checked.summary.to,

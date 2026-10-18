@@ -3,9 +3,10 @@ import { useEngine } from '../../app/useEngine'
 import { checkAnimationScript } from '../../engine/animationScriptCheck'
 import { runAnimationScriptAsync } from '../../engine/animationScriptRun'
 import type { AnimationScriptRunResult } from '../../engine/animationScriptRun'
-import { captureAssetSnapshot } from '../../app/assetSnapshot'
+import { captureAssetSnapshot, captureAudioSnapshot } from '../../app/assetSnapshot'
 import { captureMaterialSnapshot, captureShaderSnapshot } from '../../app/definitionSnapshot'
 import { ensureMaterialLibrariesLoaded } from '../../app/materialLibraries'
+import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import type {
   AnimationScriptCompileResult,
   AnimationScriptDiagnostic,
@@ -15,6 +16,26 @@ import { SetSlideAnimationScriptCommand } from '../../engine/commands'
 import { findScriptLibraryDrift } from '../../engine/scriptLibrary'
 import { useClipLibraryStore } from '../../stores/clipLibraryStore'
 import { measuredNodeSize } from '../../pixi/renderer/nodeMeasurement'
+
+/** Fresh library uploads Check can resolve by name before anything embeds them. */
+function collectGlobalAudioAssets(): readonly { id: string; name: string; duration: number }[] {
+  const definitions = useAssetLibraryStore.getState().allDefinitions
+  const out: { id: string; name: string; duration: number }[] = []
+  for (const definition of definitions) {
+    const isAudio =
+      definition.category === 'audio' ||
+      definition.mimeType?.startsWith('audio/') === true ||
+      /\.(wav|mp3|mpeg|ogg|webm)$/i.test(definition.original_filename ?? '')
+    if (!isAudio) continue
+    const raw = (definition.metadata as Record<string, unknown> | undefined)?.duration
+    out.push({
+      id: definition.id,
+      name: definition.name,
+      duration: typeof raw === 'number' ? raw : Number.NaN,
+    })
+  }
+  return out
+}
 
 type ScriptOutcome =
   | {
@@ -89,7 +110,10 @@ export function ScriptPanel({
     setOutcome({
       kind: 'check',
       source: draft,
-      result: checkAnimationScript(engine, slideId, draft, { measure: measuredNodeSize }),
+      result: checkAnimationScript(engine, slideId, draft, {
+        measure: measuredNodeSize,
+        globalAudioAssets: collectGlobalAudioAssets(),
+      }),
     })
   }
 
@@ -100,7 +124,9 @@ export function ScriptPanel({
       await ensureMaterialLibrariesLoaded()
       const result = await runAnimationScriptAsync(engine, dispatch, slideId, source, {
         measure: measuredNodeSize,
+        globalAudioAssets: collectGlobalAudioAssets(),
         captureAsset: (definitionId) => captureAssetSnapshot(engine, definitionId),
+        captureAudio: (assetId) => captureAudioSnapshot(engine, assetId),
         captureMaterial: (definitionId) => {
           if (!captureMaterialSnapshot(engine, definitionId)) return false
           const shaderId = engine.getMaterialDefinition(definitionId).shaderId

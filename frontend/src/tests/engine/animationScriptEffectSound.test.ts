@@ -127,6 +127,19 @@ describe('Animation Script effect sounds', () => {
     expect(mark.audioClips.map((c) => c.timelineStart)).toEqual([1, 1.5])
   })
 
+  it('resolves fresh library audio passed as global without an embedded snapshot', () => {
+    const { system, slide, measure } = setup()
+    const result = checkAnimationScript(
+      system.engine,
+      slide.id,
+      'script "Demo" from 0\nbind target = node("First")\nbind sfx = audio("Fresh")\nreveal(target, over: 1, visual: none, sound: sfx)',
+      { measure, globalAudioAssets: [{ id: 'global-fresh', name: 'Fresh', duration: 0.4 }] },
+    )
+    expect(result.runnable).toBe(true)
+    expect(result.audioClips).toHaveLength(3)
+    expect(result.audioClips[0]).toMatchObject({ assetId: 'global-fresh', sourceEnd: 0.4 })
+  })
+
   it('rejects unknown audio, wrong binding kinds, and missing durations in Check', () => {
     const { system, slide, measure, makeAudio } = setup()
     makeAudio('Scratch', 0.4)
