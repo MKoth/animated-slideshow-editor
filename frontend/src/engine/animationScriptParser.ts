@@ -420,6 +420,10 @@ export interface RevealNode {
   readonly visualAnchor?: ScriptExpression
   readonly visualDx?: ScriptExpression
   readonly visualDy?: ScriptExpression
+  readonly wobbleX?: ScriptExpression
+  readonly wobbleY?: ScriptExpression
+  readonly wobbleSpeed?: ScriptExpression
+  readonly direction?: ScriptExpression
   readonly sound?: ScriptExpression
   readonly span: SourceSpan
 }
@@ -428,7 +432,10 @@ export interface WipeNode extends Omit<RevealNode, 'kind'> {
   readonly kind: 'wipe'
 }
 
-export interface MarkEffectNode extends Omit<RevealNode, 'kind'> {
+export interface MarkEffectNode extends Omit<
+  RevealNode,
+  'kind' | 'wobbleX' | 'wobbleY' | 'wobbleSpeed' | 'direction'
+> {
   readonly kind: 'mark'
 }
 
@@ -904,12 +911,18 @@ class Parser {
     let visualAnchor: ScriptExpression | undefined
     let visualDx: ScriptExpression | undefined
     let visualDy: ScriptExpression | undefined
+    let wobbleX: ScriptExpression | undefined
+    let wobbleY: ScriptExpression | undefined
+    let wobbleSpeed: ScriptExpression | undefined
+    let direction: ScriptExpression | undefined
     let sound: ScriptExpression | undefined
+    const sweepOptions =
+      kind === 'mark'
+        ? 'at, over, visual, visualScale, visualAnchor, visualDx, visualDy, sound'
+        : 'at, over, visual, visualScale, visualAnchor, visualDx, visualDy, wobbleX, wobbleY, wobbleSpeed, direction, sound'
     const seen = new Set<string>()
     while (this.#matchPunctuation(',')) {
-      const option = this.#expectIdentifier(
-        `a ${kind} option (at, over, visual, visualScale, visualAnchor, visualDx, visualDy, sound)`,
-      )
+      const option = this.#expectIdentifier(`a ${kind} option (${sweepOptions})`)
       if (option === null || !this.#expectPunctuation(':')) return null
       if (seen.has(option.text))
         this.#report(`${kind} option "${option.text}" is written twice`, option.span)
@@ -923,14 +936,45 @@ class Parser {
       else if (option.text === 'visualAnchor') visualAnchor = value
       else if (option.text === 'visualDx') visualDx = value
       else if (option.text === 'visualDy') visualDy = value
-      else if (option.text === 'sound') sound = value
+      else if (
+        option.text === 'wobbleX' ||
+        option.text === 'wobbleY' ||
+        option.text === 'wobbleSpeed' ||
+        option.text === 'direction'
+      ) {
+        if (kind === 'mark') {
+          this.#report(
+            `Unknown ${kind} option "${option.text}". Available options: ${sweepOptions}.`,
+            option.span,
+          )
+        } else if (option.text === 'wobbleX') wobbleX = value
+        else if (option.text === 'wobbleY') wobbleY = value
+        else if (option.text === 'wobbleSpeed') wobbleSpeed = value
+        else direction = value
+      } else if (option.text === 'sound') sound = value
       else
         this.#report(
-          `Unknown ${kind} option "${option.text}". Available options: at, over, visual, visualScale, visualAnchor, visualDx, visualDy, sound.`,
+          `Unknown ${kind} option "${option.text}". Available options: ${sweepOptions}.`,
           option.span,
         )
     }
     if (!this.#expectPunctuation(')')) return null
+    if (kind === 'mark') {
+      return {
+        kind,
+        nameSpan: name.span,
+        target,
+        ...(at ? { at } : {}),
+        ...(over ? { over } : {}),
+        ...(visual ? { visual } : {}),
+        ...(visualScale ? { visualScale } : {}),
+        ...(visualAnchor ? { visualAnchor } : {}),
+        ...(visualDx ? { visualDx } : {}),
+        ...(visualDy ? { visualDy } : {}),
+        ...(sound ? { sound } : {}),
+        span: { start, end: this.#previousEnd() },
+      }
+    }
     return {
       kind,
       nameSpan: name.span,
@@ -942,6 +986,10 @@ class Parser {
       ...(visualAnchor ? { visualAnchor } : {}),
       ...(visualDx ? { visualDx } : {}),
       ...(visualDy ? { visualDy } : {}),
+      ...(wobbleX ? { wobbleX } : {}),
+      ...(wobbleY ? { wobbleY } : {}),
+      ...(wobbleSpeed ? { wobbleSpeed } : {}),
+      ...(direction ? { direction } : {}),
       ...(sound ? { sound } : {}),
       span: { start, end: this.#previousEnd() },
     }

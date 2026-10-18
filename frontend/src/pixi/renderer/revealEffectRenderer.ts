@@ -1,11 +1,137 @@
 import type { Scene } from '../../engine'
-import type { SceneEffect } from '../../engine/sceneEffect'
+import type { RevealEffect, SceneEffect, WipeEffect } from '../../engine/sceneEffect'
 import {
   markLifecycle,
   revealCoverage,
   selectActiveMarks,
   selectRevealWipeForNode,
 } from '../../engine/sceneEffect'
+
+/**
+ * Erratic segments across one sweep when no wobbleSpeed is set; knots
+ * interpolate smoothly. Matches the original fixed wobble character.
+ */
+const LEGACY_WOBBLE_SEGMENTS = 6
+/** Clamp for rate-derived segment counts: keeps per-frame knot sampling cheap. */
+const MIN_WOBBLE_SEGMENTS = 2
+const MAX_WOBBLE_SEGMENTS = 64
+
+function hashSeed(text: string): number {
+  let hash = 2166136261 >>> 0
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+function mulberry32(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state |= 0
+    state = (state + 0x6d2b79f5) | 0
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state)
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/**
+ * Erratic segment count for a sweep: the legacy fixed rate when wobbleSpeed
+ * is unset, otherwise ~2 segments per wiggle at the requested wiggles/second
+ * rate over the effect duration.
+ */
+export function wobbleSegmentCount(effect: {
+  readonly duration: number
+  readonly wobbleSpeed?: number
+}): number {
+  if (effect.wobbleSpeed === undefined) return LEGACY_WOBBLE_SEGMENTS
+  const count = Math.round(effect.wobbleSpeed * effect.duration * 2)
+  return Math.min(MAX_WOBBLE_SEGMENTS, Math.max(MIN_WOBBLE_SEGMENTS, count))
+}
+
+function wobbleKnots(
+  seedKey: string,
+  from: number,
+  to: number,
+  salt: string,
+  segments: number,
+): number[] {
+  const random = mulberry32(hashSeed(`${seedKey}:${salt}:${segments}`))
+  const knots: number[] = [0]
+  for (let index = 1; index < segments; index += 1) {
+    const magnitude = from + random() * (to - from)
+    const sign = random() < 0.5 ? -1 : 1
+    knots.push(sign * magnitude)
+  }
+  knots.push(0)
+  return knots
+}
+
+function sampleKnots(knots: readonly number[], progress: number): number {
+  const segments = knots.length - 1
+  const clamped = Math.min(1, Math.max(0, progress))
+  const position = clamped * segments
+  const index = Math.min(segments - 1, Math.floor(position))
+  const fraction = position - index
+  const smooth = fraction * fraction * (3 - 2 * fraction)
+  return knots[index] * (1 - smooth) + knots[index + 1] * smooth
+}
+
+/**
+ * Deterministic erratic offset for one axis: per-wiggle magnitudes sampled
+ * from [from, to] with a random sign, smoothstep-interpolated across the
+ * sweep and seeded by the effect id so previews and exports agree. Starts and
+ * ends at zero so the pen lands exactly on the sweep edges.
+ */
+export function erraticWobble(
+  seedKey: string,
+  progress: number,
+  range: { readonly from: number; readonly to: number } | undefined,
+  salt: string,
+  segments: number = LEGACY_WOBBLE_SEGMENTS,
+): number {
+  if (!range || (range.from === 0 && range.to === 0)) return 0
+  return sampleKnots(wobbleKnots(seedKey, range.from, range.to, salt, segments), progress)
+}
+
+/** Pen point for a reveal/wipe sweep: directional base plus legacy wobble plus erratic offsets. */
+export function sweepPenPosition(
+  effect: RevealEffect | WipeEffect,
+  progress: number,
+): { readonly x: number; readonly y: number } {
+  const width = effect.bounds.maxX - effect.bounds.minX
+  const height = effect.bounds.maxY - effect.bounds.minY
+  const rightToLeft = effect.direction === 'right-to-left'
+  const baseX = rightToLeft
+    ? effect.bounds.maxX - progress * width
+    : effect.bounds.minX + progress * width
+  const baseY = (effect.bounds.minY + effect.bounds.maxY) / 2
+  const legacyX = Math.sin(progress * Math.PI * 6) * height * 0.02
+  const legacyY = Math.sin(progress * Math.PI * 4) * height * 0.02
+  const segments = wobbleSegmentCount(effect)
+  return {
+    x: baseX + legacyX + erraticWobble(effect.id, progress, effect.wobbleX, 'x', segments),
+    y: baseY + legacyY + erraticWobble(effect.id, progress, effect.wobbleY, 'y', segments),
+  }
+}
+
+/** Mask rectangle for a reveal/wipe sweep, honoring the sweep direction. */
+export function sweepMask(
+  effect: RevealEffect | WipeEffect,
+  progress: number,
+): { readonly x: number; readonly width: number } {
+  const width = Math.max(0, effect.bounds.maxX - effect.bounds.minX)
+  const rightToLeft = effect.direction === 'right-to-left'
+  if (effect.kind === 'wipe') {
+    return rightToLeft
+      ? { x: effect.bounds.minX, width: width * (1 - progress) }
+      : { x: effect.bounds.minX + width * progress, width: width * (1 - progress) }
+  }
+  return rightToLeft
+    ? { x: effect.bounds.maxX - width * progress, width: width * progress }
+    : { x: effect.bounds.minX, width: width * progress }
+}
 import type { WorldSize } from './worldGeometry'
 import type { PixiContainer, PixiGraphics, PixiSprite, RendererPixi } from './pixi'
 import type { TextureCache } from './textureCache'
@@ -171,11 +297,9 @@ export class RevealEffectRenderer {
       const progress = revealCoverage(effect, time)
       mask.clear()
       if (fieldWidth > 0) {
-        const x =
-          effect.kind === 'wipe' ? effect.bounds.minX + fieldWidth * progress : effect.bounds.minX
-        const width = effect.kind === 'wipe' ? fieldWidth * (1 - progress) : fieldWidth * progress
+        const rect = sweepMask(effect, progress)
         mask
-          .rect(x, effect.bounds.minY, width, effect.bounds.maxY - effect.bounds.minY)
+          .rect(rect.x, effect.bounds.minY, rect.width, effect.bounds.maxY - effect.bounds.minY)
           .fill({ color: 0xffffff })
       }
     }
@@ -225,13 +349,9 @@ export class RevealEffectRenderer {
     for (const effect of performers) {
       const progress = revealCoverage(effect, time)
       const height = effect.bounds.maxY - effect.bounds.minY
-      const x =
-        effect.bounds.minX +
-        progress * (effect.bounds.maxX - effect.bounds.minX) +
-        Math.sin(progress * Math.PI * 6) * height * 0.02
-      const y =
-        (effect.bounds.minY + effect.bounds.maxY) / 2 +
-        Math.sin(progress * Math.PI * 4) * height * 0.02
+      const pen = sweepPenPosition(effect as RevealEffect | WipeEffect, progress)
+      const x = pen.x
+      const y = pen.y
       if (effect.visual.kind === 'paw' || effect.visual.kind === 'cloth') {
         let paw = this.#paws.get(effect.id)
         if (!paw) {

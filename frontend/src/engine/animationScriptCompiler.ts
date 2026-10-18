@@ -5636,6 +5636,7 @@ class Compiler {
       findNode: (nodeId) => this.#allNodes().find((node) => node.id === nodeId),
       evaluateNumber: (expression, what) => this.#evaluateNumber(expression, what),
       evaluateString: (expression, what) => this.#evaluateString(expression, what),
+      evaluateRange: (expression, what) => this.#evaluateWobbleRange(expression, what),
       resolveTarget: (expression, allowGroup, what) =>
         this.#resolveReadTarget(expression, allowGroup, what),
       resolveAudio: (expression, what) => this.#resolveEffectAudio(expression, what),
@@ -7629,6 +7630,67 @@ class Compiler {
       return null
     }
     return value.value
+  }
+
+  /**
+   * Evaluate a wobble amplitude in a `wobbleX:`/`wobbleY:` position: either a
+   * fixed non-negative number (uniform amplitude) or a `{ from, to }` record
+   * (per-wiggle magnitude sampled from the range). `null` means the value
+   * failed; the diagnostic is already reported.
+   */
+  #evaluateWobbleRange(
+    expression: ScriptExpression,
+    what: string,
+  ): { readonly from: number; readonly to: number } | null {
+    const value = this.#evaluateValue(expression)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind === 'number') {
+      if (!Number.isFinite(value.value) || value.value < 0) {
+        this.#error(`${what} must be a non-negative number of world units`, expression.span)
+        return null
+      }
+      return { from: value.value, to: value.value }
+    }
+    if (value.kind !== 'record') {
+      this.#error(`Expected ${what}, found ${describeScriptValue(value)}`, expression.span)
+      return null
+    }
+    const fromValue = value.fields.get('from')
+    const toValue = value.fields.get('to')
+    if (fromValue === undefined || toValue === undefined) {
+      this.#error(`${what} needs from: and to: fields, like { from: 0, to: 8 }`, expression.span)
+      return null
+    }
+    for (const key of value.fields.keys()) {
+      if (key !== 'from' && key !== 'to') {
+        this.#error(
+          `${what} has unknown field "${key}" — only from: and to: are allowed`,
+          expression.span,
+        )
+        return null
+      }
+    }
+    if (fromValue.kind !== 'number' || toValue.kind !== 'number') {
+      const bad = fromValue.kind !== 'number' ? fromValue : toValue
+      this.#error(
+        `${what} from: and to: must be numbers, found ${describeScriptValue(bad)}`,
+        expression.span,
+      )
+      return null
+    }
+    if (!Number.isFinite(fromValue.value) || !Number.isFinite(toValue.value)) {
+      this.#error(`${what} from: and to: must be finite numbers of world units`, expression.span)
+      return null
+    }
+    if (fromValue.value < 0 || toValue.value < 0) {
+      this.#error(`${what} from: and to: must be non-negative`, expression.span)
+      return null
+    }
+    if (fromValue.value > toValue.value) {
+      this.#error(`${what} from: must not exceed to:`, expression.span)
+      return null
+    }
+    return { from: fromValue.value, to: toValue.value }
   }
 
   #expressionContext(): ScriptExpressionContext {

@@ -54,6 +54,17 @@ interface SweepEffect {
       }
 }
 
+/** Sweep direction for reveal/wipe performers and masks. Omitted when left-to-right. */
+export type SweepDirection = 'left-to-right' | 'right-to-left'
+
+export const SWEEP_DIRECTIONS: readonly SweepDirection[] = ['left-to-right', 'right-to-left']
+
+/** Erratic amplitude range in world units: per-wiggle magnitude sampled from [from, to]. */
+export interface WobbleRange {
+  readonly from: number
+  readonly to: number
+}
+
 export interface RevealEffect extends Omit<SweepEffect, 'kind' | 'visual'> {
   readonly kind: 'reveal'
   readonly visual:
@@ -71,6 +82,14 @@ export interface RevealEffect extends Omit<SweepEffect, 'kind' | 'visual'> {
         readonly dx?: number
         readonly dy?: number
       }
+  /** Sweep direction. Omitted when 'left-to-right'. */
+  readonly direction?: SweepDirection
+  /** Horizontal erratic amplitude range in world units. Omitted when zero. */
+  readonly wobbleX?: WobbleRange
+  /** Vertical erratic amplitude range in world units. Omitted when zero. */
+  readonly wobbleY?: WobbleRange
+  /** Erratic wiggle rate in wiggles per second. Omitted when using the legacy fixed rate. */
+  readonly wobbleSpeed?: number
 }
 
 export interface WipeEffect extends Omit<SweepEffect, 'kind' | 'visual'> {
@@ -90,6 +109,14 @@ export interface WipeEffect extends Omit<SweepEffect, 'kind' | 'visual'> {
         readonly dx?: number
         readonly dy?: number
       }
+  /** Sweep direction. Omitted when 'left-to-right'. */
+  readonly direction?: SweepDirection
+  /** Horizontal erratic amplitude range in world units. Omitted when zero. */
+  readonly wobbleX?: WobbleRange
+  /** Vertical erratic amplitude range in world units. Omitted when zero. */
+  readonly wobbleY?: WobbleRange
+  /** Erratic wiggle rate in wiggles per second. Omitted when using the legacy fixed rate. */
+  readonly wobbleSpeed?: number
 }
 
 export interface TemporaryMark extends Omit<SweepEffect, 'kind' | 'visual'> {
@@ -113,13 +140,59 @@ export interface TemporaryMark extends Omit<SweepEffect, 'kind' | 'visual'> {
 
 export type SceneEffect = RevealEffect | WipeEffect | TemporaryMark
 
+function optionalWobbleRange(raw: unknown, what: string): Record<string, WobbleRange> {
+  if (raw === undefined) return {}
+  if (!isRecord(raw)) throw new Error(`${what} must be a record like { from: 0, to: 8 }`)
+  const from = requireFiniteNumber(raw.from, `${what}.from`)
+  const to = requireFiniteNumber(raw.to, `${what}.to`)
+  if (from < 0 || to < 0) throw new Error(`${what}.from and ${what}.to must be non-negative`)
+  if (from > to) throw new Error(`${what}.from must not exceed ${what}.to`)
+  if (from === 0 && to === 0) return {}
+  return { [what.endsWith('wobbleX') ? 'wobbleX' : 'wobbleY']: { from, to } }
+}
+
+function optionalWobbleSpeed(raw: unknown, what: string): Record<string, number> {
+  if (raw === undefined) return {}
+  const value = requireFiniteNumber(raw, what)
+  if (!(value > 0)) throw new Error(`${what} must be greater than 0`)
+  return { wobbleSpeed: value }
+}
+
+function optionalSweepDirection(raw: unknown, what: string): Record<string, SweepDirection> {
+  if (raw === undefined) return {}
+  if (raw !== 'left-to-right' && raw !== 'right-to-left') {
+    throw new Error(`${what} must be "left-to-right" or "right-to-left"`)
+  }
+  if (raw === 'left-to-right') return {}
+  return { direction: raw }
+}
+
 export function sceneEffectToJSON(effect: SceneEffect): unknown {
-  return {
+  const json: Record<string, unknown> = {
     ...effect,
     nodeIds: [...effect.nodeIds],
     bounds: { ...effect.bounds },
     visual: { ...effect.visual },
   }
+  if (effect.kind !== 'mark') {
+    if (effect.direction === 'left-to-right') delete json.direction
+    const isZeroWobble = (range: WobbleRange | undefined) =>
+      range !== undefined && range.from === 0 && range.to === 0
+    if (effect.wobbleX !== undefined) {
+      if (isZeroWobble(effect.wobbleX)) delete json.wobbleX
+      else json.wobbleX = { ...effect.wobbleX }
+    }
+    if (effect.wobbleY !== undefined) {
+      if (isZeroWobble(effect.wobbleY)) delete json.wobbleY
+      else json.wobbleY = { ...effect.wobbleY }
+    }
+  } else {
+    delete json.direction
+    delete json.wobbleX
+    delete json.wobbleY
+    delete json.wobbleSpeed
+  }
+  return json
 }
 
 export function sceneEffectFromJSON(value: unknown): SceneEffect {
@@ -190,12 +263,30 @@ export function sceneEffectFromJSON(value: unknown): SceneEffect {
     },
     visual,
   }
+  if (
+    value.kind === 'mark' &&
+    (value.direction !== undefined ||
+      value.wobbleX !== undefined ||
+      value.wobbleY !== undefined ||
+      value.wobbleSpeed !== undefined)
+  ) {
+    throw new Error('Mark effect must not carry direction, wobbleX, wobbleY, or wobbleSpeed')
+  }
+  const sweep =
+    value.kind === 'mark'
+      ? {}
+      : {
+          ...optionalSweepDirection(value.direction, `${label} direction`),
+          ...optionalWobbleRange(value.wobbleX, `${label} wobbleX`),
+          ...optionalWobbleRange(value.wobbleY, `${label} wobbleY`),
+          ...optionalWobbleSpeed(value.wobbleSpeed, `${label} wobbleSpeed`),
+        }
   const effect: SceneEffect =
     value.kind === 'mark'
       ? { ...shared, kind: 'mark', visual: visual as TemporaryMark['visual'] }
       : value.kind === 'reveal'
-        ? { ...shared, kind: 'reveal', visual: visual as RevealEffect['visual'] }
-        : { ...shared, kind: 'wipe', visual: visual as WipeEffect['visual'] }
+        ? { ...shared, ...sweep, kind: 'reveal', visual: visual as RevealEffect['visual'] }
+        : { ...shared, ...sweep, kind: 'wipe', visual: visual as WipeEffect['visual'] }
   if (effect.start < 0 || effect.duration <= 0) {
     throw new Error(`${label} start must be non-negative and duration must be greater than zero`)
   }

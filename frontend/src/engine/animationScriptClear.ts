@@ -46,18 +46,46 @@ export function animationScriptClearCommands(
   // `create text ... inside grid.cell(...)`), and the compile order always
   // records the parent before the child. Reversing deletes each child before
   // the parent command takes the parent's whole subtree with it.
+  const queuedDeletes = new Set<string>()
   for (const nodeId of [...(previous?.createdNodes ?? [])].reverse()) {
     try {
       engine.getNode(nodeId)
     } catch {
       continue
     }
+    queuedDeletes.add(nodeId)
     commands.push(new DeleteNodeCommand({ nodeId }))
   }
+  // Stale script output without a footprint entry (older lessons, a lost
+  // footprint, or a hand-deleted record) still owns its `script-node:` ids.
+  // The new run is about to recreate those ids, so clear any that already
+  // exist — otherwise the create fails with an unhelpful "already exists".
+  // Children first (reverse creation order: parents are recorded before
+  // children), skipping ids already queued above so no node is deleted twice.
+  for (const nodeId of [...next.createdNodes].reverse()) {
+    if (queuedDeletes.has(nodeId)) continue
+    try {
+      engine.getNode(nodeId)
+    } catch {
+      continue
+    }
+    queuedDeletes.add(nodeId)
+    commands.push(new DeleteNodeCommand({ nodeId }))
+  }
+  const queuedDataSources = new Set<string>()
   for (const dataSourceId of previous?.createdDataSources ?? []) {
     if (!engine.embeddedDataSources.some((definition) => definition.id === dataSourceId)) {
       continue
     }
+    queuedDataSources.add(dataSourceId)
+    commands.push(new DeleteDataSourceCommand({ dataSourceId }))
+  }
+  for (const dataSourceId of next.createdDataSources) {
+    if (queuedDataSources.has(dataSourceId)) continue
+    if (!engine.embeddedDataSources.some((definition) => definition.id === dataSourceId)) {
+      continue
+    }
+    queuedDataSources.add(dataSourceId)
     commands.push(new DeleteDataSourceCommand({ dataSourceId }))
   }
   // Tracks/instances/placements on script-created nodes need no clearing:

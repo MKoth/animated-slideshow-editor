@@ -194,6 +194,24 @@ async function prepareMesh(
   }
 }
 
+/**
+ * A script-owned id (`script-node:` / `script-ds:`) colliding at create time
+ * means stale script output survived clearing (older lesson, lost footprint,
+ * or a hand-made id clash). Name the owner instead of surfacing the raw
+ * id-exists error so the user can delete the stale node or rename the clash.
+ */
+function explainRunError(message: string): string {
+  const match = /A (node|data source) with id "(script-(?:node|ds):[^"]+)" already exists/.exec(
+    message,
+  )
+  if (!match) return message
+  const [, kind, id] = match
+  return (
+    `${message} — stale script-created ${kind} "${id}" survived clearing. ` +
+    `Delete that ${kind} in the scene tree (or the data source) and run again`
+  )
+}
+
 /** Clear, dispatch and record the footprint as one Transaction. */
 function dispatchCompiled(
   engine: EnginePublic,
@@ -264,7 +282,7 @@ function dispatchCompiled(
     ]),
   )
   if (!result.ok) {
-    return { ran: false, error: result.error.message, ...outcome }
+    return { ran: false, error: explainRunError(result.error.message), ...outcome }
   }
   return { ran: true, error: null, ...outcome }
 }

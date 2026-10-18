@@ -7,7 +7,8 @@ import type {
 } from './animationScriptParser'
 import type { AnimationScriptBoundsRead } from './animationScriptReads'
 import type { PlannedEffectAudioClip } from './animationScriptCompiler'
-import type { SceneEffect } from './sceneEffect'
+import type { SceneEffect, SweepDirection, WobbleRange } from './sceneEffect'
+import { SWEEP_DIRECTIONS } from './sceneEffect'
 import { sampleAnimationScriptRevealTarget } from './animationScriptRevealTarget'
 
 export interface RevealCompileNode {
@@ -26,6 +27,10 @@ export interface AnimationScriptRevealCompileContext {
   readonly findNode?: (nodeId: string) => RevealCompileNode | undefined
   readonly evaluateNumber: (expression: ScriptExpression, what: string) => number | null
   readonly evaluateString: (expression: ScriptExpression, what: string) => string | null
+  readonly evaluateRange: (
+    expression: ScriptExpression,
+    what: string,
+  ) => { readonly from: number; readonly to: number } | null
   readonly resolveTarget: (
     expression: ScriptExpression,
     allowGroup: boolean,
@@ -265,6 +270,60 @@ export function compileAnimationScriptReveal(
     }
   }
 
+  let direction: SweepDirection | undefined
+  let wobbleX: WobbleRange | undefined
+  let wobbleY: WobbleRange | undefined
+  let wobbleSpeed: number | undefined
+  if (label !== 'mark') {
+    const sweepStatement = statement as RevealNode | WipeNode
+    if (sweepStatement.direction !== undefined) {
+      const raw = context.evaluateString(
+        sweepStatement.direction,
+        `a ${label} direction (${SWEEP_DIRECTIONS.join(', ')})`,
+      )
+      if (raw === null) return { cursor: Math.max(cursor, end) }
+      if (raw !== 'left-to-right' && raw !== 'right-to-left') {
+        context.reportError(
+          `Unknown ${label} direction "${raw}". Available directions: ${SWEEP_DIRECTIONS.join(', ')}.`,
+          sweepStatement.direction.span,
+        )
+        return { cursor: Math.max(cursor, end) }
+      }
+      if (raw !== 'left-to-right') direction = raw
+    }
+    if (sweepStatement.wobbleX !== undefined) {
+      const range = context.evaluateRange(
+        sweepStatement.wobbleX,
+        `a ${label} wobbleX range like { from: 0, to: 8 }`,
+      )
+      if (range === null) return { cursor: Math.max(cursor, end) }
+      if (!(range.from === 0 && range.to === 0)) wobbleX = { ...range }
+    }
+    if (sweepStatement.wobbleY !== undefined) {
+      const range = context.evaluateRange(
+        sweepStatement.wobbleY,
+        `a ${label} wobbleY range like { from: 0, to: 20 }`,
+      )
+      if (range === null) return { cursor: Math.max(cursor, end) }
+      if (!(range.from === 0 && range.to === 0)) wobbleY = { ...range }
+    }
+    if (sweepStatement.wobbleSpeed !== undefined) {
+      const speed = context.evaluateNumber(
+        sweepStatement.wobbleSpeed,
+        `a ${label} wobbleSpeed rate in wiggles per second`,
+      )
+      if (speed === null) return { cursor: Math.max(cursor, end) }
+      if (!Number.isFinite(speed) || speed <= 0) {
+        context.reportError(
+          `${label} wobbleSpeed must be greater than 0 (wiggles per second)`,
+          sweepStatement.wobbleSpeed.span,
+        )
+        return { cursor: Math.max(cursor, end) }
+      }
+      wobbleSpeed = speed
+    }
+  }
+
   const effect: SceneEffect =
     label === 'mark'
       ? {
@@ -287,6 +346,10 @@ export function compileAnimationScriptReveal(
             nodeIds: sampledTarget.nodeIds,
             bounds: sampledTarget.bounds,
             visual: visual as Extract<SceneEffect, { kind: 'wipe' }>['visual'],
+            ...(direction !== undefined ? { direction } : {}),
+            ...(wobbleX !== undefined ? { wobbleX } : {}),
+            ...(wobbleY !== undefined ? { wobbleY } : {}),
+            ...(wobbleSpeed !== undefined ? { wobbleSpeed } : {}),
           }
         : {
             kind: 'reveal',
@@ -297,6 +360,10 @@ export function compileAnimationScriptReveal(
             nodeIds: sampledTarget.nodeIds,
             bounds: sampledTarget.bounds,
             visual: visual as Extract<SceneEffect, { kind: 'reveal' }>['visual'],
+            ...(direction !== undefined ? { direction } : {}),
+            ...(wobbleX !== undefined ? { wobbleX } : {}),
+            ...(wobbleY !== undefined ? { wobbleY } : {}),
+            ...(wobbleSpeed !== undefined ? { wobbleSpeed } : {}),
           }
 
   if (statement.sound === undefined) {
