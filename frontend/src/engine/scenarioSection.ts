@@ -224,6 +224,25 @@ export function withScenarioBindings(
   } as ScenarioSectionJSON
 }
 
+/**
+ * Store the last deterministic chalk render plus its generating-version
+ * pointer (issue #464). Manual Generate only; doc edits after generation
+ * mark the stored HTML stale via `getScenarioHtmlState` while View still
+ * opens the old render. No backend model call — pure client persistence
+ * into the portable section.
+ */
+export function withScenarioHtml(
+  section: ScenarioSectionJSON,
+  html: string,
+  generatedFromVersionId: string | null,
+): ScenarioSectionJSON {
+  return {
+    ...deepClone(section),
+    lastHtml: html,
+    generatedFromVersionId,
+  } as ScenarioSectionJSON
+}
+
 /** Live scan of normalized asset keys in markdown order (checklist source of truth). */
 export function scanScenarioAssetKeys(markdown: string): string[] {
   const parsed = parseScenarioMarkdown(markdown)

@@ -175,6 +175,7 @@ export {
   setScenarioSection,
   validateScenarioSection,
   withScenarioBindings,
+  withScenarioHtml,
   withScenarioMarkdown,
 } from './scenarioSection'
 export type { ScenarioSectionJSON, ScenarioVersionJSON } from './scenarioSection'
@@ -199,6 +200,14 @@ export type {
   ScenarioVisual,
   ScenarioWarning,
 } from './scenarioMarkdown'
+export {
+  buildScenarioImageFiles,
+  extensionFromMimeOrFilename,
+  renderScenarioChalkHtml,
+  scenarioImageFilename,
+  slugFilenameForAssetKey,
+} from './scenarioChalkRender'
+export type { ScenarioChalkRenderOptions } from './scenarioChalkRender'
 export { CommandDispatcher, UndoStack, createCommandSystem } from './commands'
 export type {
   Command,

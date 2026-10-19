@@ -7,6 +7,14 @@ import {
   getScenarioUnboundCount,
   isScenarioGenerateBlocked,
 } from '../../engine/scenarioChecklist'
+import {
+  appendScenarioVersion,
+  createEmptyScenarioSection,
+  createScenarioVersion,
+  withScenarioHtml,
+} from '../../engine/scenarioSection'
+import { buildScenarioImageFiles, renderScenarioChalkHtml } from '../../engine/scenarioChalkRender'
+import { parseScenarioMarkdown } from '../../engine/scenarioMarkdown'
 import { useAiStore } from '../../stores/aiStore'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { AiScenarioChecklist } from './AiScenarioChecklist'
@@ -26,9 +34,8 @@ interface AiScenarioModalProps {
  * View / Download actions, Doc versus History tabs. Generate hard-blocked
  * while any live-scanned row is unbound; View explains itself before the
  * first render; View plus zip enable once HTML is ready with re-generation
- * allowed and a stale hint after doc edits. Actual HTML rendering (#464)
- * and zip packaging (#465) wire into these gated buttons — this modal owns
- * the shell, gating, and checklist resolution.
+ * allowed and a stale hint after doc edits. Deterministic chalk render
+ * (#464) wires into Generate — pure client-side, no backend model call.
  */
 export function AiScenarioModal({ projectId, conversationId }: AiScenarioModalProps) {
   const engine = useContext(EngineContext)?.engine
@@ -72,7 +79,19 @@ export function AiScenarioModal({ projectId, conversationId }: AiScenarioModalPr
   // Hard block: brief text alone never unblocks, only resolved bytes do.
   const generateBlocked = isScenarioGenerateBlocked(rows)
 
-  const versionsForState = markdownVersions.length > 0 ? markdownVersions : portableVersions
+  // Combined server + portable versions for freshness: the server list wins
+  // when present, but portable Generate snapshots must also resolve so a
+  // fresh render reads ready even before the next server sync.
+  const versionsForState = useMemo(() => {
+    const seen = new Set<string>()
+    const combined: Array<{ id: string; content: string }> = []
+    for (const v of [...markdownVersions, ...portableVersions]) {
+      if (seen.has(v.id)) continue
+      seen.add(v.id)
+      combined.push(v)
+    }
+    return combined
+  }, [markdownVersions, portableVersions])
   const htmlState = getScenarioHtmlState({
     lastHtml,
     currentMarkdown: markdown,
@@ -82,6 +101,54 @@ export function AiScenarioModal({ projectId, conversationId }: AiScenarioModalPr
 
   const downloadBlocked = generateBlocked || htmlState === 'empty'
 
+  const handleGenerate = () => {
+    const engineValue = engine
+    if (!engineValue?.project || generateBlocked) return
+    const current = engineValue.project.scenario ?? createEmptyScenarioSection(markdown)
+    const currentMarkdown = current.currentMarkdown ?? markdown
+
+    // Resolve each bound key to a filename hint (mime + original name) so
+    // render and the later zip builder share the slug mapping.
+    const byId = new Map<string, { mime?: string; filenameHint?: string }>()
+    for (const asset of engineValue.embeddedAssets ?? []) {
+      byId.set(asset.id, { mime: asset.mimeType, filenameHint: asset.name })
+    }
+    for (const def of [...allDefinitions, ...definitions]) {
+      if (!byId.has(def.id)) {
+        byId.set(def.id, { mime: def.mimeType, filenameHint: def.original_filename })
+      }
+    }
+    const keys = rows.map((row) => row.key)
+    const imageFiles = buildScenarioImageFiles(keys, (key) => {
+      const binding = current.bindings[key]
+      if (!binding) return undefined
+      return byId.get(binding)
+    })
+    const html = renderScenarioChalkHtml(currentMarkdown, { imageFiles })
+
+    // Pointer must match content for ready: reuse the version whose content
+    // equals the render source, else snapshot the current doc as a new
+    // portable version so the fresh render reads ready.
+    const match = [...markdownVersions, ...(current.versions ?? [])].find(
+      (v) => v.content === currentMarkdown,
+    )
+    let next = current
+    let pointer: string | null = match?.id ?? null
+    if (!match) {
+      let touched: number[] = []
+      try {
+        touched = parseScenarioMarkdown(currentMarkdown).steps.map((s) => s.index)
+      } catch {
+        touched = []
+      }
+      const snapshot = createScenarioVersion(currentMarkdown, 'Generate HTML snapshot', touched)
+      next = appendScenarioVersion(next, snapshot)
+      pointer = snapshot.id
+    }
+    engineValue.project.setScenario(withScenarioHtml(next, html, pointer))
+    setScenarioRev((n) => n + 1)
+  }
+
   return (
     <div data-testid="ai-scenario-modal" role="dialog" aria-label="Scenario">
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
@@ -90,8 +157,7 @@ export function AiScenarioModal({ projectId, conversationId }: AiScenarioModalPr
           data-testid="ai-scenario-generate"
           disabled={generateBlocked}
           title={generateBlocked ? `Blocked — ${unboundCount} unbound` : 'Generate HTML'}
-          // Actual deterministic chalk render lands in #464; this shell owns gating.
-          onClick={() => undefined}
+          onClick={handleGenerate}
         >
           {generateBlocked ? `Generate HTML (blocked — ${unboundCount} unbound)` : 'Generate HTML'}
         </button>
