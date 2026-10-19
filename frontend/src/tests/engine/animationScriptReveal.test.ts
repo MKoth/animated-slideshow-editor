@@ -184,6 +184,103 @@ describe('Animation Script reveal', () => {
     expect(result.effects).toHaveLength(1)
   })
 
+  it('pads planned reveal bounds when no renderer measurement exists yet', () => {
+    const { system, slide } = setup()
+    // All-caps "FEMENINO" at 26px: the raw 0.6em/char estimate (124.8 wide)
+    // undershoots real caps, which used to leave the trailing O half-masked.
+    // With no measure available the fallback must err wide instead.
+    const source = [
+      'script "Builder" from 0',
+      'create text "Caps" as caps at (340, 500) { content: "FEMENINO", fontSize: 26 }',
+      'reveal(caps, over: 0.8, visual: none)',
+    ].join('\n')
+
+    const result = checkAnimationScript(system.engine, slide.id, source)
+
+    expect(result.diagnostics.filter((item) => item.severity === 'error')).toEqual([])
+    expect(result.effects).toHaveLength(1)
+    const effect = result.effects[0]
+    expect(effect.kind).toBe('reveal')
+    if (effect.kind !== 'reveal') throw new Error('expected a reveal effect')
+    const bounds = effect.bounds
+    expect(bounds.maxX - bounds.minX).toBeGreaterThan(8 * 26 * 0.6)
+    expect(bounds.maxX - bounds.minX).toBeCloseTo(8 * 26 * 0.6 * 1.2 + 4, 0)
+    expect((bounds.minX + bounds.maxX) / 2).toBeCloseTo(340, 5)
+  })
+
+  it('unions live measurements with planned bounds when a rerun moved the node', () => {
+    const { system, slide } = setup()
+    // The previous run left "Moved label" at (340, 480); this source recreates
+    // it at (340, 500). The live measurement lags one move behind but still
+    // overlaps the planned box, so the effect must cover both the old spot
+    // and the new home — never just the stale box, or the text renders
+    // half-masked after the move.
+    const previous = system.engine.getSlide(slide.id).scene.root
+    const made = system.dispatcher.dispatch(
+      new CreateNodeCommand({
+        sceneId: slide.scene.id,
+        parentId: previous.id,
+        name: 'Moved label',
+        transform: { x: 340, y: 480, rotation: 0, scaleX: 1, scaleY: 1 },
+      }),
+    )
+    if (!made.ok) throw made.error
+    const previousId = (made.inverse as { nodeId: string }).nodeId
+    const measure = (nodeId: string) => (nodeId === previousId ? { width: 10, height: 10 } : null)
+    const source = [
+      'script "Builder" from 0',
+      'create text "Moved label" as moved at (340, 500) { content: "FEMENINO", fontSize: 26 }',
+      'reveal(moved, over: 0.8, visual: none)',
+    ].join('\n')
+
+    const result = checkAnimationScript(system.engine, slide.id, source, { measure })
+
+    expect(result.diagnostics.filter((item) => item.severity === 'error')).toEqual([])
+    expect(result.effects).toHaveLength(1)
+    const effect = result.effects[0]
+    expect(effect.kind).toBe('reveal')
+    if (effect.kind !== 'reveal') throw new Error('expected a reveal effect')
+    // Old spot (around y 480) and new home (around y 500) both covered.
+    expect(effect.bounds.minY).toBeLessThan(480)
+    expect(effect.bounds.maxY).toBeGreaterThan(510)
+    expect(effect.bounds.maxX).toBeGreaterThan(400)
+  })
+
+  it('does not smear nested created text with origin-local planned bounds', () => {
+    const { system, slide } = setup()
+    // Planned bounds are parent-local: text created at (5, 5) inside an
+    // offset parent plans its box near the origin, while the live previous
+    // node measures in world space far away. Unioning those would stretch
+    // the effect across the canvas (the table-border sweep sailed off the
+    // table this way), so disjoint boxes must keep the live measurement.
+    const previous = system.engine.getSlide(slide.id).scene.root
+    const made = system.dispatcher.dispatch(
+      new CreateNodeCommand({
+        sceneId: slide.scene.id,
+        parentId: previous.id,
+        name: 'Cell',
+        transform: { x: 300, y: 400, rotation: 0, scaleX: 1, scaleY: 1 },
+      }),
+    )
+    if (!made.ok) throw made.error
+    const previousId = (made.inverse as { nodeId: string }).nodeId
+    const measure = (nodeId: string) => (nodeId === previousId ? { width: 20, height: 20 } : null)
+    const source = [
+      'script "Builder" from 0',
+      'create text "Cell" as cell at (5, 5) { content: "Hi", fontSize: 30 }',
+      'reveal(cell, over: 0.5, visual: none)',
+    ].join('\n')
+
+    const result = checkAnimationScript(system.engine, slide.id, source, { measure })
+
+    expect(result.diagnostics.filter((item) => item.severity === 'error')).toEqual([])
+    expect(result.effects).toHaveLength(1)
+    const effect = result.effects[0]
+    expect(effect.kind).toBe('reveal')
+    if (effect.kind !== 'reveal') throw new Error('expected a reveal effect')
+    expect(effect.bounds).toEqual({ minX: 290, minY: 390, maxX: 310, maxY: 410 })
+  })
+
   it('compiles wipe calls with deterministic timing and a cloth performer', () => {
     const { system, slide, group, first, second, measure } = setup()
     const result = checkAnimationScript(

@@ -319,8 +319,11 @@ export class RevealEffectRenderer {
       const index = effects.indexOf(effect)
       // Later scheduled sweeps keep governing the mask after their performer
       // window ends, so suppression looks at any started later effect — unlike
-      // selectActiveMarks, which only considers still-active marks.
+      // selectActiveMarks, which only considers still-active marks. A
+      // `visual: none` sweep draws no performer of its own (e.g. the instant
+      // cell-mask setup wipes), so it must not eat the performer it overlaps.
       return !effects.some((other) => {
+        if (other.visual.kind === 'none') return false
         const later =
           other.start > effect.start ||
           (other.start === effect.start && effects.indexOf(other) > index)

@@ -19,7 +19,11 @@ import { AudioBufferCache } from '../engine/audioBufferCache'
 import type { EnginePublic } from '../engine'
 import { getAudioClipSourceDuration } from '../engine/audioClip'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
-import { getTimeRatioForPlaybackRate, applyAudioEffects, getPitchScaleForSemitones } from './timeStretch'
+import {
+  getTimeRatioForPlaybackRate,
+  applyAudioEffects,
+  getPitchScaleForSemitones,
+} from './timeStretch'
 
 type Engine = EnginePublic
 
@@ -130,7 +134,10 @@ export class SyncedAudioController {
   private _pendingDecodes = new Set<string>()
   private _playGen = 0
   // Time-stretch cache: key = `${assetId}:rate:${playbackRate}` -> stretched AudioBuffer
-  private stretchedCache = new Map<string, { buffer: AudioBuffer; duration: number; byteSize: number }>()
+  private stretchedCache = new Map<
+    string,
+    { buffer: AudioBuffer; duration: number; byteSize: number }
+  >()
   private pendingStretches = new Set<string>()
 
   // for tests: capture scheduled calls
@@ -174,19 +181,31 @@ export class SyncedAudioController {
     }
   }
 
-  private async decodeArrayBufferToBuffer(arrayBuffer: ArrayBuffer): Promise<{ buffer: AudioBuffer; byteSize: number; duration: number } | null> {
+  private async decodeArrayBufferToBuffer(
+    arrayBuffer: ArrayBuffer,
+  ): Promise<{ buffer: AudioBuffer; byteSize: number; duration: number } | null> {
     // Try playback context decode first
     const ctx = this.getCtx()
     if (ctx?.decodeAudioData) {
       try {
         const buf = await ctx.decodeAudioData(arrayBuffer.slice(0))
-        return { buffer: buf, byteSize: buf.length * buf.numberOfChannels * 4, duration: buf.duration }
+        return {
+          buffer: buf,
+          byteSize: buf.length * buf.numberOfChannels * 4,
+          duration: buf.duration,
+        }
       } catch {
         // fall through to ephemeral
       }
     }
-    const Ctor = (globalThis as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
-      ?? (globalThis as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    const Ctor =
+      (
+        globalThis as unknown as {
+          AudioContext?: typeof AudioContext
+          webkitAudioContext?: typeof AudioContext
+        }
+      ).AudioContext ??
+      (globalThis as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (!Ctor) return null
     let tmp: AudioContext | null = null
     try {
@@ -198,15 +217,24 @@ export class SyncedAudioController {
       return null
     } finally {
       if (tmp) {
-        try { await tmp.close() } catch { /* ignore */ }
+        try {
+          await tmp.close()
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
 
-  private async decodeBase64ToBuffer(base64: string): Promise<{ buffer: AudioBuffer; byteSize: number; duration: number } | null> {
+  private async decodeBase64ToBuffer(
+    base64: string,
+  ): Promise<{ buffer: AudioBuffer; byteSize: number; duration: number } | null> {
     const bytes = this.base64ToBytes(base64)
     if (!bytes) return null
-    const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+    const arrayBuffer = bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer
     return this.decodeArrayBufferToBuffer(arrayBuffer)
   }
 
@@ -216,8 +244,13 @@ export class SyncedAudioController {
     if (typeof d.mimeType === 'string' && (d.mimeType as string).startsWith('audio/')) return true
     if (typeof d.category === 'string' && d.category === 'audio') return true
     const meta = d.metadata as Record<string, unknown> | undefined
-    if (meta && typeof meta.mimeType === 'string' && (meta.mimeType as string).startsWith('audio/')) return true
-    if (typeof d.original_filename === 'string' && /\.(wav|mp3|mpeg|ogg|webm)$/i.test(d.original_filename as string)) return true
+    if (meta && typeof meta.mimeType === 'string' && (meta.mimeType as string).startsWith('audio/'))
+      return true
+    if (
+      typeof d.original_filename === 'string' &&
+      /\.(wav|mp3|mpeg|ogg|webm)$/i.test(d.original_filename as string)
+    )
+      return true
     return false
   }
 
@@ -228,7 +261,8 @@ export class SyncedAudioController {
     const asset = this.engine.getEmbeddedAsset(assetId)
     if (asset) {
       const meta = asset.metadata as Record<string, unknown> | undefined
-      const metaDuration = typeof meta?.duration === 'number' ? (meta.duration as number) : undefined
+      const metaDuration =
+        typeof meta?.duration === 'number' ? (meta.duration as number) : undefined
       if (metaDuration !== undefined && this.cache.shouldUseMediaElement(metaDuration)) return false
       this._pendingDecodes.add(assetId)
       try {
@@ -250,7 +284,8 @@ export class SyncedAudioController {
     }
     if (globalDef && this.isGlobalAudioDefinition(globalDef)) {
       const def = globalDef as { original_url: string; metadata?: Record<string, unknown> }
-      const metaDuration = typeof def.metadata?.duration === 'number' ? (def.metadata.duration as number) : undefined
+      const metaDuration =
+        typeof def.metadata?.duration === 'number' ? (def.metadata.duration as number) : undefined
       if (metaDuration !== undefined && this.cache.shouldUseMediaElement(metaDuration)) return false
       this._pendingDecodes.add(assetId)
       try {
@@ -293,7 +328,12 @@ export class SyncedAudioController {
     )
   }
 
-  private getStretchedKey(assetId: string, playbackRate: number, pitchSemitones = 0, noiseReduction = 0): string {
+  private getStretchedKey(
+    assetId: string,
+    playbackRate: number,
+    pitchSemitones = 0,
+    noiseReduction = 0,
+  ): string {
     return `${assetId}:stretch:${playbackRate.toFixed(6)}:pitch:${pitchSemitones.toFixed(2)}:nr:${noiseReduction.toFixed(2)}`
   }
 
@@ -304,7 +344,9 @@ export class SyncedAudioController {
     return Math.abs(rate - 1) > 1e-6 || Math.abs(pitch) > 1e-6 || nr > 1e-6
   }
 
-  private async ensureStretchedBufferForClip(clip: import('../engine/audioClip').AudioClip): Promise<boolean> {
+  private async ensureStretchedBufferForClip(
+    clip: import('../engine/audioClip').AudioClip,
+  ): Promise<boolean> {
     const rate = clip.playbackRate || 1
     const pitch = clip.pitchSemitones ?? 0
     const nr = clip.noiseReduction ?? 0
@@ -321,7 +363,8 @@ export class SyncedAudioController {
     }
     if (!originalEntry) return false
     const originalBuffer = originalEntry.buffer as AudioBuffer
-    if (!originalBuffer || typeof (originalBuffer as AudioBuffer).getChannelData !== 'function') return false
+    if (!originalBuffer || typeof (originalBuffer as AudioBuffer).getChannelData !== 'function')
+      return false
     const timeRatio = getTimeRatioForPlaybackRate(rate)
     const pitchScale = getPitchScaleForSemitones(pitch)
     // pitch does not change duration, only tempo does, so stretchedDuration still timeRatio * original
@@ -342,7 +385,12 @@ export class SyncedAudioController {
     }
   }
 
-  private getStretchedBuffer(assetId: string, playbackRate: number, pitchSemitones = 0, noiseReduction = 0): { buffer: AudioBuffer; duration: number } | null {
+  private getStretchedBuffer(
+    assetId: string,
+    playbackRate: number,
+    pitchSemitones = 0,
+    noiseReduction = 0,
+  ): { buffer: AudioBuffer; duration: number } | null {
     const key = this.getStretchedKey(assetId, playbackRate, pitchSemitones, noiseReduction)
     const entry = this.stretchedCache.get(key)
     if (!entry) return null
@@ -352,8 +400,15 @@ export class SyncedAudioController {
     return entry
   }
 
-  private getStretchedBufferForClip(clip: import('../engine/audioClip').AudioClip): { buffer: AudioBuffer; duration: number } | null {
-    return this.getStretchedBuffer(clip.assetId, clip.playbackRate || 1, clip.pitchSemitones ?? 0, clip.noiseReduction ?? 0)
+  private getStretchedBufferForClip(
+    clip: import('../engine/audioClip').AudioClip,
+  ): { buffer: AudioBuffer; duration: number } | null {
+    return this.getStretchedBuffer(
+      clip.assetId,
+      clip.playbackRate || 1,
+      clip.pitchSemitones ?? 0,
+      clip.noiseReduction ?? 0,
+    )
   }
 
   attach(): void {
@@ -424,13 +479,19 @@ export class SyncedAudioController {
     }
     if (gen !== this._playGen) return
     if (usePlaybackController.getState().status !== 'playing') return
+    // Re-anchor to the live playhead: the playback store's own rAF keeps
+    // advancing visuals while buffers preload above, so the PlaybackStarted
+    // event time is stale by the preload duration. Anchoring audio to the
+    // stale time would replay every overlapped clip head late, trailing its
+    // visible effect (e.g. Spanish-lesson reveal/wipe SFX).
+    const livePlayhead = usePlaybackController.getState().currentTimes[slideId] ?? playheadTime
     const perfNow = this.getPerformanceNow()
     const baseAudioTime = ctx.currentTime
     const duration = this.getSlideDuration(slideId)
     this.baseTimes = {
       baseAudioTime,
       basePerfNow: perfNow,
-      basePlayhead: playheadTime,
+      basePlayhead: livePlayhead,
       slideId,
       slideDuration: duration,
     }
@@ -493,6 +554,10 @@ export class SyncedAudioController {
       this.cache.clear()
       this.stretchedCache.clear()
     }
+    // Warm decoded buffers for the incoming slide so the next Play's preload
+    // is already hot: a cold first Play would otherwise advance visuals while
+    // decoding, and overlapped effect SFX would start mid-slice or late.
+    void this.ensureBuffersForSlide(nextSlideId).catch(() => undefined)
   }
 
   // -------------------------------------------------------------------------
@@ -675,7 +740,14 @@ export class SyncedAudioController {
       if (needsEffects) {
         const stretched = this.getStretchedBufferForClip(clip)
         if (stretched) {
-          this.scheduleStretchedClip(clip, playhead, audioTime, ctx, slideDuration, stretched.buffer)
+          this.scheduleStretchedClip(
+            clip,
+            playhead,
+            audioTime,
+            ctx,
+            slideDuration,
+            stretched.buffer,
+          )
           continue
         }
         // trigger async effects (ensures original decoded first)
@@ -958,9 +1030,9 @@ export class SyncedAudioController {
         let buffer: AudioBuffer | null = null
         let playbackRateForSource = rate
         let offset: number
-        let blipDuration: number
-        const clippedForClip = getClippedPlaybackDuration(clip, slideDuration) - (time - clip.timelineStart)
-        blipDuration = Math.min(0.12, clippedForClip)
+        const clippedForClip =
+          getClippedPlaybackDuration(clip, slideDuration) - (time - clip.timelineStart)
+        const blipDuration = Math.min(0.12, clippedForClip)
         if (blipDuration <= 0) {
           useAudioPlaybackStore.getState().setAuditioning(null)
           return

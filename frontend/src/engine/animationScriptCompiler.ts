@@ -5114,6 +5114,7 @@ class Compiler {
       isCamera: false,
       parentId,
       isTable: true,
+      isRenderable: true,
       tableColumnCount: columns.length,
       isGroup: false,
       ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
@@ -5637,7 +5638,12 @@ class Compiler {
       const size = this.#createdTextSizes.get(nodeId)
       const initial = this.#createdInitial.get(nodeId)
       if (!size || !initial) return null
-      const halfWidth = (size.width * Math.abs(initial.scaleX)) / 2
+      // Conservative fallback: renderer measurement was unavailable (often
+      // because the node is still masked), so err wide. An over-wide mask
+      // uncovers empty space (harmless) while an under-wide one clips
+      // trailing glyphs — e.g. the final O of an all-caps label estimated
+      // at 0.6em/char when the true caps run wider.
+      const halfWidth = (size.width * Math.abs(initial.scaleX) * 1.2) / 2 + 2
       const halfHeight = (size.height * Math.abs(initial.scaleY)) / 2
       return {
         minX: initial.x - halfWidth,
@@ -5667,8 +5673,27 @@ class Compiler {
         if (readId === nodeId && initial?.opacity === 0) return false
         return this.#context.isVisible(readId, time)
       },
-      nodeBounds: (nodeId, time) =>
-        this.#context.reads.nodeBounds(readNodeId(nodeId), time) ?? plannedTextBounds(nodeId),
+      nodeBounds: (nodeId, time) => {
+        const measured = this.#context.reads.nodeBounds(readNodeId(nodeId), time)
+        const planned = plannedTextBounds(nodeId)
+        if (!measured) return planned
+        if (!planned) return measured
+        // Union only when both boxes live in the same neighborhood. Planned
+        // bounds are parent-local, so for text nested inside a moved parent
+        // (table cells) they sit near the origin while measured bounds are
+        // world-space — unioning those would smear the effect across the
+        // canvas (e.g. the table-border sweep). Overlapping boxes mean a
+        // small move or none: union covers the old spot and the new home.
+        // A re-run with positions already matching measures the right box,
+        // so large moves self-heal on the second run.
+        const overlaps =
+          measured.minX <= planned.maxX &&
+          planned.minX <= measured.maxX &&
+          measured.minY <= planned.maxY &&
+          planned.minY <= measured.maxY
+        if (!overlaps) return measured
+        return mergeBounds(measured, planned)
+      },
       roundTime,
       formatSeconds,
       reportError: (message, span) => this.#error(message, span),
