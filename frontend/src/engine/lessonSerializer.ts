@@ -111,11 +111,9 @@ export function toLessonJSON(
           project.scriptFunctions,
         )
       : undefined
-  // Scenario section seam (issue #460): the project model carries no
-  // scenario field yet, so this stays absent. Later tickets set it via
-  // the scenarioSection owner without editing this function body beyond
-  // this delegation line.
-  const scenario = scenarioSectionToJSON()
+  // Scenario section seam (issue #460/#461): project-attached doc travels
+  // in the top-level section via the scenarioSection owner.
+  const scenario = scenarioSectionToJSON(project.scenario)
   return {
     version: LESSON_VERSION,
     project: {
@@ -1111,10 +1109,9 @@ export function buildProjectFromJSON(
       }
     }
   }
-  // Scenario section seam (issue #460): read through the owner so later
-  // tickets can attach the section to the project without touching this file.
-  // Currently ignored by the project model (no behaviour change).
-  void scenarioSectionFromJSON(json)
+  // Scenario section seam (issue #460/#461): project-attached doc travels
+  // verbatim in the top-level section; old files without it load as undefined.
+  const scenario = scenarioSectionFromJSON(json)
   return new Project(
     metadata,
     slides,
@@ -1124,6 +1121,7 @@ export function buildProjectFromJSON(
     buildEmbeddedShadersFromJSON(json.library),
     buildEmbeddedDataSourcesFromJSON(json.library),
     buildScriptLibraryEntriesFromJSON(json.library),
+    scenario,
   )
 }
 

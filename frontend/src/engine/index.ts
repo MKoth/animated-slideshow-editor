@@ -162,6 +162,34 @@ export {
   validate,
 } from './lessonSerializer'
 export type { DeserializeResult } from './lessonSerializer'
+export {
+  appendScenarioVersion,
+  createEmptyScenarioSection,
+  createScenarioVersion,
+  duplicateScenarioSection,
+  getScenarioSection,
+  getUnresolvableScenarioBindings,
+  scanScenarioAssetKeys,
+  scenarioSectionFromJSON,
+  scenarioSectionToJSON,
+  setScenarioSection,
+  validateScenarioSection,
+  withScenarioBindings,
+  withScenarioMarkdown,
+} from './scenarioSection'
+export type { ScenarioSectionJSON, ScenarioVersionJSON } from './scenarioSection'
+export {
+  normalizeAssetKey,
+  parseScenarioMarkdown,
+  upgradeLegacyScenarioToMarkdown,
+} from './scenarioMarkdown'
+export type {
+  LegacyScenarioStep,
+  ParsedScenario,
+  ScenarioStep,
+  ScenarioVisual,
+  ScenarioWarning,
+} from './scenarioMarkdown'
 export { CommandDispatcher, UndoStack, createCommandSystem } from './commands'
 export type {
   Command,

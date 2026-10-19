@@ -6,6 +6,7 @@ import type {
   Project,
 } from '../engine'
 import { reconcileMissingAssets } from '../engine'
+import { getUnresolvableScenarioBindings } from '../engine/scenarioSection'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { useKeyframeClipboardStore } from '../stores/keyframeClipboardStore'
 import { useMissingAssetsStore } from '../stores/missingAssetsStore'
@@ -85,5 +86,22 @@ function reconcileAgainstLibrary(
   const availableDefinitionIds = new Set(
     engine.embeddedAssets.map((asset) => asset.id).concat(definitions.map((d) => d.id)),
   )
-  return reconcileMissingAssets(project, availableDefinitionIds)
+  const base = reconcileMissingAssets(project, availableDefinitionIds)
+  const unresolvable = getUnresolvableScenarioBindings(project.scenario, availableDefinitionIds)
+  if (unresolvable.length === 0) return base
+  const missing = base.missing.map((entry) => ({
+    assetDefinitionId: entry.assetDefinitionId,
+    nodeIds: [...entry.nodeIds],
+  }))
+  const names = [...base.names]
+  const affectedNodeIds = [...base.affectedNodeIds]
+  for (const { key, assetId } of unresolvable) {
+    const label = `Scenario “${key}”`
+    if (!names.includes(label)) names.push(label)
+    const existing = missing.find((entry) => entry.assetDefinitionId === assetId)
+    if (!existing) {
+      missing.push({ assetDefinitionId: assetId, nodeIds: [] })
+    }
+  }
+  return { missing, affectedNodeIds, names }
 }

@@ -7,6 +7,7 @@ import type {
   EmbeddedFlowchartDataSourceDefinition,
 } from './embeddedDataSource'
 import type { ScriptLibraryEntry } from './scriptLibrary'
+import type { ScenarioSectionJSON } from './scenarioSection'
 
 export type EmbeddedDataSourceUnion =
   EmbeddedDataSourceDefinition | EmbeddedFlowchartDataSourceDefinition
@@ -40,6 +41,7 @@ export class Project {
   readonly #embeddedShaders: EmbeddedShaderDefinition[]
   readonly #embeddedDataSources: EmbeddedDataSourceUnion[]
   readonly #scriptFunctions: ScriptLibraryEntry[]
+  #scenario: ScenarioSectionJSON | undefined
 
   constructor(
     metadata: ProjectMetadata,
@@ -50,6 +52,7 @@ export class Project {
     embeddedShaders: readonly EmbeddedShaderDefinition[] = [],
     embeddedDataSources: readonly EmbeddedDataSourceUnion[] = [],
     scriptFunctions: readonly ScriptLibraryEntry[] = [],
+    scenario?: ScenarioSectionJSON,
   ) {
     this.id = metadata.id
     this.#name = metadata.name
@@ -64,6 +67,10 @@ export class Project {
     this.#embeddedShaders = [...embeddedShaders]
     this.#embeddedDataSources = [...embeddedDataSources]
     this.#scriptFunctions = [...scriptFunctions]
+    this.#scenario =
+      scenario === undefined
+        ? undefined
+        : (JSON.parse(JSON.stringify(scenario)) as ScenarioSectionJSON)
   }
 
   get name(): string {
@@ -105,6 +112,18 @@ export class Project {
 
   get scriptFunctions(): readonly ScriptLibraryEntry[] {
     return this.#scriptFunctions
+  }
+
+  get scenario(): ScenarioSectionJSON | undefined {
+    return this.#scenario
+  }
+
+  setScenario(section: ScenarioSectionJSON | undefined): void {
+    this.#scenario =
+      section === undefined
+        ? undefined
+        : (JSON.parse(JSON.stringify(section)) as ScenarioSectionJSON)
+    this.#updatedAt = new Date().toISOString()
   }
 
   upsertScriptFunction(entry: ScriptLibraryEntry): void {
