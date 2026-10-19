@@ -1,8 +1,10 @@
 import type { Scene } from '../../engine'
 import type { RevealEffect, SceneEffect, WipeEffect } from '../../engine/sceneEffect'
 import {
+  carryPosition,
   markLifecycle,
   revealCoverage,
+  selectActiveCarries,
   selectActiveMarks,
   selectRevealWipeForNode,
 } from '../../engine/sceneEffect'
@@ -15,6 +17,9 @@ const LEGACY_WOBBLE_SEGMENTS = 6
 /** Clamp for rate-derived segment counts: keeps per-frame knot sampling cheap. */
 const MIN_WOBBLE_SEGMENTS = 2
 const MAX_WOBBLE_SEGMENTS = 64
+
+/** Default grabber size for a carry paw (carries have no sweep bounds). */
+const CARRY_GRABBER_HEIGHT = 80
 
 function hashSeed(text: string): number {
   let hash = 2166136261 >>> 0
@@ -209,7 +214,7 @@ export class RevealEffectRenderer {
   ): void {
     const targetIds = new Set(
       effects
-        .filter((effect) => effect.kind !== 'mark')
+        .filter((effect) => effect.kind === 'reveal' || effect.kind === 'wipe')
         .flatMap((effect) => effect.nodeIds)
         .filter((nodeId) => scene.getNode(nodeId) !== undefined),
     )
@@ -305,8 +310,10 @@ export class RevealEffectRenderer {
     }
 
     const active = effects.filter(
-      (effect) =>
-        effect.kind !== 'mark' && time >= effect.start && time <= effect.start + effect.duration,
+      (effect): effect is RevealEffect | WipeEffect =>
+        (effect.kind === 'reveal' || effect.kind === 'wipe') &&
+        time >= effect.start &&
+        time <= effect.start + effect.duration,
     )
     const performers = active.filter((effect) => {
       const index = effects.indexOf(effect)
@@ -324,13 +331,17 @@ export class RevealEffectRenderer {
         )
       })
     })
+    const activeCarries = selectActiveCarries(effects, time)
     const pawIds = new Set(
-      performers
-        .filter((effect) => effect.visual.kind === 'paw' || effect.visual.kind === 'cloth')
-        .map((effect) => effect.id),
+      [
+        ...performers.filter(
+          (effect) => effect.visual.kind === 'paw' || effect.visual.kind === 'cloth',
+        ),
+        ...activeCarries.filter((effect) => effect.visual.kind === 'paw'),
+      ].map((effect) => effect.id),
     )
     const assetEffects = new Map(
-      [...performers, ...activeMarks]
+      [...performers, ...activeMarks, ...activeCarries]
         .filter((effect) => effect.visual.kind === 'asset')
         .map((effect) => [effect.id, effect] as const),
     )
@@ -364,6 +375,21 @@ export class RevealEffectRenderer {
         else this.#drawPaw(paw, x, y, height)
       } else if (effect.visual.kind === 'asset') {
         this.#drawAsset(effect, x, y, time)
+      }
+    }
+    for (const effect of activeCarries) {
+      const grab = carryPosition(effect, time)
+      if (effect.visual.kind === 'paw') {
+        let paw = this.#paws.get(effect.id)
+        if (!paw) {
+          paw = new this.#pixi.Graphics()
+          paw.zIndex = Number.MAX_SAFE_INTEGER
+          this.#world.addChild(paw)
+          this.#paws.set(effect.id, paw)
+        }
+        this.#drawPaw(paw, grab.x, grab.y, CARRY_GRABBER_HEIGHT)
+      } else if (effect.visual.kind === 'asset') {
+        this.#drawAsset(effect, grab.x, grab.y, time)
       }
     }
   }

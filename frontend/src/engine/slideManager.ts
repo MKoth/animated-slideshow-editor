@@ -93,24 +93,28 @@ export class SlideManager {
     const source = this.get(slideId)
     const { scene, nodeIds, placementIds } = this.#scenes.copyScene(source.scene)
     const duplicatedEffects = source.effects.map((effect) => {
-      const common = {
-        ...effect,
+      const base = {
         id: newId('scene-effect'),
         scopeNodeIds: effect.scopeNodeIds.map((nodeId) => nodeIds.get(nodeId) ?? nodeId),
         nodeIds: effect.nodeIds.map((nodeId) => nodeIds.get(nodeId) ?? nodeId),
-        visual:
-          effect.visual.kind === 'asset'
-            ? {
-                ...effect.visual,
-                nodeId: nodeIds.get(effect.visual.nodeId) ?? effect.visual.nodeId,
-              }
-            : { ...effect.visual },
       }
-      return effect.kind === 'mark'
-        ? { ...common, kind: 'mark' as const, visual: common.visual as typeof effect.visual }
-        : effect.kind === 'reveal'
-          ? { ...common, kind: 'reveal' as const, visual: common.visual as typeof effect.visual }
-          : { ...common, kind: 'wipe' as const, visual: common.visual as typeof effect.visual }
+      const visual =
+        effect.visual.kind === 'asset'
+          ? {
+              ...effect.visual,
+              nodeId: nodeIds.get(effect.visual.nodeId) ?? effect.visual.nodeId,
+            }
+          : { ...effect.visual }
+      switch (effect.kind) {
+        case 'mark':
+          return { ...effect, ...base, visual: visual as typeof effect.visual }
+        case 'reveal':
+          return { ...effect, ...base, visual: visual as typeof effect.visual }
+        case 'wipe':
+          return { ...effect, ...base, visual: visual as typeof effect.visual }
+        case 'carry':
+          return { ...effect, ...base, visual: visual as typeof effect.visual }
+      }
     })
     const effectIds = new Map(
       source.effects.map((effect, index) => [effect.id, duplicatedEffects[index].id]),

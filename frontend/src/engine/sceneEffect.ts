@@ -138,7 +138,47 @@ export interface TemporaryMark extends Omit<SweepEffect, 'kind' | 'visual'> {
       }
 }
 
-export type SceneEffect = RevealEffect | WipeEffect | TemporaryMark
+export interface CarryEffect {
+  readonly kind: 'carry'
+  readonly id: string
+  readonly start: number
+  readonly duration: number
+  /** Binding member that is carried: exactly one node. */
+  readonly scopeNodeIds: readonly string[]
+  readonly nodeIds: readonly string[]
+  /** Grabber path without an approach: the target's own position at start, then `to`. */
+  readonly from: { readonly x: number; readonly y: number }
+  readonly to: { readonly x: number; readonly y: number }
+  /**
+   * Optional staging point the grabber flies in from first: phase one rides
+   * approach→grab point over approachDuration, phase two rides grab point→to.
+   * Omitted (with approachDuration) when the grabber starts on top of the target.
+   */
+  readonly approach?: { readonly x: number; readonly y: number }
+  readonly approachDuration?: number
+  /**
+   * Rigid glue between the grabber and the carried picture: the asset's
+   * measured visual-center offset from its transform pivot at the start time.
+   * Added to from/to (never to approach) so the paw rides the picture's
+   * center at identical velocity. Omitted when 0 (unmeasurable target).
+   */
+  readonly grabDx?: number
+  readonly grabDy?: number
+  readonly visual:
+    | { readonly kind: 'paw' }
+    | { readonly kind: 'none' }
+    | {
+        readonly kind: 'asset'
+        readonly nodeId: string
+        readonly scale?: number
+        readonly anchorX?: number
+        readonly anchorY?: number
+        readonly dx?: number
+        readonly dy?: number
+      }
+}
+
+export type SceneEffect = RevealEffect | WipeEffect | TemporaryMark | CarryEffect
 
 function optionalWobbleRange(raw: unknown, what: string): Record<string, WobbleRange> {
   if (raw === undefined) return {}
@@ -168,10 +208,21 @@ function optionalSweepDirection(raw: unknown, what: string): Record<string, Swee
 }
 
 export function sceneEffectToJSON(effect: SceneEffect): unknown {
+  if (effect.kind === 'carry') {
+    return {
+      ...effect,
+      scopeNodeIds: [...effect.scopeNodeIds],
+      nodeIds: [...effect.nodeIds],
+      from: { ...effect.from },
+      to: { ...effect.to },
+      ...(effect.approach !== undefined ? { approach: { ...effect.approach } } : {}),
+      visual: { ...effect.visual },
+    }
+  }
   const json: Record<string, unknown> = {
     ...effect,
     nodeIds: [...effect.nodeIds],
-    bounds: { ...effect.bounds },
+    bounds: { ...(effect as RevealEffect).bounds },
     visual: { ...effect.visual },
   }
   if (effect.kind !== 'mark') {
@@ -196,17 +247,23 @@ export function sceneEffectToJSON(effect: SceneEffect): unknown {
 }
 
 export function sceneEffectFromJSON(value: unknown): SceneEffect {
-  if (!isRecord(value) || !['reveal', 'wipe', 'mark'].includes(String(value.kind))) {
-    throw new Error('Scene effect must be a reveal, wipe, or mark')
+  if (!isRecord(value) || !['reveal', 'wipe', 'mark', 'carry'].includes(String(value.kind))) {
+    throw new Error('Scene effect must be a reveal, wipe, mark, or carry')
   }
-  const label = value.kind === 'wipe' ? 'Wipe' : value.kind === 'mark' ? 'Mark' : 'Reveal'
+  const label =
+    value.kind === 'wipe'
+      ? 'Wipe'
+      : value.kind === 'mark'
+        ? 'Mark'
+        : value.kind === 'carry'
+          ? 'Carry'
+          : 'Reveal'
   if (
     !Array.isArray(value.scopeNodeIds) ||
     !Array.isArray(value.nodeIds) ||
-    !isRecord(value.bounds) ||
     !isRecord(value.visual)
   ) {
-    throw new Error(`${label} effect requires scopeNodeIds, nodeIds, bounds, and visual`)
+    throw new Error(`${label} effect requires scopeNodeIds, nodeIds, and visual`)
   }
   const scopeNodeIds = value.scopeNodeIds.map((id, index) =>
     requireString(id, `Reveal scopeNodeIds[${index}]`),
@@ -245,9 +302,82 @@ export function sceneEffectFromJSON(value: unknown): SceneEffect {
     (value.kind === 'reveal' && visual.kind === 'cloth') ||
     (value.kind === 'wipe' && visual.kind === 'paw') ||
     (value.kind === 'mark' && (visual.kind === 'paw' || visual.kind === 'cloth')) ||
-    (value.kind !== 'mark' && visual.kind === 'marker')
+    (value.kind === 'carry' && (visual.kind === 'cloth' || visual.kind === 'marker')) ||
+    ((value.kind === 'reveal' || value.kind === 'wipe' || value.kind === 'carry') &&
+      visual.kind === 'marker')
   ) {
     throw new Error(`${label} visual is incompatible with its effect kind`)
+  }
+  if (value.kind === 'carry') {
+    if (!isRecord(value.from) || !isRecord(value.to)) {
+      throw new Error('Carry effect requires from and to positions like { x: 0, y: 0 }')
+    }
+    const grabDx =
+      value.grabDx === undefined ? undefined : requireFiniteNumber(value.grabDx, `${label} grabDx`)
+    const grabDy =
+      value.grabDy === undefined ? undefined : requireFiniteNumber(value.grabDy, `${label} grabDy`)
+    if (
+      value.direction !== undefined ||
+      value.wobbleX !== undefined ||
+      value.wobbleY !== undefined ||
+      value.wobbleSpeed !== undefined ||
+      value.bounds !== undefined
+    ) {
+      throw new Error(
+        'Carry effect must not carry direction, wobbleX, wobbleY, wobbleSpeed, or bounds',
+      )
+    }
+    const effect: SceneEffect = {
+      kind: 'carry',
+      id: requireString(value.id, `${label} id`),
+      start: requireFiniteNumber(value.start, `${label} start`),
+      duration: requireFiniteNumber(value.duration, `${label} duration`),
+      scopeNodeIds,
+      nodeIds,
+      from: {
+        x: requireFiniteNumber(value.from.x, `${label} from.x`),
+        y: requireFiniteNumber(value.from.y, `${label} from.y`),
+      },
+      to: {
+        x: requireFiniteNumber(value.to.x, `${label} to.x`),
+        y: requireFiniteNumber(value.to.y, `${label} to.y`),
+      },
+      ...(grabDx !== undefined ? { grabDx } : {}),
+      ...(grabDy !== undefined ? { grabDy } : {}),
+      ...(value.approach !== undefined || value.approachDuration !== undefined
+        ? {
+            approach: {
+              x: requireFiniteNumber(
+                (value.approach as Record<string, unknown>)?.x,
+                `${label} approach.x`,
+              ),
+              y: requireFiniteNumber(
+                (value.approach as Record<string, unknown>)?.y,
+                `${label} approach.y`,
+              ),
+            },
+            approachDuration: requireFiniteNumber(
+              value.approachDuration,
+              `${label} approachDuration`,
+            ),
+          }
+        : {}),
+      visual: visual as CarryEffect['visual'],
+    }
+    if (effect.start < 0 || effect.duration <= 0) {
+      throw new Error(`${label} start must be non-negative and duration must be greater than zero`)
+    }
+    if (
+      effect.kind === 'carry' &&
+      effect.approachDuration !== undefined &&
+      !(effect.approachDuration > 0 && effect.approachDuration < effect.duration)
+    ) {
+      throw new Error('Carry approachDuration must be greater than 0 and shorter than duration')
+    }
+    return effect
+  }
+  if (!isRecord(value.bounds)) {
+    throw new Error(`${label} effect requires scopeNodeIds, nodeIds, bounds, and visual`)
   }
   const shared = {
     id: requireString(value.id, `${label} id`),
@@ -305,12 +435,54 @@ export function selectRevealWipeForNode(
   effects: readonly SceneEffect[],
   nodeId: string,
   time: number,
-): Exclude<SceneEffect, TemporaryMark> | undefined {
+): RevealEffect | WipeEffect | undefined {
   const relevant = effects
-    .filter((effect) => effect.kind !== 'mark' && effect.nodeIds.includes(nodeId))
+    .filter(
+      (effect): effect is RevealEffect | WipeEffect =>
+        (effect.kind === 'reveal' || effect.kind === 'wipe') && effect.nodeIds.includes(nodeId),
+    )
     .sort((a, b) => a.start - b.start || effects.indexOf(a) - effects.indexOf(b))
-  return ([...relevant].reverse().find((candidate) => candidate.start <= time) ?? relevant[0]) as
-    Exclude<SceneEffect, TemporaryMark> | undefined
+  return [...relevant].reverse().find((candidate) => candidate.start <= time) ?? relevant[0]
+}
+
+/** Active carry grabs: the grabber rides the grab point→destination, then vanishes instantly. */
+export function selectActiveCarries(effects: readonly SceneEffect[], time: number): CarryEffect[] {
+  return effects.filter(
+    (effect): effect is CarryEffect =>
+      effect.kind === 'carry' && time >= effect.start && time <= effect.start + effect.duration,
+  )
+}
+
+/** Linear grabber position along a carry path. Matches linear x/y keyframes. */
+export function carryPosition(
+  effect: CarryEffect,
+  time: number,
+): { readonly x: number; readonly y: number } {
+  const dx = effect.grabDx ?? 0
+  const dy = effect.grabDy ?? 0
+  const from = { x: effect.from.x + dx, y: effect.from.y + dy }
+  const to = { x: effect.to.x + dx, y: effect.to.y + dy }
+  const progress = revealCoverage(effect, time)
+  if (effect.approach === undefined || effect.approachDuration === undefined) {
+    return {
+      x: from.x + (to.x - from.x) * progress,
+      y: from.y + (to.y - from.y) * progress,
+    }
+  }
+  // Phase one: grabber flies approach→grab point; phase two: rides grab point→to.
+  const split = Math.max(0, Math.min(1, effect.approachDuration / effect.duration))
+  if (progress <= split && split > 0) {
+    const local = progress / split
+    return {
+      x: effect.approach.x + (from.x - effect.approach.x) * local,
+      y: effect.approach.y + (from.y - effect.approach.y) * local,
+    }
+  }
+  const local = split >= 1 ? 1 : (progress - split) / (1 - split)
+  return {
+    x: from.x + (to.x - from.x) * local,
+    y: from.y + (to.y - from.y) * local,
+  }
 }
 
 /** Active marks with latest-scheduled precedence on overlapping targets. */

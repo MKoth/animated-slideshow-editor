@@ -50,6 +50,7 @@ import type {
   RevealNode,
   WipeNode,
   MarkEffectNode,
+  CarryNode,
   PropertyEntry,
   RepeatNode,
   ScriptExpression,
@@ -83,7 +84,9 @@ import type { ScriptExpressionContext, ScriptValue } from './animationScriptExpr
 import { mergeBounds } from './animationScriptReads'
 import type { AnimationScriptBoundsRead, AnimationScriptReadSource } from './animationScriptReads'
 import type { SceneEffect } from './sceneEffect'
+import type { CarryEffect } from './sceneEffect'
 import { compileAnimationScriptReveal } from './animationScriptRevealCompiler'
+import { VISUAL_ANCHOR_NAMES } from './animationScriptRevealCompiler'
 import {
   DEFAULT_MATERIAL_PARAMETERS,
   DEFAULT_OPACITY_MULTIPLIER,
@@ -630,6 +633,19 @@ const POINT_ARROW_LINEAR_EASE: ResolvedScriptEase = {
   tangentOut: ZERO_TANGENT,
 }
 
+/** Named sprite anchors for a carry grabber; mirrors the reveal compiler. */
+const CARRY_VISUAL_ANCHORS = {
+  center: { x: 0.5, y: 0.5 },
+  'top-left': { x: 0, y: 0 },
+  'top-center': { x: 0.5, y: 0 },
+  'top-right': { x: 1, y: 0 },
+  'center-left': { x: 0, y: 0.5 },
+  'center-right': { x: 1, y: 0.5 },
+  'bottom-left': { x: 0, y: 1 },
+  'bottom-center': { x: 0.5, y: 1 },
+  'bottom-right': { x: 1, y: 1 },
+} as const
+
 interface ScriptReadSpec {
   /** The call shape shown in arity diagnostics. */
   readonly shape: string
@@ -747,6 +763,7 @@ const SCRIPT_STATEMENT_BUILTIN_NAMES: readonly string[] = [
   'reveal',
   'wipe',
   'mark',
+  'carry',
   'subtree',
 ]
 
@@ -2019,6 +2036,8 @@ class Compiler {
           return this.#lowerReveal(statement, cursor)
         case 'wipe':
           return this.#lowerReveal(statement, cursor)
+        case 'carry':
+          return this.#lowerCarry(statement, cursor)
         case 'statement':
           return this.#lowerCall(statement, cursor)
         case 'function':
@@ -5657,6 +5676,380 @@ class Compiler {
     if (compiled.effect) this.#effects.push(compiled.effect)
     if (compiled.audioClips) this.#audioClips.push(...compiled.audioClips)
     return compiled.cursor
+  }
+
+  /**
+   * `carry(target, to: { x, y }, ...)` grabs one asset node with a paw/asset
+   * grabber, tweens its x/y from its own world position at the start time to
+   * `to`, and draws the grabber along the same linear path on top. With
+   * `approach` the grabber first flies in from that staging point over
+   * `approachOver` seconds while the target holds still; the grabber vanishes
+   * at the end while the target's keyframes hold the destination. Options
+   * mirror the mark effect: no wobble, direction, or sound.
+   */
+  #lowerCarry(statement: CarryNode, cursor: number): number {
+    const startValue =
+      statement.at === undefined
+        ? cursor
+        : this.#evaluateNumber(statement.at, 'a carry start time in seconds')
+    const carryDuration =
+      statement.over === undefined
+        ? 1
+        : this.#evaluateNumber(statement.over, 'a carry duration in seconds')
+    if (startValue === null || carryDuration === null) return cursor
+    let approachX: number | null = null
+    let approachY: number | null = null
+    let approachDuration = 0
+    if (statement.approach !== undefined) {
+      if (statement.approach.kind !== 'record') {
+        this.#error(
+          'carry approach: must be a position like { x: 1500, y: 1200 }',
+          statement.approach.span,
+        )
+        return cursor
+      }
+      const approachFields = new Map(
+        statement.approach.fields.map((field) => [field.key, field.value] as const),
+      )
+      const approachXExpr = approachFields.get('x')
+      const approachYExpr = approachFields.get('y')
+      if (approachXExpr === undefined || approachYExpr === undefined) {
+        this.#error(
+          'carry approach: needs both x and y, like approach: { x: 1500, y: 1200 }',
+          statement.approach.span,
+        )
+        return cursor
+      }
+      for (const field of statement.approach.fields) {
+        if (field.key !== 'x' && field.key !== 'y') {
+          this.#error(
+            `Unknown carry approach field "${field.key}". Available fields: x, y.`,
+            field.keySpan,
+          )
+          return cursor
+        }
+      }
+      const evaluatedApproachX = this.#evaluateNumber(
+        approachXExpr,
+        'a carry approach x in world units',
+      )
+      const evaluatedApproachY = this.#evaluateNumber(
+        approachYExpr,
+        'a carry approach y in world units',
+      )
+      if (evaluatedApproachX === null || evaluatedApproachY === null) return cursor
+      if (!Number.isFinite(evaluatedApproachX) || !Number.isFinite(evaluatedApproachY)) {
+        this.#error('carry approach: x and y must be finite world units', statement.approach.span)
+        return cursor
+      }
+      approachX = evaluatedApproachX
+      approachY = evaluatedApproachY
+      if (statement.approachOver === undefined) {
+        this.#error(
+          'carry approach: needs approachOver, like approachOver: 0.5',
+          statement.approach.span,
+        )
+        return cursor
+      }
+      const evaluatedApproachOver = this.#evaluateNumber(
+        statement.approachOver,
+        'a carry approach duration in seconds',
+      )
+      if (evaluatedApproachOver === null) return cursor
+      if (!Number.isFinite(evaluatedApproachOver) || evaluatedApproachOver <= 0) {
+        this.#error(
+          'carry approachOver: duration must be greater than 0',
+          statement.approachOver.span,
+        )
+        return cursor
+      }
+      approachDuration = evaluatedApproachOver
+    } else if (statement.approachOver !== undefined) {
+      this.#error(
+        'carry approachOver: needs approach, like approach: { x: 1500, y: 1200 }',
+        statement.approachOver.span,
+      )
+      return cursor
+    }
+    const start = roundTime(startValue)
+    const mid = roundTime(start + approachDuration)
+    const end = roundTime(mid + carryDuration)
+    const totalDuration = end - start
+    if (carryDuration <= 0 || !Number.isFinite(carryDuration)) {
+      this.#error(
+        'carry over: duration must be greater than 0',
+        statement.over?.span ?? statement.span,
+      )
+      return cursor
+    }
+    if (start < this.#from || start > this.#context.slideDuration) {
+      this.#error(
+        `carry at: ${formatSeconds(start)}s is outside the slide segment`,
+        statement.at?.span ?? statement.span,
+      )
+    }
+    if (end > this.#context.slideDuration) {
+      this.#error(
+        `carry ends at ${formatSeconds(end)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+        statement.over?.span ?? statement.span,
+      )
+    }
+    if (
+      start < this.#from ||
+      start > this.#context.slideDuration ||
+      end > this.#context.slideDuration
+    ) {
+      return Math.max(cursor, end)
+    }
+
+    const target = this.#resolveReadTarget(statement.target, false, 'carry')
+    if (!target) return Math.max(cursor, end)
+    if (target.members.length !== 1) {
+      this.#error('carry target must resolve to exactly one node', statement.target.span)
+      return Math.max(cursor, end)
+    }
+    const member = target.members[0]
+    const node = this.#nodeOf(member)
+    if (node && node.isAssetInstance !== true) {
+      this.#error('carry target must be an Asset Instance binding', statement.target.span)
+      return Math.max(cursor, end)
+    }
+
+    if (statement.to.kind !== 'record') {
+      this.#error('carry to: must be a position like { x: 300, y: 200 }', statement.to.span)
+      return Math.max(cursor, end)
+    }
+    const toFields = new Map(statement.to.fields.map((field) => [field.key, field.value] as const))
+    const xExpr = toFields.get('x')
+    const yExpr = toFields.get('y')
+    if (xExpr === undefined || yExpr === undefined) {
+      this.#error('carry to: needs both x and y, like to: { x: 300, y: 200 }', statement.to.span)
+      return Math.max(cursor, end)
+    }
+    for (const field of statement.to.fields) {
+      if (field.key !== 'x' && field.key !== 'y') {
+        this.#error(`Unknown carry to field "${field.key}". Available fields: x, y.`, field.keySpan)
+        return Math.max(cursor, end)
+      }
+    }
+    const toX = this.#evaluateNumber(xExpr, 'a carry destination x in world units')
+    const toY = this.#evaluateNumber(yExpr, 'a carry destination y in world units')
+    if (toX === null || toY === null) return Math.max(cursor, end)
+    if (!Number.isFinite(toX) || !Number.isFinite(toY)) {
+      this.#error('carry to: x and y must be finite world units', statement.to.span)
+      return Math.max(cursor, end)
+    }
+
+    const readNodeId = (nodeId: string): string => {
+      const prospective = this.#createdNodes.find((node) => node.id === nodeId)
+      if (!prospective) return nodeId
+      const previous = this.#context.nodes.find((node) => node.name === prospective.name)
+      return previous?.id ?? nodeId
+    }
+    const xTrack: ScriptTrack = { kind: 'node', property: 'x' }
+    const yTrack: ScriptTrack = { kind: 'node', property: 'y' }
+    // The grabber path starts where the target is at the start time: prefer
+    // what the script already planned on these tracks (so a chained carry-out
+    // starts at the carry-in destination), then the engine pose, then the
+    // declared position of a node created earlier in the same script.
+    const plannedX = this.#plannedTrackValueAt(member.nodeId, xTrack, start)
+    const plannedY = this.#plannedTrackValueAt(member.nodeId, yTrack, start)
+    let fromX: number | null =
+      typeof plannedX === 'number' && Number.isFinite(plannedX) ? plannedX : null
+    let fromY: number | null =
+      typeof plannedY === 'number' && Number.isFinite(plannedY) ? plannedY : null
+    if (fromX === null || fromY === null) {
+      try {
+        const world = this.#context.reads.world(readNodeId(member.nodeId), start)
+        fromX = world.x
+        fromY = world.y
+      } catch {
+        const initial = this.#createdInitial.get(member.nodeId)
+        if (initial) {
+          fromX = initial.x
+          fromY = initial.y
+        }
+      }
+    }
+    if (fromX === null || fromY === null) {
+      this.#error(
+        `carry could not measure the target at ${formatSeconds(start)}s`,
+        statement.target.span,
+      )
+      return Math.max(cursor, end)
+    }
+
+    // Glue the grabber to the asset's visual center, not its pivot: the
+    // center-minus-pivot delta is rigid (carry never rotates or scales), so
+    // measure both from one engine pose and reuse it whatever `from` resolved
+    // from — planned keyframes, the engine pose, or the declared initial.
+    // Unmeasurable targets keep 0 and ride the pivot as before.
+    let grabDx = 0
+    let grabDy = 0
+    try {
+      const reference = this.#context.reads.world(readNodeId(member.nodeId), start)
+      const box = this.#context.reads.nodeBounds(readNodeId(member.nodeId), start)
+      if (box) {
+        grabDx = (box.minX + box.maxX) / 2 - reference.x
+        grabDy = (box.minY + box.maxY) / 2 - reference.y
+      }
+    } catch {
+      // No engine pose here — keep the pivot base.
+    }
+    if (!Number.isFinite(grabDx) || !Number.isFinite(grabDy)) {
+      grabDx = 0
+      grabDy = 0
+    }
+    const hasGrabGlue = Math.abs(grabDx) >= 1e-9 || Math.abs(grabDy) >= 1e-9
+
+    let visual: CarryEffect['visual'] = { kind: 'paw' }
+    let visualNodeId: string | null = null
+    if (statement.visual !== undefined) {
+      if (statement.visual.kind === 'identifier' && statement.visual.name === 'none') {
+        visual = { kind: 'none' }
+      } else {
+        const visualTarget = this.#resolveReadTarget(statement.visual, false, 'carry visual')
+        if (!visualTarget) return Math.max(cursor, end)
+        if (visualTarget.members.length !== 1) {
+          this.#error(
+            'carry visual must resolve to exactly one Asset Instance',
+            statement.visual.span,
+          )
+          return Math.max(cursor, end)
+        }
+        const visualMember = visualTarget.members[0]
+        const visualInfo = this.#allNodes().find(
+          (candidate) => candidate.id === visualMember.nodeId,
+        )
+        if (visualMember && visualInfo?.isAssetInstance) {
+          visualNodeId = visualMember.nodeId
+        } else {
+          this.#error(
+            'carry visual must be an Asset Instance binding or none',
+            statement.visual.span,
+          )
+        }
+        if (!visualMember || !visualInfo?.isAssetInstance) return Math.max(cursor, end)
+      }
+    }
+
+    const hasVisualTuning =
+      statement.visualScale !== undefined ||
+      statement.visualAnchor !== undefined ||
+      statement.visualDx !== undefined ||
+      statement.visualDy !== undefined
+    let visualScale = 1
+    let anchorX = 0.5
+    let anchorY = 0.5
+    let visualDx = 0
+    let visualDy = 0
+    if (hasVisualTuning && visualNodeId === null) {
+      const span =
+        statement.visualScale?.span ??
+        statement.visualAnchor?.span ??
+        statement.visualDx?.span ??
+        statement.visualDy?.span ??
+        statement.span
+      this.#error(
+        'carry visualScale, visualAnchor, visualDx and visualDy need an asset visual — bind one like visual: paw where bind paw = asset("Paw")',
+        span,
+      )
+      return Math.max(cursor, end)
+    }
+    if (statement.visualScale !== undefined) {
+      const scale = this.#evaluateNumber(statement.visualScale, 'a carry visualScale multiplier')
+      if (scale === null) return Math.max(cursor, end)
+      if (!Number.isFinite(scale) || scale <= 0) {
+        this.#error('carry visualScale must be greater than 0', statement.visualScale.span)
+        return Math.max(cursor, end)
+      }
+      visualScale = scale
+    }
+    if (statement.visualAnchor !== undefined) {
+      const anchor = this.#evaluateString(
+        statement.visualAnchor,
+        `a carry visualAnchor name (${VISUAL_ANCHOR_NAMES.join(', ')})`,
+      )
+      if (anchor === null) return Math.max(cursor, end)
+      const point = CARRY_VISUAL_ANCHORS[anchor as keyof typeof CARRY_VISUAL_ANCHORS]
+      if (!point) {
+        this.#error(
+          `Unknown carry visualAnchor "${anchor}". Available anchors: ${VISUAL_ANCHOR_NAMES.join(', ')}.`,
+          statement.visualAnchor.span,
+        )
+        return Math.max(cursor, end)
+      }
+      anchorX = point.x
+      anchorY = point.y
+    }
+    if (statement.visualDx !== undefined) {
+      const dx = this.#evaluateNumber(statement.visualDx, 'a carry visualDx offset')
+      if (dx === null) return Math.max(cursor, end)
+      if (!Number.isFinite(dx)) {
+        this.#error(
+          'carry visualDx must be a finite number of world units',
+          statement.visualDx.span,
+        )
+        return Math.max(cursor, end)
+      }
+      visualDx = dx
+    }
+    if (statement.visualDy !== undefined) {
+      const dy = this.#evaluateNumber(statement.visualDy, 'a carry visualDy offset')
+      if (dy === null) return Math.max(cursor, end)
+      if (!Number.isFinite(dy)) {
+        this.#error(
+          'carry visualDy must be a finite number of world units',
+          statement.visualDy.span,
+        )
+        return Math.max(cursor, end)
+      }
+      visualDy = dy
+    }
+    if (visualNodeId !== null) {
+      visual = {
+        kind: 'asset',
+        nodeId: visualNodeId,
+        ...(visualScale !== 1 ? { scale: visualScale } : {}),
+        ...(anchorX !== 0.5 ? { anchorX } : {}),
+        ...(anchorY !== 0.5 ? { anchorY } : {}),
+        ...(visualDx !== 0 ? { dx: visualDx } : {}),
+        ...(visualDy !== 0 ? { dy: visualDy } : {}),
+      }
+    }
+
+    this.#recordRawInterval(member, xTrack, start, end, statement.span)
+    this.#plan(member, xTrack, start, POINT_ARROW_LINEAR_EASE, null)
+    if (approachX !== null && approachY !== null) {
+      this.#plan(member, xTrack, mid, POINT_ARROW_LINEAR_EASE, { value: fromX })
+    }
+    this.#plan(member, xTrack, end, POINT_ARROW_LINEAR_EASE, { value: toX })
+    this.#recordRawInterval(member, yTrack, start, end, statement.span)
+    this.#plan(member, yTrack, start, POINT_ARROW_LINEAR_EASE, null)
+    if (approachX !== null && approachY !== null) {
+      this.#plan(member, yTrack, mid, POINT_ARROW_LINEAR_EASE, { value: fromY })
+    }
+    this.#plan(member, yTrack, end, POINT_ARROW_LINEAR_EASE, { value: toY })
+
+    this.#effects.push({
+      kind: 'carry',
+      id: `script-effect:${this.#context.createScope ?? 'slide'}:${this.#effects.length}`,
+      start,
+      duration: totalDuration,
+      scopeNodeIds: [member.nodeId],
+      nodeIds: [member.nodeId],
+      from: { x: fromX, y: fromY },
+      to: { x: toX, y: toY },
+      ...(hasGrabGlue ? { grabDx, grabDy } : {}),
+      ...(approachX !== null && approachY !== null
+        ? {
+            approach: { x: approachX, y: approachY },
+            approachDuration: mid - start,
+          }
+        : {}),
+      visual,
+    })
+    return roundTime(cursor + totalDuration)
   }
 
   /**

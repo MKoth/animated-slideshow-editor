@@ -183,7 +183,7 @@ export const SNAPSHOT_ANIMATABLE_PARAMS: readonly string[] = [
 ]
 
 /** Animation Script reveal/mark/wipe verbs. */
-export const SNAPSHOT_SCRIPT_VERBS: readonly string[] = ['reveal', 'mark', 'wipe']
+export const SNAPSHOT_SCRIPT_VERBS: readonly string[] = ['reveal', 'mark', 'wipe', 'carry']
 
 /**
  * Assemble a read-only digest of the current project state for AI requests.

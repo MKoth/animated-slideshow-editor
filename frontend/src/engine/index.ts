@@ -48,10 +48,18 @@ export type { EmbeddedMaterialDefinition, EmbeddedMaterialParameter } from './em
 export type { EmbeddedShaderDefinition } from './embeddedShader'
 export type { FullscreenShaderReference } from './fullscreenShader'
 export type { SlideAnimationScript } from './animationScript'
-export type { SceneEffect, RevealEffect, WipeEffect, TemporaryMark } from './sceneEffect'
+export type {
+  SceneEffect,
+  RevealEffect,
+  WipeEffect,
+  TemporaryMark,
+  CarryEffect,
+} from './sceneEffect'
 export {
+  carryPosition,
   markLifecycle,
   revealCoverage,
+  selectActiveCarries,
   selectActiveMarks,
   selectRevealWipeForNode,
 } from './sceneEffect'

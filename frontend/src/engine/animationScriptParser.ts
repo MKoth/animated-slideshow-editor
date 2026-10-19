@@ -439,6 +439,30 @@ export interface MarkEffectNode extends Omit<
   readonly kind: 'mark'
 }
 
+/**
+ * `carry(target, to: { x, y }, ...)` grabs one node with a paw/asset grabber,
+ * moves both from the target's own position to `to`, then vanishes the
+ * grabber while the target's keyframes hold it at the destination. An
+ * optional `approach` staging point makes the grabber fly in from there
+ * first, over `approachOver` seconds, before the carry begins.
+ */
+export interface CarryNode {
+  readonly kind: 'carry'
+  readonly nameSpan: SourceSpan
+  readonly target: ScriptExpression
+  readonly to: ScriptExpression
+  readonly at?: ScriptExpression
+  readonly over?: ScriptExpression
+  readonly visual?: ScriptExpression
+  readonly visualScale?: ScriptExpression
+  readonly visualAnchor?: ScriptExpression
+  readonly visualDx?: ScriptExpression
+  readonly visualDy?: ScriptExpression
+  readonly approach?: ScriptExpression
+  readonly approachOver?: ScriptExpression
+  readonly span: SourceSpan
+}
+
 /** The object kinds `create` can mint. */
 export const SCRIPT_CREATE_KINDS = ['text', 'table', 'asset', 'data', 'chart', 'group'] as const
 
@@ -480,6 +504,7 @@ export type ScriptStatementNode =
   | RevealNode
   | WipeNode
   | MarkEffectNode
+  | CarryNode
   | WaitNode
   | MarkNode
   | AtNode
@@ -681,6 +706,9 @@ class Parser {
     }
     if (this.#isIdentifier('wipe') && this.#nextIsPunctuation('(')) {
       return this.#parseEffect('wipe')
+    }
+    if (this.#isIdentifier('carry') && this.#nextIsPunctuation('(')) {
+      return this.#parseCarry()
     }
     if (
       this.#isIdentifier('mark') &&
@@ -991,6 +1019,79 @@ class Parser {
       ...(wobbleSpeed ? { wobbleSpeed } : {}),
       ...(direction ? { direction } : {}),
       ...(sound ? { sound } : {}),
+      span: { start, end: this.#previousEnd() },
+    }
+  }
+
+  /**
+   * `carry(target, to: { x, y }, ...)` — like a mark sweep plus keyframes.
+   * `to` is required and always a world x/y pair; the start is the target's
+   * own world position at the start time. Options mirror the mark effect
+   * (no wobble, direction, or sound): at, over, visual, visualScale,
+   * visualAnchor, visualDx, visualDy.
+   */
+  #parseCarry(): CarryNode | null {
+    const start = this.#peek().span.start
+    const name = this.#advance()
+    if (!this.#expectPunctuation('(')) return null
+    const target = this.#parseExpression('a node binding')
+    if (target === null) return null
+    let to: ScriptExpression | undefined
+    let at: ScriptExpression | undefined
+    let over: ScriptExpression | undefined
+    let visual: ScriptExpression | undefined
+    let visualScale: ScriptExpression | undefined
+    let visualAnchor: ScriptExpression | undefined
+    let visualDx: ScriptExpression | undefined
+    let visualDy: ScriptExpression | undefined
+    let approach: ScriptExpression | undefined
+    let approachOver: ScriptExpression | undefined
+    const carryOptions =
+      'to, at, over, visual, visualScale, visualAnchor, visualDx, visualDy, approach, approachOver'
+    const seen = new Set<string>()
+    while (this.#matchPunctuation(',')) {
+      const option = this.#expectIdentifier(`a carry option (${carryOptions})`)
+      if (option === null || !this.#expectPunctuation(':')) return null
+      if (seen.has(option.text))
+        this.#report(`carry option "${option.text}" is written twice`, option.span)
+      seen.add(option.text)
+      const value = this.#parseExpression(`a value for carry ${option.text}`)
+      if (value === null) return null
+      if (option.text === 'to') to = value
+      else if (option.text === 'at') at = value
+      else if (option.text === 'over') over = value
+      else if (option.text === 'visual') visual = value
+      else if (option.text === 'visualScale') visualScale = value
+      else if (option.text === 'visualAnchor') visualAnchor = value
+      else if (option.text === 'visualDx') visualDx = value
+      else if (option.text === 'visualDy') visualDy = value
+      else if (option.text === 'approach') approach = value
+      else if (option.text === 'approachOver') approachOver = value
+      else
+        this.#report(
+          `Unknown carry option "${option.text}". Available options: ${carryOptions}.`,
+          option.span,
+        )
+    }
+    if (!this.#expectPunctuation(')')) return null
+    if (to === undefined) {
+      this.#report('carry needs a destination — carry(target, to: { x: 300, y: 200 })', name.span)
+      return null
+    }
+    return {
+      kind: 'carry',
+      nameSpan: name.span,
+      target,
+      to,
+      ...(at ? { at } : {}),
+      ...(over ? { over } : {}),
+      ...(visual ? { visual } : {}),
+      ...(visualScale ? { visualScale } : {}),
+      ...(visualAnchor ? { visualAnchor } : {}),
+      ...(visualDx ? { visualDx } : {}),
+      ...(visualDy ? { visualDy } : {}),
+      ...(approach ? { approach } : {}),
+      ...(approachOver ? { approachOver } : {}),
       span: { start, end: this.#previousEnd() },
     }
   }
