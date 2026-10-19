@@ -208,6 +208,31 @@ export {
   slugFilenameForAssetKey,
 } from './scenarioChalkRender'
 export type { ScenarioChalkRenderOptions } from './scenarioChalkRender'
+export {
+  SCENARIO_ZIP_BLOCK_BYTES,
+  SCENARIO_ZIP_FORMAT,
+  SCENARIO_ZIP_GENERATOR,
+  SCENARIO_ZIP_MANIFEST_NAME,
+  SCENARIO_ZIP_PAGE_NAME,
+  SCENARIO_ZIP_WARN_BYTES,
+  assertScenarioHtmlPortable,
+  base64ToUint8Array,
+  buildScenarioPortablePack,
+  checkScenarioZipSize,
+  encodeScenarioPortableZip,
+  estimateScenarioZipBytes,
+  listScenarioHtmlPortabilityViolations,
+  resolveScenarioZipImageFiles,
+  sanitizeScenarioZipFilename,
+  yieldToEventLoop,
+} from './scenarioPortableZip'
+export type {
+  ScenarioPortablePack,
+  ScenarioPortablePackInput,
+  ScenarioZipImageBytes,
+  ScenarioZipManifest,
+  ScenarioZipManifestVisual,
+} from './scenarioPortableZip'
 export { CommandDispatcher, UndoStack, createCommandSystem } from './commands'
 export type {
   Command,
