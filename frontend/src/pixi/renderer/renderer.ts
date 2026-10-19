@@ -223,6 +223,7 @@ export class Renderer {
       this.#unsubscribe = this.#engine.subscribe((event) => this.#handleEvent(event))
       this.#unsubscribeTime = this.#currentTime.subscribe(() => this.#handleTimeChanged())
       this.#unsubscribeVisibility = OverlayVisibilityStore.subscribe((state) => {
+        if (this.#grid) this.#grid.graphics.visible = state.gridVisible
         this.#sceneRenderer?.setBonesVisible(state.bonesVisible)
         this.#sceneRenderer?.setGhostsVisible(state.ikHandlesVisible, state.poleHandlesVisible)
         this.#meshOverlay?.redraw()
@@ -230,6 +231,7 @@ export class Renderer {
         this.#boneEditOverlay?.redraw()
       })
       // Initialize visibility
+      this.#grid.graphics.visible = OverlayVisibilityStore.getState().gridVisible
       this.#sceneRenderer?.setBonesVisible(OverlayVisibilityStore.getState().bonesVisible)
       this.#sceneRenderer?.setGhostsVisible(
         OverlayVisibilityStore.getState().ikHandlesVisible,

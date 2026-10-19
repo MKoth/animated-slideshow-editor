@@ -32,13 +32,17 @@ export function CanvasToolbar() {
   const boneEditing = useBoneEditStore((state) => state.isEditing)
   const selectedBoneId = useBoneEditStore((state) => state.selectedBoneId)
   const meshVisible = useOverlayVisibilityStore((state) => state.meshVisible)
+  const gridVisible = useOverlayVisibilityStore((state) => state.gridVisible)
   const bonesVisible = useOverlayVisibilityStore((state) => state.bonesVisible)
   const ikHandlesVisible = useOverlayVisibilityStore((state) => state.ikHandlesVisible)
   const poleHandlesVisible = useOverlayVisibilityStore((state) => state.poleHandlesVisible)
+  const toggleGridVisible = useOverlayVisibilityStore((state) => state.toggleGridVisible)
   const toggleMeshVisible = useOverlayVisibilityStore((state) => state.toggleMeshVisible)
   const toggleBonesVisible = useOverlayVisibilityStore((state) => state.toggleBonesVisible)
   const toggleIkHandlesVisible = useOverlayVisibilityStore((state) => state.toggleIkHandlesVisible)
-  const togglePoleHandlesVisible = useOverlayVisibilityStore((state) => state.togglePoleHandlesVisible)
+  const togglePoleHandlesVisible = useOverlayVisibilityStore(
+    (state) => state.togglePoleHandlesVisible,
+  )
 
   const handleModeChange = (newMode: EditingMode) => {
     // exit bone edit when switching to other modes
@@ -121,6 +125,13 @@ export function CanvasToolbar() {
         </button>
       </div>
       <div className="canvas-toolbar__buttons" style={{ marginTop: 4 }}>
+        <label
+          className="canvas-toolbar__toggle"
+          style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}
+        >
+          <input type="checkbox" checked={gridVisible} onChange={toggleGridVisible} />
+          Grid
+        </label>
         <label
           className="canvas-toolbar__toggle"
           style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}

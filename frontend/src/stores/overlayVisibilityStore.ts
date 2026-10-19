@@ -2,11 +2,14 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 export interface OverlayVisibilityState {
+  readonly gridVisible: boolean
   readonly meshVisible: boolean
   readonly bonesVisible: boolean
   readonly ikHandlesVisible: boolean
   readonly poleHandlesVisible: boolean
   readonly vertexSize: number
+  setGridVisible(visible: boolean): void
+  toggleGridVisible(): void
   setMeshVisible(visible: boolean): void
   toggleMeshVisible(): void
   setBonesVisible(visible: boolean): void
@@ -21,11 +24,14 @@ export interface OverlayVisibilityState {
 export const useOverlayVisibilityStore = create<OverlayVisibilityState>()(
   persist(
     (set) => ({
+      gridVisible: false,
       meshVisible: true,
       bonesVisible: true,
       ikHandlesVisible: true,
       poleHandlesVisible: true,
       vertexSize: 6,
+      setGridVisible: (visible) => set({ gridVisible: visible }),
+      toggleGridVisible: () => set((state) => ({ gridVisible: !state.gridVisible })),
       setMeshVisible: (visible) => set({ meshVisible: visible }),
       toggleMeshVisible: () => set((state) => ({ meshVisible: !state.meshVisible })),
       setBonesVisible: (visible) => set({ bonesVisible: visible }),
@@ -40,6 +46,7 @@ export const useOverlayVisibilityStore = create<OverlayVisibilityState>()(
     {
       name: 'overlay-visibility',
       partialize: (state) => ({
+        gridVisible: state.gridVisible,
         meshVisible: state.meshVisible,
         bonesVisible: state.bonesVisible,
         ikHandlesVisible: state.ikHandlesVisible,
