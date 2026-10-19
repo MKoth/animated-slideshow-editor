@@ -167,13 +167,16 @@ export {
   createEmptyScenarioSection,
   createScenarioVersion,
   duplicateScenarioSection,
+  getAcceptedScenarioVersion,
   getScenarioSection,
   getUnresolvableScenarioBindings,
+  requireAcceptedScenarioVersion,
   scanScenarioAssetKeys,
   scenarioSectionFromJSON,
   scenarioSectionToJSON,
   setScenarioSection,
   validateScenarioSection,
+  withScenarioAcceptedVersion,
   withScenarioBindings,
   withScenarioHtml,
   withScenarioMarkdown,
@@ -184,6 +187,35 @@ export {
   parseScenarioMarkdown,
   upgradeLegacyScenarioToMarkdown,
 } from './scenarioMarkdown'
+export {
+  SCENARIO_BRIDGE_PRODUCTION_CONSTRAINTS,
+  SCENARIO_BRIDGE_PROVIDER_NOTE,
+  SCENARIO_BRIDGE_STYLE_PROFILE,
+  briefsFromScenarioVisuals,
+  normalizeBridgeKey,
+  resolveScenarioReuse,
+} from './scenarioArtBridge'
+export type {
+  ScenarioBridgeVisual,
+  ScenarioPromptVariantBrief,
+  ScenarioReuseMatch,
+  ScenarioReuseMiss,
+} from './scenarioArtBridge'
+export {
+  buildRestoreSummary,
+  classifyScenarioIntent,
+  diffScenarioLines,
+  extractEditContent,
+  extractQuestionText,
+  parseAssistantReply,
+  parseSummary,
+  parseTouchedSteps,
+  parseUserPrefix,
+  requireAcceptedSnapshot,
+  resolveAcceptedSnapshot,
+  touchedStepsFromMarkdown,
+} from './scenarioVersions'
+export type { ParsedScenarioReply, ScenarioChatIntent, ScenarioLineDiff } from './scenarioVersions'
 export {
   buildScenarioAvailableIds,
   buildScenarioChecklistRows,

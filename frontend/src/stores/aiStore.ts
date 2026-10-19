@@ -102,6 +102,7 @@ interface AiState {
   scenarioRequest: string
   markdownVersionsByProject: Record<string, import('../api/aiApi').ScenarioMarkdownVersion[]>
   activeMarkdownVersionIdByProject: Record<string, string | null>
+  acceptedMarkdownVersionIdByProject: Record<string, string | null>
   markdownAuditsByProject: Record<string, import('../api/aiApi').ScenarioMarkdownAudit[]>
   markdownBusy: boolean
   markdownError: { code: string; message: string } | null
@@ -214,6 +215,12 @@ interface AiState {
     messageId?: string,
   ) => Promise<import('../api/aiApi').ScenarioMarkdownVersion | null>
   loadMarkdownAudits: (projectId: string) => Promise<void>
+  acceptMarkdownVersion: (
+    projectId: string,
+    versionId: string,
+    conversationId?: string,
+  ) => Promise<import('../api/aiApi').ScenarioMarkdownVersion | null>
+  loadMarkdownAccepted: (projectId: string) => Promise<void>
 
   setActiveReconciliation: (id: string | null) => void
   loadReconciliations: (projectId: string, scenarioId?: string) => Promise<void>

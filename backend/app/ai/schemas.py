@@ -197,6 +197,13 @@ class AiScenarioMarkdownRestore(BaseModel):
     messageId: str | None = None
 
 
+class AiScenarioMarkdownAccept(BaseModel):
+    projectId: str = Field(min_length=1)
+    versionId: str = Field(min_length=1)
+    conversationId: str | None = None
+    messageId: str | None = None
+
+
 class AiReconciliationCreate(BaseModel):
     projectId: str = Field(min_length=1)
     scenarioId: str = Field(min_length=1)

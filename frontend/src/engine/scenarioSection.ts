@@ -36,6 +36,8 @@ export interface ScenarioSectionJSON {
   readonly bindings: Readonly<Record<string, string>>
   readonly lastHtml?: string
   readonly generatedFromVersionId?: string | null
+  /** Accepted downstream snapshot (issue #466): explicit accept only, never auto-moved by drafts. */
+  readonly acceptedVersionId?: string | null
   readonly [key: string]: unknown
 }
 
@@ -131,6 +133,13 @@ export function validateScenarioSection(json: unknown, errors: string[]): void {
     typeof raw.generatedFromVersionId !== 'string'
   ) {
     errors.push('Lesson scenario generatedFromVersionId must be a string or null when present')
+  }
+  if (
+    raw.acceptedVersionId !== undefined &&
+    raw.acceptedVersionId !== null &&
+    typeof raw.acceptedVersionId !== 'string'
+  ) {
+    errors.push('Lesson scenario acceptedVersionId must be a string or null when present')
   }
 }
 
@@ -241,6 +250,51 @@ export function withScenarioHtml(
     lastHtml: html,
     generatedFromVersionId,
   } as ScenarioSectionJSON
+}
+
+/**
+ * Accepted downstream snapshot (issue #466): explicit accept only.
+ * Draft writes (append/withMarkdown) never move it; downstream
+ * reconciliation reads this id via `getAcceptedScenarioVersion` or the
+ * canonical endpoint, never the active draft — so newer drafts are never
+ * silently ignored and unreviewed edits are never consumed.
+ */
+export function withScenarioAcceptedVersion(
+  section: ScenarioSectionJSON,
+  acceptedVersionId: string | null,
+): ScenarioSectionJSON {
+  return {
+    ...deepClone(section),
+    acceptedVersionId,
+  } as ScenarioSectionJSON
+}
+
+/** Accepted version record, or undefined when nothing is accepted yet. */
+export function getAcceptedScenarioVersion(
+  section: ScenarioSectionJSON | undefined,
+): ScenarioVersionJSON | undefined {
+  if (!section) return undefined
+  const acceptedId =
+    typeof section.acceptedVersionId === 'string' ? section.acceptedVersionId : null
+  if (!acceptedId) return undefined
+  return section.versions.find((v) => v.id === acceptedId)
+}
+
+/**
+ * Downstream gate: resolve the accepted snapshot or throw.
+ * Callers block (rather than reading the active draft) when nothing is
+ * accepted — mirroring the backend `require_accepted_markdown_version`.
+ */
+export function requireAcceptedScenarioVersion(
+  section: ScenarioSectionJSON | undefined,
+): ScenarioVersionJSON {
+  const accepted = getAcceptedScenarioVersion(section)
+  if (!accepted) {
+    throw new Error(
+      'No accepted scenario version — accept a version before downstream reconciliation',
+    )
+  }
+  return accepted
 }
 
 /** Live scan of normalized asset keys in markdown order (checklist source of truth). */

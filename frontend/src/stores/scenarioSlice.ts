@@ -26,6 +26,12 @@ export interface ScenarioSliceState {
   markdownVersionsByProject: Record<string, ScenarioMarkdownVersion[]>
   /** Per-project active version pointer (last-writer-wins). */
   activeMarkdownVersionIdByProject: Record<string, string | null>
+  /**
+   * Per-project accepted downstream snapshot (issue #466): explicit accept
+   * only, never auto-moved by draft writes. Later assistants read this,
+   * never the active draft.
+   */
+  acceptedMarkdownVersionIdByProject: Record<string, string | null>
   /** Proposal-bypass audit trail per project. */
   markdownAuditsByProject: Record<string, ScenarioMarkdownAudit[]>
   markdownBusy: boolean
@@ -72,6 +78,17 @@ export interface ScenarioSliceActions {
     messageId?: string,
   ) => Promise<ScenarioMarkdownVersion | null>
   loadMarkdownAudits: (projectId: string) => Promise<void>
+  /**
+   * Accepted downstream snapshot (issue #466): explicit accept only.
+   * Moves only the accepted pointer; the active draft is untouched and
+   * later drafts never move it.
+   */
+  acceptMarkdownVersion: (
+    projectId: string,
+    versionId: string,
+    conversationId?: string,
+  ) => Promise<ScenarioMarkdownVersion | null>
+  loadMarkdownAccepted: (projectId: string) => Promise<void>
 }
 
 export type ScenarioSlice = ScenarioSliceState & ScenarioSliceActions
@@ -85,6 +102,7 @@ export const initialScenarioSliceState: ScenarioSliceState = {
   scenarioRequest: '',
   markdownVersionsByProject: {},
   activeMarkdownVersionIdByProject: {},
+  acceptedMarkdownVersionIdByProject: {},
   markdownAuditsByProject: {},
   markdownBusy: false,
   markdownError: null,
@@ -285,6 +303,10 @@ export function createScenarioSlice(set: SliceSet, get: SliceGet): ScenarioSlice
             ...state.activeMarkdownVersionIdByProject,
             [projectId]: active.activeVersionId,
           },
+          acceptedMarkdownVersionIdByProject: {
+            ...state.acceptedMarkdownVersionIdByProject,
+            [projectId]: active.acceptedVersionId ?? null,
+          },
         }))
       } catch (error) {
         if (isBackendDown(error)) set({ status: 'unavailable' })
@@ -390,6 +412,61 @@ export function createScenarioSlice(set: SliceSet, get: SliceGet): ScenarioSlice
         const audits = await get().api.listMarkdownAudits(projectId)
         set((state: ScenarioSliceState) => ({
           markdownAuditsByProject: { ...state.markdownAuditsByProject, [projectId]: audits },
+        }))
+      } catch (error) {
+        if (isBackendDown(error)) set({ status: 'unavailable' })
+      }
+    },
+
+    acceptMarkdownVersion: async (projectId, versionId, conversationId) => {
+      if (get().markdownBusy) return null
+      set({ markdownBusy: true, markdownError: null })
+      try {
+        const result = await get().api.acceptMarkdownVersion({
+          projectId,
+          versionId,
+          ...(conversationId ? { conversationId } : {}),
+        })
+        const acceptedId = result.acceptedVersionId ?? result.version?.id ?? versionId
+        set((state: ScenarioSliceState) => ({
+          acceptedMarkdownVersionIdByProject: {
+            ...state.acceptedMarkdownVersionIdByProject,
+            [projectId]: acceptedId,
+          },
+        }))
+        try {
+          await get().loadMarkdownAudits(projectId)
+        } catch {
+          // Accept itself succeeded; audit refresh is best-effort.
+        }
+        // Portable sync lives in History/View render effects (plain
+        // setScenario, never the Undo Stack) — no engine access here.
+        return result.version ?? null
+      } catch (error) {
+        if (isBackendDown(error)) {
+          set({ status: 'unavailable' })
+          return null
+        }
+        set({
+          markdownError: {
+            code: 'markdown_accept_failed',
+            message: error instanceof Error ? error.message : 'Accept failed — retry.',
+          },
+        })
+        return null
+      } finally {
+        set({ markdownBusy: false })
+      }
+    },
+
+    loadMarkdownAccepted: async (projectId) => {
+      try {
+        const accepted = await get().api.getAcceptedMarkdownVersion(projectId)
+        set((state: ScenarioSliceState) => ({
+          acceptedMarkdownVersionIdByProject: {
+            ...state.acceptedMarkdownVersionIdByProject,
+            [projectId]: accepted.acceptedVersionId ?? null,
+          },
         }))
       } catch (error) {
         if (isBackendDown(error)) set({ status: 'unavailable' })

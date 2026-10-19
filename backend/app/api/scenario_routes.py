@@ -403,16 +403,121 @@ def get_active_scenario_markdown(request: Request, projectId: str = "") -> dict[
         raise HTTPException(status_code=422, detail="projectId is required")
     library = _library(request)
     active_id = library.get_active_markdown_version_id(projectId)
+    accepted_id = library.get_accepted_markdown_version_id(projectId)
+    accepted_version: dict[str, object] | None = None
+    if accepted_id:
+        try:
+            accepted_version = _markdown_version_to_out(library.get_markdown_version(accepted_id))
+        except KeyError:
+            accepted_id = None
     if not active_id:
-        return {"projectId": projectId, "activeVersionId": None, "version": None}
+        return {
+            "projectId": projectId,
+            "activeVersionId": None,
+            "version": None,
+            "acceptedVersionId": accepted_id,
+            "acceptedVersion": accepted_version,
+        }
     try:
         row = library.get_markdown_version(active_id)
     except KeyError:
-        return {"projectId": projectId, "activeVersionId": None, "version": None}
+        return {
+            "projectId": projectId,
+            "activeVersionId": None,
+            "version": None,
+            "acceptedVersionId": accepted_id,
+            "acceptedVersion": accepted_version,
+        }
     return {
         "projectId": projectId,
         "activeVersionId": active_id,
         "version": _markdown_version_to_out(row),
+        # Accepted snapshot rides alongside the active draft so downstream
+        # readers can tell stable from latest without a second round-trip.
+        "acceptedVersionId": accepted_id,
+        "acceptedVersion": accepted_version,
+    }
+
+
+@router.post("/ai/scenarios/markdown/accept", status_code=200)
+def accept_scenario_markdown(request: Request, body: dict[str, Any]) -> dict[str, object]:
+    """Mark a version as the accepted downstream snapshot (issue #466).
+
+    Body: `{projectId, versionId, conversationId?, messageId?}`.
+    The accepted snapshot is stable: later draft writes never move it.
+    Downstream reconciliation reads it via `GET .../markdown/canonical`;
+    without an accepted version that gate refuses with 409 instead of
+    silently ignoring newer drafts or consuming unreviewed edits.
+    """
+    from app.ai.schemas import AiScenarioMarkdownAccept
+
+    try:
+        parsed = AiScenarioMarkdownAccept.model_validate(body)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    library = _library(request)
+    try:
+        row = library.accept_markdown_version(
+            project_id=parsed.projectId,
+            version_id=parsed.versionId,
+            conversation_id=parsed.conversationId,
+            message_id=parsed.messageId,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="version not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "projectId": parsed.projectId,
+        "acceptedVersionId": str(getattr(row, "id", "")),
+        "version": _markdown_version_to_out(row),
+    }
+
+
+@router.get("/ai/scenarios/markdown/accepted")
+def get_accepted_scenario_markdown(request: Request, projectId: str = "") -> dict[str, object]:
+    """Accepted downstream snapshot, or nulls when nothing is accepted yet."""
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    library = _library(request)
+    accepted_id = library.get_accepted_markdown_version_id(projectId)
+    if not accepted_id:
+        return {"projectId": projectId, "acceptedVersionId": None, "version": None}
+    try:
+        row = library.get_markdown_version(accepted_id)
+    except KeyError:
+        return {"projectId": projectId, "acceptedVersionId": None, "version": None}
+    return {
+        "projectId": projectId,
+        "acceptedVersionId": accepted_id,
+        "version": _markdown_version_to_out(row),
+    }
+
+
+@router.get("/ai/scenarios/markdown/canonical")
+def get_scenario_markdown_canonical(request: Request, projectId: str = "") -> dict[str, object]:
+    """Stable downstream snapshot for later assistants (issue #466).
+
+    Reads only the accepted version. Refuses with 409 when nothing is
+    accepted so callers block instead of freezing on stale active content
+    or chasing every draft keystroke.
+    """
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    library = _library(request)
+    try:
+        row = library.require_accepted_markdown_version(projectId)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    out = _markdown_version_to_out(row)
+    return {
+        "projectId": projectId,
+        "acceptedVersionId": out.get("id"),
+        "version": out,
+        "content": out.get("content", ""),
+        "summary": out.get("summary", ""),
+        "touchedSteps": out.get("touchedSteps", []),
+        "timestamp": out.get("timestamp", ""),
     }
 
 

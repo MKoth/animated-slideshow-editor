@@ -371,6 +371,113 @@ def get_active_markdown_version_id(database: Database, project_id: str) -> str |
         return str(row.active_version_id) if row and row.active_version_id else None
 
 
+def get_accepted_markdown_version_id(database: Database, project_id: str) -> str | None:
+    """Per-project accepted snapshot id (issue #466).
+
+    The accepted snapshot is the stable downstream read: set only by
+    explicit accept, never moving on draft writes. Newer drafts never
+    move it, so downstream never silently ignores drafts nor consumes
+    unreviewed edits.
+    """
+    from app.ai.model import AiScenarioMarkdownPointerRow
+
+    with database.session() as session:
+        row = session.get(AiScenarioMarkdownPointerRow, project_id)
+        accepted = getattr(row, "accepted_version_id", None) if row else None
+        return str(accepted) if accepted else None
+
+
+def get_accepted_markdown_version(database: Database, project_id: str) -> object | None:
+    """Accepted version row, or None when no version is accepted yet."""
+    accepted_id = get_accepted_markdown_version_id(database, project_id)
+    if not accepted_id:
+        return None
+    try:
+        return get_markdown_version(database, accepted_id)
+    except KeyError:
+        return None
+
+
+def require_accepted_markdown_version(database: Database, project_id: str) -> object:
+    """Downstream gate: later assistants read only the accepted snapshot.
+
+    Raises ValueError when nothing is accepted, so callers refuse to run
+    on a stale active draft or on unreviewed keystrokes instead of
+    silently ignoring newer drafts.
+    """
+    row = get_accepted_markdown_version(database, project_id)
+    if row is None:
+        raise ValueError(
+            f"project {project_id} has no accepted scenario version — "
+            "accept a version before downstream reconciliation"
+        )
+    return row
+
+
+def accept_markdown_version(
+    database: Database,
+    *,
+    project_id: str,
+    version_id: str,
+    conversation_id: str | None = None,
+    message_id: str | None = None,
+) -> object:
+    """Mark a version as the accepted downstream snapshot.
+
+    The version must belong to the project; the active draft pointer is
+    untouched (accepting does not rewrite the doc). Records a
+    `markdown-version-accept` audit entry with the same last-writer-wins
+    concurrency as applies.
+    """
+    from app.ai.model import (
+        AiScenarioMarkdownAuditRow,
+        AiScenarioMarkdownPointerRow,
+    )
+
+    source = get_markdown_version(database, version_id)
+    get = getattr
+    if str(get(source, "project_id", "")) != project_id:
+        raise ValueError("version does not belong to this project")
+    summary = str(get(source, "summary", "") or "Scenario edit")
+    touched: list[int] = []
+    try:
+        loaded: object = _json.loads(get(source, "touched_steps_json", "[]") or "[]")
+        if isinstance(loaded, list):
+            touched = [int(n) for n in loaded if isinstance(n, (int, float)) and int(n) > 0]
+    except (ValueError, TypeError):
+        touched = []
+    now = _now()
+    with database.session() as session:
+        pointer = session.get(AiScenarioMarkdownPointerRow, project_id)
+        if pointer is None:
+            pointer = AiScenarioMarkdownPointerRow(
+                project_id=project_id,
+                active_version_id=str(get(source, "id", "")),
+                accepted_version_id=str(get(source, "id", "")),
+                updated_at=now,
+            )
+            session.add(pointer)
+        else:
+            pointer.accepted_version_id = str(get(source, "id", ""))
+            pointer.updated_at = now
+        session.add(
+            AiScenarioMarkdownAuditRow(
+                id=str(uuid4()),
+                project_id=project_id,
+                conversation_id=conversation_id or str(get(source, "conversation_id", "")),
+                message_id=message_id,
+                version_id=str(get(source, "id", "")),
+                summary=summary[:200],
+                touched_steps_json=_json.dumps(touched),
+                created_at=now,
+                operation="markdown-version-accept",
+                concurrency=CONCURRENCY_RULE,
+            )
+        )
+        session.commit()
+    return get_markdown_version(database, version_id)
+
+
 def create_markdown_version(
     database: Database,
     *,
@@ -548,11 +655,19 @@ def delete_versions_for_conversation(database: Database, conversation_id: str) -
             )
         )
         session.commit()
-        # Repoint any dangling active pointer to the newest remaining version,
-        # or clear it when the project has no versions left.
+        # Repoint any dangling active/accepted pointers to the newest
+        # remaining version, or clear them when the project has no versions
+        # left. Draft writes never move the accepted snapshot, but deletes
+        # must not leave it dangling at a removed version.
         for project_id in doomed_projects:
             pointer = session.get(AiScenarioMarkdownPointerRow, project_id)
-            if pointer is None or pointer.active_version_id not in doomed_ids:
+            if pointer is None:
+                continue
+            needs_repoint = (
+                pointer.active_version_id in doomed_ids
+                or getattr(pointer, "accepted_version_id", None) in doomed_ids
+            )
+            if not needs_repoint:
                 continue
             remaining = session.scalars(
                 select(AiScenarioMarkdownVersionRow)
@@ -562,7 +677,12 @@ def delete_versions_for_conversation(database: Database, conversation_id: str) -
                     AiScenarioMarkdownVersionRow.id,
                 )
             ).first()
-            pointer.active_version_id = remaining.id if remaining is not None else None
+            if pointer.active_version_id in doomed_ids:
+                pointer.active_version_id = remaining.id if remaining is not None else None
+            if getattr(pointer, "accepted_version_id", None) in doomed_ids:
+                # A deleted accepted snapshot can no longer gate downstream:
+                # clear it so the gate blocks instead of reading a ghost.
+                pointer.accepted_version_id = None
             pointer.updated_at = _now()
             session.commit()
 

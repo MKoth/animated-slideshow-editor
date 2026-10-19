@@ -143,6 +143,18 @@ export interface ContextSnapshot {
   animation: AnimationAssistantSnapshot
   /** Scenario markdown doc working view (issue #462): injected so the model sees the doc. */
   scenarioMarkdown?: string
+  /**
+   * Active draft version line (issue #462): summary + touched steps + id.
+   * Small metadata only — the full doc rides `scenarioMarkdown`.
+   */
+  scenarioActiveVersion?: { id: string; summary?: string; touchedSteps?: number[] }
+  /**
+   * Accepted downstream snapshot (issue #466): stable read for later
+   * assistants. Downstream reconciliation reads this version, never the
+   * active draft — so newer drafts are never silently ignored and
+   * unreviewed edits are never consumed.
+   */
+  scenarioAcceptedVersion?: { id: string; summary?: string; touchedSteps?: number[] }
   /** Successfully applied reusable assets previously authored in this conversation. */
   animationAssistantAssets?: {
     kind: string
@@ -166,6 +178,10 @@ export interface SnapshotSources {
   }[]
   /** Scenario markdown doc (issue #462): project-attached doc working view. */
   scenarioMarkdown?: string
+  /** Active draft version line (issue #462): summary + touched steps + id. */
+  scenarioActiveVersion?: { id: string; summary?: string; touchedSteps?: number[] }
+  /** Accepted downstream snapshot (issue #466): stable read for later assistants. */
+  scenarioAcceptedVersion?: { id: string; summary?: string; touchedSteps?: number[] }
 }
 
 /** Animatable surface mirrored from engine/animationProperties.ts (Stage B motion checks). */
@@ -262,6 +278,35 @@ export function buildContextSnapshot(
     ),
     ...(sources.scenarioMarkdown
       ? { scenarioMarkdown: sources.scenarioMarkdown.slice(0, 8000) }
+      : {}),
+    // Budget re-tune (issue #466): version lines are tiny metadata next to
+    // the capped markdown working view. All three ride the context block,
+    // which is never dropped — history trims first (see prompting).
+    ...(sources.scenarioActiveVersion
+      ? {
+          scenarioActiveVersion: {
+            id: sources.scenarioActiveVersion.id,
+            ...(sources.scenarioActiveVersion.summary !== undefined
+              ? { summary: sources.scenarioActiveVersion.summary.slice(0, 200) }
+              : {}),
+            ...(sources.scenarioActiveVersion.touchedSteps !== undefined
+              ? { touchedSteps: [...sources.scenarioActiveVersion.touchedSteps].slice(0, 20) }
+              : {}),
+          },
+        }
+      : {}),
+    ...(sources.scenarioAcceptedVersion
+      ? {
+          scenarioAcceptedVersion: {
+            id: sources.scenarioAcceptedVersion.id,
+            ...(sources.scenarioAcceptedVersion.summary !== undefined
+              ? { summary: sources.scenarioAcceptedVersion.summary.slice(0, 200) }
+              : {}),
+            ...(sources.scenarioAcceptedVersion.touchedSteps !== undefined
+              ? { touchedSteps: [...sources.scenarioAcceptedVersion.touchedSteps].slice(0, 20) }
+              : {}),
+          },
+        }
       : {}),
     ...(sources.animationAssets && sources.animationAssets.length > 0
       ? { animationAssistantAssets: sources.animationAssets.map((asset) => ({ ...asset })) }

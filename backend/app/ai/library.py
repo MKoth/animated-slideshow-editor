@@ -793,6 +793,33 @@ class AiLibrary:
     def get_active_markdown_version_id(self, project_id: str) -> str | None:
         return scenario_store.get_active_markdown_version_id(self._database, project_id)
 
+    def get_accepted_markdown_version_id(self, project_id: str) -> str | None:
+        """Accepted downstream snapshot (issue #466): explicit accept only."""
+        return scenario_store.get_accepted_markdown_version_id(self._database, project_id)
+
+    def get_accepted_markdown_version(self, project_id: str) -> object | None:
+        return scenario_store.get_accepted_markdown_version(self._database, project_id)
+
+    def require_accepted_markdown_version(self, project_id: str) -> object:
+        """Downstream gate: later assistants read only the accepted snapshot."""
+        return scenario_store.require_accepted_markdown_version(self._database, project_id)
+
+    def accept_markdown_version(
+        self,
+        *,
+        project_id: str,
+        version_id: str,
+        conversation_id: str | None = None,
+        message_id: str | None = None,
+    ) -> object:
+        return scenario_store.accept_markdown_version(
+            self._database,
+            project_id=project_id,
+            version_id=version_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+        )
+
     def create_markdown_version(
         self,
         *,

@@ -25,6 +25,9 @@ import { AiCalibrationView } from './AiCalibrationView'
 import { AiNarrationView } from './AiNarrationView'
 import { AiReconciliationView } from './AiReconciliationView'
 import { AiScenarioView } from './AiScenarioView'
+import type { ScenarioMarkdownVersion } from '../../api/aiApi'
+
+const EMPTY_MARKDOWN_VERSIONS: ScenarioMarkdownVersion[] = []
 
 export function AiPanel() {
   const { engine } = useEngine()
@@ -123,6 +126,25 @@ export function AiPanel() {
   )
 
   const scenarioMarkdown = engine.project?.scenario?.currentMarkdown ?? ''
+  const activeMarkdownVersionId = useAiStore((s) =>
+    projectId ? (s.activeMarkdownVersionIdByProject[projectId] ?? null) : null,
+  )
+  const acceptedMarkdownVersionId = useAiStore((s) =>
+    projectId ? (s.acceptedMarkdownVersionIdByProject[projectId] ?? null) : null,
+  )
+  const markdownVersions = useAiStore((s) =>
+    projectId
+      ? (s.markdownVersionsByProject[projectId] ?? EMPTY_MARKDOWN_VERSIONS)
+      : EMPTY_MARKDOWN_VERSIONS,
+  )
+  const activeMarkdownVersion =
+    markdownVersions.find((v) => v.id === activeMarkdownVersionId) ?? null
+  const acceptedMarkdownVersion =
+    markdownVersions.find((v) => v.id === acceptedMarkdownVersionId) ??
+    (engine.project?.scenario?.versions ?? []).find(
+      (v) => v.id === engine.project?.scenario?.acceptedVersionId,
+    ) ??
+    null
   const context = useMemo(
     () =>
       buildContextSnapshot(engine, {
@@ -131,9 +153,41 @@ export function AiPanel() {
         audioNames,
         animationAssets: conversationAssets,
         ...(scenarioMarkdown ? { scenarioMarkdown } : {}),
+        ...(activeMarkdownVersion
+          ? {
+              scenarioActiveVersion: {
+                id: activeMarkdownVersion.id,
+                summary: activeMarkdownVersion.summary,
+                touchedSteps: [...activeMarkdownVersion.touchedSteps],
+              },
+            }
+          : {}),
+        // Cross-assistant read (issue #466): when embedded, later assistants
+        // read the accepted snapshot from engine project state; otherwise
+        // they read this structured summary + touched-steps + version-link
+        // line in the snapshot (and the linked-history lines server-side).
+        ...(acceptedMarkdownVersion
+          ? {
+              scenarioAcceptedVersion: {
+                id: acceptedMarkdownVersion.id,
+                summary: acceptedMarkdownVersion.summary,
+                touchedSteps: [...acceptedMarkdownVersion.touchedSteps],
+              },
+            }
+          : {}),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [engine, projectId, selectionKey, assetKey, audioKey, conversationAssets, scenarioMarkdown],
+    [
+      engine,
+      projectId,
+      selectionKey,
+      assetKey,
+      audioKey,
+      conversationAssets,
+      scenarioMarkdown,
+      activeMarkdownVersionId,
+      acceptedMarkdownVersionId,
+    ],
   )
 
   const visibleConversations = useMemo(() => {

@@ -44,6 +44,35 @@ def get_active_markdown_version_id(database: Database, project_id: str) -> str |
     return _versions.get_active_markdown_version_id(database, project_id)
 
 
+def get_accepted_markdown_version_id(database: Database, project_id: str) -> str | None:
+    return _versions.get_accepted_markdown_version_id(database, project_id)
+
+
+def get_accepted_markdown_version(database: Database, project_id: str) -> object | None:
+    return _versions.get_accepted_markdown_version(database, project_id)
+
+
+def require_accepted_markdown_version(database: Database, project_id: str) -> object:
+    return _versions.require_accepted_markdown_version(database, project_id)
+
+
+def accept_markdown_version(
+    database: Database,
+    *,
+    project_id: str,
+    version_id: str,
+    conversation_id: str | None = None,
+    message_id: str | None = None,
+) -> object:
+    return _versions.accept_markdown_version(
+        database,
+        project_id=project_id,
+        version_id=version_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+    )
+
+
 def create_markdown_version(
     database: Database,
     *,

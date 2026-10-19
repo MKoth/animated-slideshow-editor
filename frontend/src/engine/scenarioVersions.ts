@@ -196,6 +196,38 @@ export function buildRestoreSummary(sourceSummary: string, sourceId: string): st
   return `Restore ${short}: ${base}`.slice(0, 200)
 }
 
+/**
+ * Accepted downstream snapshot (issue #466): resolve the accepted version
+ * from the ordered list, or undefined when nothing is accepted yet.
+ * Pure — downstream reads this, never the active draft.
+ */
+export function resolveAcceptedSnapshot<T extends { id: string }>(
+  versions: readonly T[],
+  acceptedVersionId: string | null | undefined,
+): T | undefined {
+  if (!acceptedVersionId) return undefined
+  return versions.find((v) => v.id === acceptedVersionId)
+}
+
+/**
+ * Downstream gate: return the accepted snapshot or throw.
+ * Mirrors the backend `require_accepted_markdown_version` 409 gate:
+ * callers block instead of silently ignoring drafts or consuming
+ * unreviewed edits.
+ */
+export function requireAcceptedSnapshot<T extends { id: string }>(
+  versions: readonly T[],
+  acceptedVersionId: string | null | undefined,
+): T {
+  const accepted = resolveAcceptedSnapshot(versions, acceptedVersionId)
+  if (!accepted) {
+    throw new Error(
+      'No accepted scenario version — accept a version before downstream reconciliation',
+    )
+  }
+  return accepted
+}
+
 export function diffScenarioLines(oldText: string, newText: string): ScenarioLineDiff[] {
   const oldLines = (oldText || '').split('\n')
   const newLines = (newText || '').split('\n')

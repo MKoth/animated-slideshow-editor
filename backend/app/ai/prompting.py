@@ -102,9 +102,15 @@ def context_to_text(context: object) -> str:
         selection = context.get("selection")
         if isinstance(selection, list) and selection:
             parts.append("selection: " + ", ".join(str(s) for s in selection[:50]))
-        # Scenario markdown doc (issue #462): the model never sees the doc
-        # unless it rides the context. Injected here (parallel prop accepted)
-        # with a budget re-tune handled by the caller trimming history first.
+        # Scenario markdown doc (issues #462, #466): the model never sees the
+        # doc unless it rides the context. Injected here (parallel props
+        # accepted) with a budget re-tune handled by the caller trimming
+        # history first — the context block (including the scenario working
+        # view) is never dropped, only history is. The working view is the
+        # accepted downstream snapshot when set (stable), else the active
+        # draft: downstream reconciliation must read the accepted snapshot
+        # (canonical endpoint / engine project state when embedded), never
+        # chase every draft keystroke nor freeze on stale content.
         scenario_markdown = context.get("scenarioMarkdown")
         if isinstance(scenario_markdown, str) and scenario_markdown.strip():
             # Cap to keep the prompt bounded; the full doc lives in the
@@ -124,6 +130,28 @@ def context_to_text(context: object) -> str:
                 bits.append("touched steps " + ", ".join(str(n) for n in touched[:20]))
             if bits:
                 parts.append("active scenario version: " + "; ".join(bits))
+        # Accepted snapshot (issue #466): the stable downstream read. When
+        # present, later assistants reconcile against this version; when
+        # absent, they must block (canonical 409) rather than consuming
+        # the active draft unreviewed.
+        accepted_version = context.get("scenarioAcceptedVersion")
+        if isinstance(accepted_version, dict):
+            summary = accepted_version.get("summary")
+            touched = accepted_version.get("touchedSteps")
+            version_id = accepted_version.get("id")
+            bits = []
+            if isinstance(version_id, str) and version_id:
+                bits.append(f"version {version_id}")
+            if isinstance(summary, str) and summary.strip():
+                bits.append(f'summary "{summary.strip()}"')
+            if isinstance(touched, list) and touched:
+                bits.append("touched steps " + ", ".join(str(n) for n in touched[:20]))
+            if bits:
+                parts.append("accepted scenario version (downstream snapshot): " + "; ".join(bits))
+            elif isinstance(version_id, str) and version_id:
+                parts.append(
+                    "accepted scenario version (downstream snapshot): version " + version_id
+                )
         animation = context.get("animation")
         if isinstance(animation, dict):
             animation_text = _animation_to_text(animation)

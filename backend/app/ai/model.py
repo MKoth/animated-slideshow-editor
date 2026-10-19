@@ -219,12 +219,21 @@ class AiScenarioMarkdownVersionRow(Base):
 
 
 class AiScenarioMarkdownPointerRow(Base):
-    """Per-project active markdown version pointer (issue #462)."""
+    """Per-project active + accepted markdown version pointers.
+
+    Active (issue #462) is the latest draft: last-writer-wins, moving on
+    every create/restore. Accepted (issue #466) is the stable downstream
+    snapshot: set only by explicit accept, never moving on draft writes.
+    Downstream reconciliation reads the accepted snapshot, never the
+    active draft — so newer drafts are never silently ignored and
+    unreviewed edits are never consumed.
+    """
 
     __tablename__ = "ai_scenario_markdown_pointers"
 
     project_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     active_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
+    accepted_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 

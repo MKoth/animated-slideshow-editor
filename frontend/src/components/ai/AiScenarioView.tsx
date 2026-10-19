@@ -2,7 +2,11 @@ import { useContext, useEffect, useState } from 'react'
 import type { AiScenario, AiScenarioStep, ScenarioMarkdownVersion } from '../../api/aiApi'
 import { useAiStore } from '../../stores/aiStore'
 import { EngineContext } from '../../app/engineContext'
-import { appendScenarioVersion, createEmptyScenarioSection } from '../../engine/scenarioSection'
+import {
+  appendScenarioVersion,
+  createEmptyScenarioSection,
+  withScenarioAcceptedVersion,
+} from '../../engine/scenarioSection'
 import { AiScenarioHistory } from './AiScenarioHistory'
 import { AiScenarioModal } from './AiScenarioModal'
 
@@ -35,6 +39,9 @@ export function AiScenarioView({
   const activeMarkdownVersionId = useAiStore(
     (s) => s.activeMarkdownVersionIdByProject[projectId] ?? null,
   )
+  const acceptedMarkdownVersionId = useAiStore(
+    (s) => s.acceptedMarkdownVersionIdByProject[projectId] ?? null,
+  )
   const store = useAiStore.getState()
   const engineValue = useContext(EngineContext)
   const engine = engineValue?.engine
@@ -56,11 +63,13 @@ export function AiScenarioView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, conversationId])
 
-  // Portable doc sync (issue #462): server versions append to the portable
+  // Portable doc sync (issues #462, #466): server versions append to the portable
   // `.lesson` section via plain `project.setScenario` — never through the
   // engine dispatcher, so no Undo Stack entries are created. Canvas undo
   // never touches the doc because no Command touches `scenario`.
   // Last-writer-wins: current tracks the per-project active version.
+  // The accepted pointer travels with the doc so download/import/duplicate
+  // carry the stable downstream snapshot verbatim.
   useEffect(() => {
     if (!engine?.project || markdownVersions.length === 0) return
     const current = engine.project.scenario ?? createEmptyScenarioSection('')
@@ -85,11 +94,16 @@ export function AiScenarioView({
       next = { ...next, currentMarkdown: activeContent }
       changed = true
     }
+    if ((next.acceptedVersionId ?? null) !== (acceptedMarkdownVersionId ?? null)) {
+      next = withScenarioAcceptedVersion(next, acceptedMarkdownVersionId ?? null)
+      changed = true
+    }
     if (changed) engine.project.setScenario(next)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     markdownVersions.length,
     activeMarkdownVersionId,
+    acceptedMarkdownVersionId,
     (engine as { project?: { id?: string } } | undefined)?.project?.id,
   ])
 
@@ -168,6 +182,11 @@ export function AiScenarioView({
             <div data-testid="ai-scenario-doc-count">
               {markdownVersions.length} version(s) — restores copy forward, canvas undo never
               touches the doc.
+            </div>
+            <div data-testid="ai-scenario-downstream-gate">
+              {acceptedMarkdownVersionId
+                ? `Accepted ${acceptedMarkdownVersionId.slice(0, 8)} is the downstream snapshot — later assistants read it, not the active draft.`
+                : 'No accepted version — downstream reconciliation blocks until one is accepted in History.'}
             </div>
           </div>
           <div className="ai-scenario__request">

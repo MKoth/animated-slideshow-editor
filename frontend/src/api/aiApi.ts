@@ -784,9 +784,51 @@ export class AiApi {
     projectId: string
     activeVersionId: string | null
     version: ScenarioMarkdownVersion | null
+    acceptedVersionId?: string | null
+    acceptedVersion?: ScenarioMarkdownVersion | null
   }> {
     return this.client.get(
       `/api/ai/scenarios/markdown/active?projectId=${encodeURIComponent(projectId)}`,
+    )
+  }
+
+  async acceptMarkdownVersion(input: {
+    projectId: string
+    versionId: string
+    conversationId?: string
+    messageId?: string
+  }): Promise<{
+    projectId: string
+    acceptedVersionId: string | null
+    version: ScenarioMarkdownVersion | null
+  }> {
+    return this.client.post(
+      '/api/ai/scenarios/markdown/accept',
+      JSON.stringify({ conversationId: undefined, messageId: undefined, ...input }),
+    )
+  }
+
+  async getAcceptedMarkdownVersion(projectId: string): Promise<{
+    projectId: string
+    acceptedVersionId: string | null
+    version: ScenarioMarkdownVersion | null
+  }> {
+    return this.client.get(
+      `/api/ai/scenarios/markdown/accepted?projectId=${encodeURIComponent(projectId)}`,
+    )
+  }
+
+  async getMarkdownCanonical(projectId: string): Promise<{
+    projectId: string
+    acceptedVersionId: string | null
+    version: ScenarioMarkdownVersion | null
+    content: string
+    summary: string
+    touchedSteps: number[]
+    timestamp: string
+  }> {
+    return this.client.get(
+      `/api/ai/scenarios/markdown/canonical?projectId=${encodeURIComponent(projectId)}`,
     )
   }
 
