@@ -106,6 +106,8 @@ interface AiState {
   markdownBusy: boolean
   markdownError: { code: string; message: string } | null
   scenarioTab: 'doc' | 'history'
+  scenarioModalOpen: boolean
+  scenarioMissingOnly: boolean
   reconciliations: AiReconciliationSummary[]
   reconciliationById: Record<string, AiReconciliation>
   activeReconciliationId: string | null
@@ -195,6 +197,8 @@ interface AiState {
   acceptScenario: (id: string) => Promise<void>
   rejectScenario: (id: string) => Promise<void>
   setScenarioTab: (tab: 'doc' | 'history') => void
+  setScenarioModalOpen: (open: boolean) => void
+  setScenarioMissingOnly: (missingOnly: boolean) => void
   loadMarkdownVersions: (projectId: string, conversationId?: string) => Promise<void>
   applyScenarioChat: (
     projectId: string,

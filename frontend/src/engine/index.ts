@@ -183,6 +183,15 @@ export {
   parseScenarioMarkdown,
   upgradeLegacyScenarioToMarkdown,
 } from './scenarioMarkdown'
+export {
+  buildScenarioAvailableIds,
+  buildScenarioChecklistRows,
+  getScenarioHtmlState,
+  getScenarioUnboundCount,
+  isScenarioGenerateBlocked,
+  updateScenarioBrief,
+} from './scenarioChecklist'
+export type { ScenarioChecklistRow, ScenarioHtmlState } from './scenarioChecklist'
 export type {
   LegacyScenarioStep,
   ParsedScenario,

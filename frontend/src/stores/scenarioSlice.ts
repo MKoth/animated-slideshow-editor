@@ -32,11 +32,17 @@ export interface ScenarioSliceState {
   markdownError: { code: string; message: string } | null
   /** Doc versus History tab for the scenario surface. */
   scenarioTab: 'doc' | 'history'
+  /** Doc-first modal visibility (issue #463): entry button always present. */
+  scenarioModalOpen: boolean
+  /** Checklist missing-only filter (issue #463): one-click missing filter. */
+  scenarioMissingOnly: boolean
 }
 
 export interface ScenarioSliceActions {
   setScenarioRequest: (request: string) => void
   setActiveScenario: (id: string | null) => void
+  setScenarioModalOpen: (open: boolean) => void
+  setScenarioMissingOnly: (missingOnly: boolean) => void
   loadScenarios: (projectId: string) => Promise<void>
   proposeScenario: (
     projectId: string,
@@ -83,6 +89,8 @@ export const initialScenarioSliceState: ScenarioSliceState = {
   markdownBusy: false,
   markdownError: null,
   scenarioTab: 'doc',
+  scenarioModalOpen: false,
+  scenarioMissingOnly: false,
 }
 
 function isBackendDown(error: unknown): boolean {
@@ -101,6 +109,8 @@ export function createScenarioSlice(set: SliceSet, get: SliceGet): ScenarioSlice
   return {
     setScenarioRequest: (request) => set({ scenarioRequest: request }),
     setActiveScenario: (id) => set({ activeScenarioId: id }),
+    setScenarioModalOpen: (open) => set({ scenarioModalOpen: open }),
+    setScenarioMissingOnly: (missingOnly) => set({ scenarioMissingOnly: missingOnly }),
 
     loadScenarios: async (projectId) => {
       try {

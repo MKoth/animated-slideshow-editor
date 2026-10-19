@@ -4,6 +4,7 @@ import { useAiStore } from '../../stores/aiStore'
 import { EngineContext } from '../../app/engineContext'
 import { appendScenarioVersion, createEmptyScenarioSection } from '../../engine/scenarioSection'
 import { AiScenarioHistory } from './AiScenarioHistory'
+import { AiScenarioModal } from './AiScenarioModal'
 
 const EMPTY_MARKDOWN_VERSIONS: ScenarioMarkdownVersion[] = []
 
@@ -27,6 +28,7 @@ export function AiScenarioView({
   const scenarioError = useAiStore((s) => s.scenarioError)
   const scenarioRequest = useAiStore((s) => s.scenarioRequest)
   const scenarioTab = useAiStore((s) => s.scenarioTab)
+  const scenarioModalOpen = useAiStore((s) => s.scenarioModalOpen ?? false)
   const markdownVersions = useAiStore(
     (s) => s.markdownVersionsByProject[projectId] ?? EMPTY_MARKDOWN_VERSIONS,
   )
@@ -101,6 +103,10 @@ export function AiScenarioView({
     )
   }
 
+  const handleOpenModal = () => {
+    store.setScenarioModalOpen(true)
+  }
+
   const handlePropose = () => {
     if (!projectId || !conversationId || !scenarioRequest.trim() || scenarioGenerating) return
     void store.proposeScenario(projectId, conversationId, scenarioRequest, context)
@@ -126,6 +132,15 @@ export function AiScenarioView({
 
   return (
     <div className="ai-scenario" data-testid="ai-scenario-section">
+      <div data-testid="ai-scenario-header">
+        <span>Scenario mode</span>{' '}
+        <button data-testid="ai-scenario-open-modal" onClick={handleOpenModal}>
+          Scenario MD
+        </button>
+      </div>
+      {scenarioModalOpen && (
+        <AiScenarioModal projectId={projectId} conversationId={conversationId} />
+      )}
       <div data-testid="ai-scenario-tabs">
         <button
           data-testid="ai-scenario-tab-doc"
