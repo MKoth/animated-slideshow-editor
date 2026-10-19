@@ -173,6 +173,30 @@ class AiScenarioUpdate(BaseModel):
     steps: list[AiScenarioUpdateStep] | None = None
 
 
+class AiScenarioMarkdownVersionCreate(BaseModel):
+    projectId: str = Field(min_length=1)
+    conversationId: str = Field(min_length=1)
+    messageId: str | None = None
+    content: str = Field(min_length=1)
+    summary: str = Field(min_length=1, max_length=200)
+    touchedSteps: list[int] = Field(default_factory=list)
+    baseVersionId: str | None = None
+
+
+class AiScenarioMarkdownApply(BaseModel):
+    projectId: str = Field(min_length=1)
+    conversationId: str = Field(min_length=1)
+    messageId: str | None = None
+    userText: str = ""
+    assistantText: str = Field(min_length=1)
+
+
+class AiScenarioMarkdownRestore(BaseModel):
+    projectId: str = Field(min_length=1)
+    conversationId: str = Field(min_length=1)
+    messageId: str | None = None
+
+
 class AiReconciliationCreate(BaseModel):
     projectId: str = Field(min_length=1)
     scenarioId: str = Field(min_length=1)

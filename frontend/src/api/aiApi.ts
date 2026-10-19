@@ -64,6 +64,11 @@ export interface AiMessage {
   promptTokens?: number | null
   completionTokens?: number | null
   totalTokens?: number | null
+  /** Scenario versioned edits (issue #462): stored server-side version links. */
+  scenarioIntent?: 'edit' | 'question-only' | null
+  scenarioVersionId?: string | null
+  scenarioSummary?: string | null
+  scenarioTouchedSteps?: number[]
   created: string
 }
 
@@ -232,6 +237,40 @@ export interface AiScenarioPatch {
   title?: string
   description?: string
   steps?: AiScenarioStepPatch[]
+}
+
+/** Scenario markdown version record (issue #462): owns summary, steps, time, content. */
+export interface ScenarioMarkdownVersion {
+  id: string
+  projectId: string
+  conversationId: string
+  messageId: string | null
+  summary: string
+  touchedSteps: number[]
+  timestamp: string
+  content: string
+  baseVersionId: string | null
+  diffFromPrevious?: { type: 'same' | 'add' | 'del'; line: string }[]
+}
+
+export interface ScenarioMarkdownAudit {
+  id: string
+  projectId: string
+  conversationId: string
+  messageId: string | null
+  versionId: string
+  summary: string
+  touchedSteps: number[]
+  timestamp: string
+  operation: string
+  concurrency: string
+}
+
+export interface ScenarioChatApplyResult {
+  intent: 'edit' | 'question-only'
+  version: ScenarioMarkdownVersion | null
+  questionText: string | null
+  audit: ScenarioMarkdownAudit | null
 }
 
 export type AiReconciliationStatus = 'draft' | 'accepted' | 'rejected'
@@ -699,6 +738,62 @@ export class AiApi {
 
   async rejectScenario(id: string): Promise<AiScenario> {
     return this.client.post<AiScenario>(`/api/ai/scenarios/${encodeURIComponent(id)}/reject`, '')
+  }
+
+  async applyScenarioChat(input: {
+    projectId: string
+    conversationId: string
+    messageId?: string
+    userText: string
+    assistantText: string
+  }): Promise<ScenarioChatApplyResult> {
+    return this.client.post<ScenarioChatApplyResult>(
+      '/api/ai/scenarios/markdown/apply',
+      JSON.stringify(input),
+    )
+  }
+
+  async listMarkdownVersions(
+    projectId: string,
+    conversationId?: string,
+  ): Promise<ScenarioMarkdownVersion[]> {
+    const params = new URLSearchParams({ projectId })
+    if (conversationId) params.set('conversationId', conversationId)
+    return this.client.get<ScenarioMarkdownVersion[]>(
+      `/api/ai/scenarios/markdown/versions?${params.toString()}`,
+    )
+  }
+
+  async getMarkdownVersion(id: string): Promise<ScenarioMarkdownVersion> {
+    return this.client.get<ScenarioMarkdownVersion>(
+      `/api/ai/scenarios/markdown/versions/${encodeURIComponent(id)}`,
+    )
+  }
+
+  async restoreMarkdownVersion(
+    id: string,
+    input: { projectId: string; conversationId: string; messageId?: string },
+  ): Promise<ScenarioMarkdownVersion> {
+    return this.client.post<ScenarioMarkdownVersion>(
+      `/api/ai/scenarios/markdown/versions/${encodeURIComponent(id)}/restore`,
+      JSON.stringify(input),
+    )
+  }
+
+  async getActiveMarkdownVersion(projectId: string): Promise<{
+    projectId: string
+    activeVersionId: string | null
+    version: ScenarioMarkdownVersion | null
+  }> {
+    return this.client.get(
+      `/api/ai/scenarios/markdown/active?projectId=${encodeURIComponent(projectId)}`,
+    )
+  }
+
+  async listMarkdownAudits(projectId: string): Promise<ScenarioMarkdownAudit[]> {
+    return this.client.get<ScenarioMarkdownAudit[]>(
+      `/api/ai/scenarios/markdown/audits?projectId=${encodeURIComponent(projectId)}`,
+    )
   }
 
   async reconcileScenario(input: AiReconciliationCreateInput): Promise<AiReconciliation> {

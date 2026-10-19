@@ -1,6 +1,11 @@
-import { useEffect, useState } from 'react'
-import type { AiScenario, AiScenarioStep } from '../../api/aiApi'
+import { useContext, useEffect, useState } from 'react'
+import type { AiScenario, AiScenarioStep, ScenarioMarkdownVersion } from '../../api/aiApi'
 import { useAiStore } from '../../stores/aiStore'
+import { EngineContext } from '../../app/engineContext'
+import { appendScenarioVersion, createEmptyScenarioSection } from '../../engine/scenarioSection'
+import { AiScenarioHistory } from './AiScenarioHistory'
+
+const EMPTY_MARKDOWN_VERSIONS: ScenarioMarkdownVersion[] = []
 
 interface AiScenarioViewProps {
   projectId: string
@@ -21,7 +26,16 @@ export function AiScenarioView({
   const scenarioGenerating = useAiStore((s) => s.scenarioGenerating)
   const scenarioError = useAiStore((s) => s.scenarioError)
   const scenarioRequest = useAiStore((s) => s.scenarioRequest)
+  const scenarioTab = useAiStore((s) => s.scenarioTab)
+  const markdownVersions = useAiStore(
+    (s) => s.markdownVersionsByProject[projectId] ?? EMPTY_MARKDOWN_VERSIONS,
+  )
+  const activeMarkdownVersionId = useAiStore(
+    (s) => s.activeMarkdownVersionIdByProject[projectId] ?? null,
+  )
   const store = useAiStore.getState()
+  const engineValue = useContext(EngineContext)
+  const engine = engineValue?.engine
 
   const activeScenario = activeScenarioId ? (scenarioById[activeScenarioId] ?? null) : null
 
@@ -34,6 +48,48 @@ export function AiScenarioView({
     if (activeScenarioId) void store.loadScenario(activeScenarioId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScenarioId])
+
+  useEffect(() => {
+    if (projectId) void store.loadMarkdownVersions(projectId, conversationId ?? undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, conversationId])
+
+  // Portable doc sync (issue #462): server versions append to the portable
+  // `.lesson` section via plain `project.setScenario` — never through the
+  // engine dispatcher, so no Undo Stack entries are created. Canvas undo
+  // never touches the doc because no Command touches `scenario`.
+  // Last-writer-wins: current tracks the per-project active version.
+  useEffect(() => {
+    if (!engine?.project || markdownVersions.length === 0) return
+    const current = engine.project.scenario ?? createEmptyScenarioSection('')
+    const known = new Set(current.versions.map((v) => v.id))
+    let next = current
+    let changed = false
+    for (const v of markdownVersions) {
+      if (known.has(v.id)) continue
+      next = appendScenarioVersion(next, {
+        id: v.id,
+        summary: v.summary,
+        touchedSteps: [...v.touchedSteps],
+        timestamp: v.timestamp,
+        content: v.content,
+      })
+      changed = true
+    }
+    const activeContent =
+      markdownVersions.find((v) => v.id === activeMarkdownVersionId)?.content ??
+      markdownVersions[markdownVersions.length - 1]!.content
+    if (next.currentMarkdown !== activeContent) {
+      next = { ...next, currentMarkdown: activeContent }
+      changed = true
+    }
+    if (changed) engine.project.setScenario(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    markdownVersions.length,
+    activeMarkdownVersionId,
+    (engine as { project?: { id?: string } } | undefined)?.project?.id,
+  ])
 
   if (disabled) {
     return (
@@ -70,56 +126,92 @@ export function AiScenarioView({
 
   return (
     <div className="ai-scenario" data-testid="ai-scenario-section">
-      <div className="ai-scenario__request">
-        <input
-          data-testid="ai-scenario-request"
-          placeholder="Describe the lesson to scenario…"
-          value={scenarioRequest}
-          onChange={(e) => store.setScenarioRequest(e.target.value)}
-        />
+      <div data-testid="ai-scenario-tabs">
         <button
-          data-testid="ai-scenario-propose"
-          disabled={!conversationId || !scenarioRequest.trim() || scenarioGenerating}
-          onClick={handlePropose}
+          data-testid="ai-scenario-tab-doc"
+          disabled={scenarioTab === 'doc'}
+          onClick={() => store.setScenarioTab('doc')}
         >
-          Draft scenario
+          Doc
         </button>
         <button
-          data-testid="ai-scenario-revise"
-          disabled={
-            !conversationId || !scenarioRequest.trim() || !activeScenarioId || scenarioGenerating
-          }
-          onClick={handleRevise}
+          data-testid="ai-scenario-tab-history"
+          disabled={scenarioTab === 'history'}
+          onClick={() => store.setScenarioTab('history')}
         >
-          Revise scenario
+          History
         </button>
-        {scenarioGenerating && <span data-testid="ai-scenario-generating">Drafting scenario…</span>}
-        {scenarioError && <span data-testid="ai-scenario-error">{scenarioError.message}</span>}
       </div>
-
-      {scenarios.length > 0 && (
-        <select
-          data-testid="ai-scenario-select"
-          value={activeScenarioId ?? ''}
-          onChange={(e) => store.setActiveScenario(e.target.value || null)}
-        >
-          {scenarios.map((scenario) => (
-            <option key={scenario.id} value={scenario.id}>
-              {scenario.title} ({scenario.status})
-            </option>
-          ))}
-        </select>
-      )}
-
-      {activeScenario ? (
-        <AiScenarioEditor
-          key={`${activeScenario.id}-${activeScenario.modified}`}
-          scenario={activeScenario}
-        />
+      {scenarioTab === 'history' ? (
+        <AiScenarioHistory projectId={projectId} conversationId={conversationId} />
       ) : (
-        <div data-testid="ai-scenario-empty">
-          No action scenario yet — describe the lesson above.
-        </div>
+        <>
+          <div data-testid="ai-scenario-doc">
+            <div data-testid="ai-scenario-doc-markdown">
+              {engine?.project?.scenario?.currentMarkdown || 'No scenario markdown yet.'}
+            </div>
+            <div data-testid="ai-scenario-doc-count">
+              {markdownVersions.length} version(s) — restores copy forward, canvas undo never
+              touches the doc.
+            </div>
+          </div>
+          <div className="ai-scenario__request">
+            <input
+              data-testid="ai-scenario-request"
+              placeholder="Describe the lesson to scenario…"
+              value={scenarioRequest}
+              onChange={(e) => store.setScenarioRequest(e.target.value)}
+            />
+            <button
+              data-testid="ai-scenario-propose"
+              disabled={!conversationId || !scenarioRequest.trim() || scenarioGenerating}
+              onClick={handlePropose}
+            >
+              Draft scenario
+            </button>
+            <button
+              data-testid="ai-scenario-revise"
+              disabled={
+                !conversationId ||
+                !scenarioRequest.trim() ||
+                !activeScenarioId ||
+                scenarioGenerating
+              }
+              onClick={handleRevise}
+            >
+              Revise scenario
+            </button>
+            {scenarioGenerating && (
+              <span data-testid="ai-scenario-generating">Drafting scenario…</span>
+            )}
+            {scenarioError && <span data-testid="ai-scenario-error">{scenarioError.message}</span>}
+          </div>
+
+          {scenarios.length > 0 && (
+            <select
+              data-testid="ai-scenario-select"
+              value={activeScenarioId ?? ''}
+              onChange={(e) => store.setActiveScenario(e.target.value || null)}
+            >
+              {scenarios.map((scenario) => (
+                <option key={scenario.id} value={scenario.id}>
+                  {scenario.title} ({scenario.status})
+                </option>
+              ))}
+            </select>
+          )}
+
+          {activeScenario ? (
+            <AiScenarioEditor
+              key={`${activeScenario.id}-${activeScenario.modified}`}
+              scenario={activeScenario}
+            />
+          ) : (
+            <div data-testid="ai-scenario-empty">
+              No action scenario yet — describe the lesson above.
+            </div>
+          )}
+        </>
       )}
     </div>
   )

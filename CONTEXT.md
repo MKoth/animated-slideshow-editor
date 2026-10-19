@@ -379,6 +379,30 @@ _Avoid_: AI action, edit suggestion
 **Context Snapshot**:
 The read-only digest of the current project state sent with each AI request: project summary, slide list, scene hierarchy, selection, materials, shaders, animation clips, and asset library names. Regenerated per request, trimmed to a token budget server-side, and never serialized into conversations or the project file.
 
+**Scenario markdown doc**:
+The project-attached markdown source of the lesson beats: sequential `## Step N` headings with narrator, visuals, table, and text blocks. Project data that travels in the portable `.lesson` file (current markdown, append-only versions, last HTML, key-to-asset bindings) — the explicit amendment to the Conversation / snapshot invariant, which otherwise keeps raw Conversation messages and the Context Snapshot digest server-side and unserialized.
+_Avoid_: Scenario draft, lesson text
+
+**Normalized asset key**:
+The machine key mirroring the free-text visual alt (trim, collapse whitespace, lowercase, spaces to hyphens). Doc-unique under normalization; checklist rows, bindings, and zip filenames all key on it.
+_Avoid_: Asset slug (ambiguous), display alt (free text, not the key)
+
+**Visual brief**:
+The one-line generation brief per scenario visual (`> Brief: ...`), required unless a reuse comment names an existing Asset Definition. Prompt-briefs only in v1; no direct text-to-image call.
+_Avoid_: Prompt, image description
+
+**Scenario version record**:
+One append-only scenario markdown version owning its id, one-line summary, touched step numbers, timestamp, and full content. Versions live with the project in the portable file; per-message version links live server-side with the project-scoped Conversation and never in the portable file. Survives chat trimming.
+_Avoid_: Revision (structured-scenario term), snapshot (engine term)
+
+**Question-only reply**:
+A scenario-assistant reply that leaves the doc untouched (pure question). Explicit `ask:` user prefix forces it; otherwise the model's `intent: question-only` self-label decides.
+_Avoid_: Clarification (generic), no-op
+
+**Restore-as-new-version**:
+History restore that copies a prior version's content forward as a new append-only version, never rewriting history and never touching the engine Undo Stack.
+_Avoid_: Undo, revert
+
 **Asset Discovery Run**:
 One reconciliation pass over a lesson plan's required assets, evaluating its missing-class assets against the library: a backend SQLite record, project-scoped and never in the `.lesson` file, holding per-required-asset verdicts (matched or missing), ranked candidates with match scores and explanations, and accept/reject/replace decisions. The latest run is the authoritative state; older runs remain as history. Acceptance maps a required asset to a library definition so build-from-plan can place it.
 _Avoid_: Recommendation, asset search session

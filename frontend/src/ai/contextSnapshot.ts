@@ -141,6 +141,8 @@ export interface ContextSnapshot {
   scriptVerbs: string[]
   /** Bounded live-project scene/rig/animation/timeline digest (issue #438). */
   animation: AnimationAssistantSnapshot
+  /** Scenario markdown doc working view (issue #462): injected so the model sees the doc. */
+  scenarioMarkdown?: string
   /** Successfully applied reusable assets previously authored in this conversation. */
   animationAssistantAssets?: {
     kind: string
@@ -162,6 +164,8 @@ export interface SnapshotSources {
     action: string
     proposalId: string
   }[]
+  /** Scenario markdown doc (issue #462): project-attached doc working view. */
+  scenarioMarkdown?: string
 }
 
 /** Animatable surface mirrored from engine/animationProperties.ts (Stage B motion checks). */
@@ -256,6 +260,9 @@ export function buildContextSnapshot(
       nodesTruncated,
       sources.selection ?? [],
     ),
+    ...(sources.scenarioMarkdown
+      ? { scenarioMarkdown: sources.scenarioMarkdown.slice(0, 8000) }
+      : {}),
     ...(sources.animationAssets && sources.animationAssets.length > 0
       ? { animationAssistantAssets: sources.animationAssets.map((asset) => ({ ...asset })) }
       : {}),

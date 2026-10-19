@@ -242,6 +242,8 @@ def delete_ai_conversation(request: Request, conversation_id: str) -> None:
 def list_ai_messages(
     request: Request, conversation_id: str, limit: int | None = None, offset: int = 0
 ) -> list[dict[str, object]]:
+    import json as _json
+
     library = _library(request)
     try:
         rows = library.list_messages(conversation_id)
@@ -250,6 +252,19 @@ def list_ai_messages(
     sliced = rows[offset:]
     if limit is not None:
         sliced = sliced[: max(0, limit)]
+
+    def _touched(row: object) -> list[int]:
+        raw = getattr(row, "scenario_touched_steps_json", None)
+        if not raw:
+            return []
+        try:
+            loaded: object = _json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+        if not isinstance(loaded, list):
+            return []
+        return [int(n) for n in loaded if isinstance(n, (int, float)) and int(n) > 0]
+
     return [
         {
             "id": row.id,
@@ -260,6 +275,13 @@ def list_ai_messages(
             "promptTokens": getattr(row, "prompt_tokens", None),
             "completionTokens": getattr(row, "completion_tokens", None),
             "totalTokens": getattr(row, "total_tokens", None),
+            # Scenario versioned edits (issue #462): per-message version links
+            # live server-side. The chat UI renders these stored fields and
+            # never derives display logic from raw content at render time.
+            "scenarioIntent": getattr(row, "scenario_intent", None),
+            "scenarioVersionId": getattr(row, "scenario_version_id", None),
+            "scenarioSummary": getattr(row, "scenario_summary", None),
+            "scenarioTouchedSteps": _touched(row),
             "created": _iso(row.created_at),
         }
         for row in sliced
@@ -375,10 +397,42 @@ def _linked_histories_text(
         lines: list[str] = []
         used = 0
         for message in reversed(messages):
+            import json as _json
+
             role = message.role
             content = message.content or ""
             speaker = "User" if role == "user" else "Assistant"
             chunk = f"{speaker}: {content}"
+            # Markdown readers (issue #462) must not re-parse raw chat text:
+            # linked histories carry the stored structured summary,
+            # touched-steps, and version-link lines explicitly.
+            scenario_bits: list[str] = []
+            intent = getattr(message, "scenario_intent", None)
+            version_id = getattr(message, "scenario_version_id", None)
+            summary = getattr(message, "scenario_summary", None)
+            touched_raw = getattr(message, "scenario_touched_steps_json", None)
+            touched_steps: list[int] = []
+            if touched_raw:
+                try:
+                    loaded = _json.loads(touched_raw)
+                    if isinstance(loaded, list):
+                        touched_steps = [
+                            int(n) for n in loaded if isinstance(n, (int, float)) and int(n) > 0
+                        ]
+                except (ValueError, TypeError):
+                    touched_steps = []
+            if isinstance(intent, str) and intent:
+                scenario_bits.append(f"scenario intent {intent}")
+            if isinstance(summary, str) and summary.strip():
+                scenario_bits.append(f'summary "{summary.strip()[:120]}"')
+            if touched_steps:
+                scenario_bits.append(
+                    "touched steps " + ", ".join(str(n) for n in touched_steps[:20])
+                )
+            if isinstance(version_id, str) and version_id:
+                scenario_bits.append(f"version link {version_id}")
+            if scenario_bits and role == "assistant":
+                chunk += "\n[scenario " + "; ".join(scenario_bits) + "]"
             if len(chunk) > 2000:
                 chunk = chunk[:2000] + "…[truncated]"
             if used + len(chunk) > per_conv_cap:
@@ -690,9 +744,74 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
             if isinstance(reported_usage.get(key), int)
         }
         library.update_message_content(assistant_id, full, **usage_kwargs)  # type: ignore[arg-type]
+        # Scenario versioned iteration (issue #462): edit replies auto-apply
+        # as a new version, pure questions create none. Prefixes override,
+        # mixed replies apply the edit part. Proposal gates are bypassed;
+        # the apply records an audit entry. Last-writer-wins.
+        scenario_version: dict[str, object] | None = None
+        scenario_audit: dict[str, object] | None = None
+        scenario_intent: str | None = None
+        scenario_question: str | None = None
+        if effective_mode == "scenario":
+            try:
+                from app.ai import scenario_versions as _sv
+
+                resolution = _sv.parse_assistant_reply(current, full)
+                scenario_intent = str(resolution.get("intent", "question-only"))
+                question_text = resolution.get("question_text")
+                scenario_question = str(question_text) if isinstance(question_text, str) else None
+                if scenario_intent == "edit":
+                    edit_content = str(resolution.get("edit_content") or "").strip()
+                    if edit_content:
+                        summary = str(resolution.get("summary") or "Scenario edit")
+                        touched = resolution.get("touched_steps")
+                        touched_steps = (
+                            [int(n) for n in touched] if isinstance(touched, list) else []
+                        )
+                        row_version = library.create_markdown_version(
+                            project_id=conversation.project_id,
+                            conversation_id=body.conversationId,
+                            content=edit_content,
+                            summary=summary,
+                            touched_steps=touched_steps,
+                            message_id=assistant_id,
+                        )
+                        scenario_version = _sv.version_to_out(row_version)
+                        try:
+                            audits = library.list_markdown_audits(conversation.project_id)
+                            scenario_audit = next(
+                                (
+                                    _sv.audit_to_out(a)
+                                    for a in audits
+                                    if str(getattr(a, "version_id", ""))
+                                    == str(getattr(row_version, "id", ""))
+                                ),
+                                None,
+                            )
+                        except Exception:
+                            scenario_audit = None
+                else:
+                    try:
+                        _sv.link_message_question(
+                            library._database,
+                            message_id=assistant_id,
+                            question_text=scenario_question,
+                        )
+                    except (KeyError, ValueError):
+                        pass
+            except Exception:
+                logger.warning("scenario markdown auto-apply failed", exc_info=True)
         done_payload: dict[str, object] = {"messageId": assistant_id, "content": full}
         if usage_kwargs:
             done_payload["usage"] = usage_kwargs
+        if scenario_intent is not None:
+            done_payload["scenarioIntent"] = scenario_intent
+        if scenario_version is not None:
+            done_payload["scenarioVersion"] = scenario_version
+        if scenario_audit is not None:
+            done_payload["scenarioAudit"] = scenario_audit
+        if scenario_question is not None:
+            done_payload["scenarioQuestion"] = scenario_question
         yield _sse("done", done_payload)
 
     return StreamingResponse(generate(), media_type="text/event-stream")

@@ -1,14 +1,8 @@
 """Scenario request route cluster seam (issue #460 prefactor).
 
-Small owner for the scenario HTTP surface. Later scenario markdown tickets
-(notably #461-#464) land here plus new scenario modules, without edits
-inside the current god owner (`app/api/ai.py`).
-
-No behaviour change in this ticket: canonical logic moved verbatim,
-`ai.py` keeps thin delegation via `_generate_scenario_structured` /
-`_scenario_to_out` wrappers and includes `router` for future endpoints
-(markdown versions, etc.). `router` is intentionally empty in this ticket;
-its inclusion is the seam future tickets build on.
+Small owner for the scenario HTTP surface. Markdown versioned edits
+(issue #462) live here plus the `scenario_versions` persistence owner,
+without edits inside the current god owner (`app/api/ai.py`).
 """
 
 from __future__ import annotations
@@ -19,7 +13,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 
 from app.ai.library import AiLibrary
 from app.ai.zen import (
@@ -197,3 +191,236 @@ def list_scenario_summaries(library: AiLibrary, project_id: str) -> list[dict[st
             }
         )
     return out
+
+
+# -- markdown versioned edits (issue #462) ---------------------------------
+# Conversation versioned iteration: every scenario-assistant reply declares
+# itself edit vs question-only; edit replies auto-apply as a new version.
+# Proposal gates are bypassed (revertible text), but every apply records an
+# audit entry. Concurrency is last-writer-wins.
+
+
+def _library(request: Request) -> AiLibrary:
+    library = getattr(request.app.state, "ai_library", None)
+    if library is None:
+        raise HTTPException(status_code=500, detail="AI library is not configured")
+    return library  # type: ignore[no-any-return]
+
+
+def _markdown_version_to_out(row: object) -> dict[str, object]:
+    from app.ai import scenario_versions as versions
+
+    return versions.version_to_out(row)
+
+
+def _require_conversation_in_project(
+    library: AiLibrary, conversation_id: str, project_id: str
+) -> None:
+    try:
+        conv = library.get_conversation(conversation_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    if conv.project_id != project_id:
+        raise HTTPException(status_code=422, detail="conversation does not belong to this project")
+
+
+@router.post("/ai/scenarios/markdown/apply", status_code=200)
+def apply_scenario_markdown(request: Request, body: dict[str, Any]) -> dict[str, object]:
+    """Classify an assistant reply and auto-apply it as a new version when edit.
+
+    Body: `{projectId, conversationId, messageId?, userText, assistantText}`.
+    - `ask:` prefix forces question-only (no version).
+    - `edit:` prefix forces edit (new version).
+    - Otherwise the assistant self-label wins; unlabelled `## Step` replies
+      read as edit, all else as question-only.
+    - Mixed replies apply the edit part and keep the question as chat text.
+    Returns `{intent, version?, questionText?, audit?}` where `version` owns
+    its summary, touched steps, timestamp, and content.
+    """
+    from app.ai import scenario_versions as versions
+    from app.ai.schemas import AiScenarioMarkdownApply
+
+    try:
+        parsed = AiScenarioMarkdownApply.model_validate(body)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    library = _library(request)
+    _require_conversation_in_project(library, parsed.conversationId, parsed.projectId)
+    resolution = versions.parse_assistant_reply(parsed.userText or "", parsed.assistantText)
+    intent = str(resolution.get("intent", "question-only"))
+    if intent != "edit":
+        # Pure question: link the message as question-only, create no version.
+        if parsed.messageId:
+            try:
+                versions.link_message_question(
+                    library._database,
+                    message_id=parsed.messageId,
+                    question_text=str(resolution.get("question_text") or ""),
+                )
+            except KeyError:
+                pass
+        return {
+            "intent": "question-only",
+            "version": None,
+            "questionText": resolution.get("question_text"),
+            "audit": None,
+        }
+    edit_content = str(resolution.get("edit_content") or "").strip()
+    if not edit_content:
+        raise HTTPException(status_code=422, detail="edit reply carries no markdown content")
+    summary = str(resolution.get("summary") or "Scenario edit")
+    touched = resolution.get("touched_steps")
+    touched_steps = [int(n) for n in touched] if isinstance(touched, list) else []
+    try:
+        row = library.create_markdown_version(
+            project_id=parsed.projectId,
+            conversation_id=parsed.conversationId,
+            content=edit_content,
+            summary=summary,
+            touched_steps=touched_steps,
+            message_id=parsed.messageId,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    audits = library.list_markdown_audits(parsed.projectId)
+    audit = next(
+        (
+            versions.audit_to_out(a)
+            for a in audits
+            if str(getattr(a, "version_id", "")) == str(getattr(row, "id", ""))
+        ),
+        None,
+    )
+    return {
+        "intent": "edit",
+        "version": _markdown_version_to_out(row),
+        "questionText": resolution.get("question_text"),
+        "audit": audit,
+    }
+
+
+@router.post("/ai/scenarios/markdown/versions", status_code=201)
+def create_scenario_markdown_version(request: Request, body: dict[str, Any]) -> dict[str, object]:
+    from app.ai.schemas import AiScenarioMarkdownVersionCreate
+
+    try:
+        parsed = AiScenarioMarkdownVersionCreate.model_validate(body)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    library = _library(request)
+    _require_conversation_in_project(library, parsed.conversationId, parsed.projectId)
+    try:
+        row = library.create_markdown_version(
+            project_id=parsed.projectId,
+            conversation_id=parsed.conversationId,
+            content=parsed.content,
+            summary=parsed.summary,
+            touched_steps=list(parsed.touchedSteps or []),
+            message_id=parsed.messageId,
+            base_version_id=parsed.baseVersionId,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _markdown_version_to_out(row)
+
+
+@router.get("/ai/scenarios/markdown/versions")
+def list_scenario_markdown_versions(
+    request: Request, projectId: str = "", conversationId: str | None = None
+) -> list[dict[str, object]]:
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    library = _library(request)
+    if conversationId:
+        _require_conversation_in_project(library, conversationId, projectId)
+    rows = library.list_markdown_versions(projectId, conversationId)
+    return [_markdown_version_to_out(row) for row in rows]
+
+
+@router.get("/ai/scenarios/markdown/versions/{version_id}")
+def get_scenario_markdown_version(
+    request: Request, version_id: str, projectId: str = ""
+) -> dict[str, object]:
+    from app.ai import scenario_versions as versions
+
+    library = _library(request)
+    try:
+        row = library.get_markdown_version(version_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="version not found") from exc
+    out = _markdown_version_to_out(row)
+    if projectId.strip() and str(out.get("projectId", "")) != projectId.strip():
+        raise HTTPException(status_code=422, detail="version does not belong to this project")
+    # Diff payload against the previous ordered version (line-or-block diff).
+    ordered = library.list_markdown_versions(str(out.get("projectId", "")))
+    ids = [str(getattr(r, "id", "")) for r in ordered]
+    previous_content = ""
+    if version_id in ids and ids.index(version_id) > 0:
+        previous_content = str(getattr(ordered[ids.index(version_id) - 1], "content", "") or "")
+    out["diffFromPrevious"] = versions.diff_markdown_lines(
+        previous_content, str(out.get("content", ""))
+    )
+    return out
+
+
+@router.post("/ai/scenarios/markdown/versions/{version_id}/restore", status_code=201)
+def restore_scenario_markdown_version(
+    request: Request, version_id: str, body: dict[str, Any]
+) -> dict[str, object]:
+    from app.ai.schemas import AiScenarioMarkdownRestore
+
+    try:
+        parsed = AiScenarioMarkdownRestore.model_validate(body)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    library = _library(request)
+    _require_conversation_in_project(library, parsed.conversationId, parsed.projectId)
+    try:
+        row = library.restore_markdown_version(
+            version_id=version_id,
+            project_id=parsed.projectId,
+            conversation_id=parsed.conversationId,
+            message_id=parsed.messageId,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="version not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    out = _markdown_version_to_out(row)
+    # Restore never rewrites history and never touches the engine Undo Stack:
+    # it appends a copy-forward version and moves only the per-project active
+    # pointer (last-writer-wins).
+    return out
+
+
+@router.get("/ai/scenarios/markdown/active")
+def get_active_scenario_markdown(request: Request, projectId: str = "") -> dict[str, object]:
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    library = _library(request)
+    active_id = library.get_active_markdown_version_id(projectId)
+    if not active_id:
+        return {"projectId": projectId, "activeVersionId": None, "version": None}
+    try:
+        row = library.get_markdown_version(active_id)
+    except KeyError:
+        return {"projectId": projectId, "activeVersionId": None, "version": None}
+    return {
+        "projectId": projectId,
+        "activeVersionId": active_id,
+        "version": _markdown_version_to_out(row),
+    }
+
+
+@router.get("/ai/scenarios/markdown/audits")
+def list_scenario_markdown_audits(request: Request, projectId: str = "") -> list[dict[str, object]]:
+    from app.ai import scenario_versions as versions
+
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    library = _library(request)
+    return [versions.audit_to_out(row) for row in library.list_markdown_audits(projectId)]

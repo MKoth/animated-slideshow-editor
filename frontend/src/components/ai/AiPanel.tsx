@@ -7,6 +7,7 @@ import { extractScriptBlock, resolveScriptSlideId } from '../../ai/scriptBlock'
 import { extractAskBlocks, stripAskBlocks } from '../../ai/askBlock'
 import { buildShapeStepOperation, extractShapeStepBlock } from '../../ai/shapeStep'
 import { buildClipBatchOperations, extractClipBatchBlock } from '../../ai/clipBatch'
+import { extractEditContent, extractQuestionText } from '../../engine/scenarioVersions'
 import { useFingerprint } from '../../ai/proposalFingerprint'
 import { formatTokenCount, sumConversationUsage } from '../../ai/tokens'
 import { useEngine } from '../../app/useEngine'
@@ -121,6 +122,7 @@ export function AiPanel() {
     [proposals, activeId],
   )
 
+  const scenarioMarkdown = engine.project?.scenario?.currentMarkdown ?? ''
   const context = useMemo(
     () =>
       buildContextSnapshot(engine, {
@@ -128,9 +130,10 @@ export function AiPanel() {
         assetNames,
         audioNames,
         animationAssets: conversationAssets,
+        ...(scenarioMarkdown ? { scenarioMarkdown } : {}),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [engine, projectId, selectionKey, assetKey, audioKey, conversationAssets],
+    [engine, projectId, selectionKey, assetKey, audioKey, conversationAssets, scenarioMarkdown],
   )
 
   const visibleConversations = useMemo(() => {
@@ -825,10 +828,43 @@ export function AiPanel() {
                   <div className="ai-message__role">{message.role}</div>
                   {message.role === 'assistant' ? (
                     shownContent ? (
-                      <AiMarkdown content={shownContent} />
+                      mode === 'scenario' &&
+                      (message.scenarioIntent === 'edit' ||
+                        extractQuestionText(message.content) !== null) ? (
+                        <div data-testid={`ai-message-scenario-mixed-${message.id}`}>
+                          <div data-testid={`ai-message-scenario-edit-${message.id}`}>
+                            <AiMarkdown content={extractEditContent(message.content) || '…'} />
+                          </div>
+                          {extractQuestionText(message.content) && (
+                            <div data-testid={`ai-message-scenario-question-${message.id}`}>
+                              <AiMarkdown content={extractQuestionText(message.content) ?? ''} />
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <AiMarkdown content={shownContent} />
+                      )
                     ) : null
                   ) : (
                     <div>{message.content}</div>
+                  )}
+                  {message.role === 'assistant' && message.scenarioIntent && (
+                    <div data-testid={`ai-message-scenario-${message.id}`}>
+                      {message.scenarioIntent === 'edit' ? (
+                        <span>
+                          Edit
+                          {message.scenarioVersionId
+                            ? ` — version ${message.scenarioVersionId.slice(0, 8)}`
+                            : ''}
+                          {message.scenarioSummary ? ` — ${message.scenarioSummary}` : ''}
+                          {message.scenarioTouchedSteps && message.scenarioTouchedSteps.length > 0
+                            ? ` — steps ${message.scenarioTouchedSteps.join(', ')}`
+                            : ''}
+                        </span>
+                      ) : (
+                        <span>Question-only — no doc change</span>
+                      )}
+                    </div>
                   )}
                   {message.stopped && (
                     <div data-testid={`ai-stopped-${message.id}`}>
@@ -1038,6 +1074,38 @@ export function AiPanel() {
             >
               Regenerate
             </button>
+            {mode === 'scenario' && (
+              <>
+                <button
+                  data-testid="ai-ask-prefix"
+                  disabled={isStreaming || unavailable}
+                  onClick={() =>
+                    projectId &&
+                    store.setDraft(
+                      projectId,
+                      draft.startsWith('ask:') ? draft : `ask: ${draft}`,
+                      'scenario',
+                    )
+                  }
+                >
+                  Ask (no doc change)
+                </button>
+                <button
+                  data-testid="ai-edit-prefix"
+                  disabled={isStreaming || unavailable}
+                  onClick={() =>
+                    projectId &&
+                    store.setDraft(
+                      projectId,
+                      draft.startsWith('edit:') ? draft : `edit: ${draft}`,
+                      'scenario',
+                    )
+                  }
+                >
+                  Edit (new version)
+                </button>
+              </>
+            )}
             <button data-testid="ai-settings-open" onClick={() => store.setSettingsOpen(true)}>
               AI Settings
             </button>

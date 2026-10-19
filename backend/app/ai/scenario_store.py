@@ -3,10 +3,6 @@
 Small owner for the scenario persistence cluster. Later scenario markdown
 tickets (notably #461-#462) land here plus new scenario modules, without
 edits inside the current god owner (`app/ai/library.py`).
-
-No behaviour change in this ticket: logic moved verbatim, `AiLibrary`
-keeps thin delegation. Helpers and CRUD operate on a `Database` so the
-store is reusable without the full library.
 """
 
 from __future__ import annotations
@@ -16,6 +12,7 @@ from uuid import uuid4
 
 from sqlalchemy import select
 
+from app.ai import scenario_versions as _versions
 from app.ai.model import (
     AiConversationRow,
     AiScenarioRevisionRow,
@@ -26,6 +23,77 @@ from app.database import Database
 
 class AiConversationNotFoundError(KeyError):
     pass
+
+
+# Markdown versioned edits (issue #462): thin delegation to the
+# `scenario_versions` owner so this seam stays the single persistence entry
+# point used by `AiLibrary`.
+
+
+def list_markdown_versions(
+    database: Database, project_id: str, conversation_id: str | None = None
+) -> list[object]:
+    return _versions.list_markdown_versions(database, project_id, conversation_id)
+
+
+def get_markdown_version(database: Database, version_id: str) -> object:
+    return _versions.get_markdown_version(database, version_id)
+
+
+def get_active_markdown_version_id(database: Database, project_id: str) -> str | None:
+    return _versions.get_active_markdown_version_id(database, project_id)
+
+
+def create_markdown_version(
+    database: Database,
+    *,
+    project_id: str,
+    conversation_id: str,
+    content: str,
+    summary: str,
+    touched_steps: list[int],
+    message_id: str | None = None,
+    base_version_id: str | None = None,
+) -> object:
+    return _versions.create_markdown_version(
+        database,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        content=content,
+        summary=summary,
+        touched_steps=touched_steps,
+        message_id=message_id,
+        base_version_id=base_version_id,
+    )
+
+
+def restore_markdown_version(
+    database: Database,
+    *,
+    version_id: str,
+    project_id: str,
+    conversation_id: str,
+    message_id: str | None = None,
+) -> object:
+    return _versions.restore_markdown_version(
+        database,
+        version_id=version_id,
+        project_id=project_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+    )
+
+
+def list_markdown_audits(database: Database, project_id: str) -> list[object]:
+    return _versions.list_markdown_audits(database, project_id)
+
+
+def delete_markdown_for_conversation(database: Database, conversation_id: str) -> None:
+    _versions.delete_versions_for_conversation(database, conversation_id)
+
+
+def delete_markdown_for_project(database: Database, project_id: str) -> None:
+    _versions.delete_versions_for_project(database, project_id)
 
 
 def _now() -> datetime:

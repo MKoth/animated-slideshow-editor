@@ -55,6 +55,15 @@ class AiMessageRow(Base):
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # Scenario versioned edits (issue #462): per-message version links live
+    # server-side with the project-scoped Conversation and never in the
+    # portable file. Nullable so older databases backfill via ADD COLUMN.
+    scenario_intent: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
+    scenario_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
+    scenario_summary: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    scenario_touched_steps_json: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None
+    )
 
 
 class AiPlanRow(Base):
@@ -175,6 +184,83 @@ class AiScenarioRevisionRow(Base):
     source_request: Mapped[str] = mapped_column(Text, nullable=False, default="")
     snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiScenarioMarkdownVersionRow(Base):
+    """One append-only scenario markdown version (issue #462).
+
+    Version list semantics mirror the portable `ScenarioSectionJSON` versions
+    but these rows live server-side with the project-scoped Conversation and
+    never in the portable file. Per-message links ride `AiMessageRow`.
+    """
+
+    __tablename__ = "ai_scenario_markdown_versions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("ai_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    message_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("ai_messages.id", ondelete="CASCADE"),
+        nullable=True,
+        default=None,
+        index=True,
+    )
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    touched_steps_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    base_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiScenarioMarkdownPointerRow(Base):
+    """Per-project active markdown version pointer (issue #462)."""
+
+    __tablename__ = "ai_scenario_markdown_pointers"
+
+    project_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    active_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiScenarioMarkdownAuditRow(Base):
+    """Proposal-bypass audit entry for every markdown apply/restore (issue #462).
+
+    Markdown iteration skips the AI Edit Proposal gates (no schema check, dry
+    run, fingerprint, subset approve, or executions log) because doc writes are
+    revertible text. Each apply still records this entry carrying version id,
+    summary, touched steps, and timestamp. Concurrency is last-writer-wins.
+    """
+
+    __tablename__ = "ai_scenario_markdown_audits"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("ai_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    message_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("ai_messages.id", ondelete="CASCADE"),
+        nullable=True,
+        default=None,
+    )
+    version_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    touched_steps_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    operation: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="markdown-version-apply"
+    )
+    concurrency: Mapped[str] = mapped_column(String(32), nullable=False, default="last-writer-wins")
 
 
 class AiReconciliationRow(Base):

@@ -100,6 +100,12 @@ interface AiState {
   scenarioGenerating: boolean
   scenarioError: { code: string; message: string } | null
   scenarioRequest: string
+  markdownVersionsByProject: Record<string, import('../api/aiApi').ScenarioMarkdownVersion[]>
+  activeMarkdownVersionIdByProject: Record<string, string | null>
+  markdownAuditsByProject: Record<string, import('../api/aiApi').ScenarioMarkdownAudit[]>
+  markdownBusy: boolean
+  markdownError: { code: string; message: string } | null
+  scenarioTab: 'doc' | 'history'
   reconciliations: AiReconciliationSummary[]
   reconciliationById: Record<string, AiReconciliation>
   activeReconciliationId: string | null
@@ -188,6 +194,22 @@ interface AiState {
   updateScenario: (id: string, patch: AiScenarioPatch) => Promise<void>
   acceptScenario: (id: string) => Promise<void>
   rejectScenario: (id: string) => Promise<void>
+  setScenarioTab: (tab: 'doc' | 'history') => void
+  loadMarkdownVersions: (projectId: string, conversationId?: string) => Promise<void>
+  applyScenarioChat: (
+    projectId: string,
+    conversationId: string,
+    userText: string,
+    assistantText: string,
+    messageId?: string,
+  ) => Promise<import('../api/aiApi').ScenarioChatApplyResult | null>
+  restoreMarkdownVersion: (
+    projectId: string,
+    conversationId: string,
+    versionId: string,
+    messageId?: string,
+  ) => Promise<import('../api/aiApi').ScenarioMarkdownVersion | null>
+  loadMarkdownAudits: (projectId: string) => Promise<void>
 
   setActiveReconciliation: (id: string | null) => void
   loadReconciliations: (projectId: string, scenarioId?: string) => Promise<void>

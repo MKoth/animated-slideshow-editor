@@ -261,6 +261,10 @@ class AiLibrary:
         return self.get_conversation(conversation_id)
 
     def delete_conversation(self, conversation_id: str) -> None:
+        # Markdown versions/audits cascade with the Conversation (issue #462):
+        # version links live server-side and never in the portable file.
+        # Delete versions first (they reference messages), then messages.
+        scenario_store.delete_markdown_for_conversation(self._database, conversation_id)
         with self._database.session() as session:
             row = session.get(AiConversationRow, conversation_id)
             if row is None:
@@ -368,6 +372,9 @@ class AiLibrary:
                 )
                 session.execute(delete(AiBoardRow).where(AiBoardRow.project_id == project_id))
             session.commit()
+        # Markdown versions/audits/pointers cascade with the project (issue
+        # #462): records are project-scoped and never in the portable file.
+        scenario_store.delete_markdown_for_project(self._database, project_id)
 
     # -- messages ------------------------------------------------------
 
@@ -769,6 +776,63 @@ class AiLibrary:
     def scenario_canonical_json(self, scenario_id: str) -> dict[str, object]:
         """Canonical JSON of the accepted scenario version for Stage B handoff."""
         return scenario_store.scenario_canonical_json(self._database, scenario_id)
+
+    # -- scenario markdown versions (issue #462) ---------------------------
+    # Thin delegation to scenario_store -> scenario_versions. Version links
+    # live server-side with the project-scoped Conversation and never in the
+    # portable file; records cascade on Conversation and project delete.
+
+    def list_markdown_versions(
+        self, project_id: str, conversation_id: str | None = None
+    ) -> list[object]:
+        return scenario_store.list_markdown_versions(self._database, project_id, conversation_id)
+
+    def get_markdown_version(self, version_id: str) -> object:
+        return scenario_store.get_markdown_version(self._database, version_id)
+
+    def get_active_markdown_version_id(self, project_id: str) -> str | None:
+        return scenario_store.get_active_markdown_version_id(self._database, project_id)
+
+    def create_markdown_version(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        content: str,
+        summary: str,
+        touched_steps: list[int],
+        message_id: str | None = None,
+        base_version_id: str | None = None,
+    ) -> object:
+        return scenario_store.create_markdown_version(
+            self._database,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            content=content,
+            summary=summary,
+            touched_steps=touched_steps,
+            message_id=message_id,
+            base_version_id=base_version_id,
+        )
+
+    def restore_markdown_version(
+        self,
+        *,
+        version_id: str,
+        project_id: str,
+        conversation_id: str,
+        message_id: str | None = None,
+    ) -> object:
+        return scenario_store.restore_markdown_version(
+            self._database,
+            version_id=version_id,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+        )
+
+    def list_markdown_audits(self, project_id: str) -> list[object]:
+        return scenario_store.list_markdown_audits(self._database, project_id)
 
     # -- reconciliations (Stage B) -----------------------------------------
 
