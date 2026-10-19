@@ -27,6 +27,7 @@ import {
 } from '../api/aiApi'
 import { streamAiChat } from '../ai/sse'
 import { ApiError } from '../api/apiClient'
+import { createScenarioSlice, initialScenarioSliceState } from './scenarioSlice'
 
 export type AiBackendStatus = 'idle' | 'loading' | 'streaming' | 'unavailable'
 
@@ -342,12 +343,9 @@ export const useAiStore = create<AiState>()(
       planGenerating: false,
       planError: null,
       planRequest: '',
-      scenarios: [],
-      scenarioById: {},
-      activeScenarioId: null,
-      scenarioGenerating: false,
-      scenarioError: null,
-      scenarioRequest: '',
+      // Scenario slice seam (issue #460): owned by `stores/scenarioSlice.ts`.
+      // Later scenario markdown tickets edit the slice owner only.
+      ...initialScenarioSliceState,
       reconciliations: [],
       reconciliationById: {},
       activeReconciliationId: null,
@@ -845,141 +843,9 @@ export const useAiStore = create<AiState>()(
         }
       },
 
-      setScenarioRequest: (request) => set({ scenarioRequest: request }),
-      setActiveScenario: (id) => set({ activeScenarioId: id }),
-
-      loadScenarios: async (projectId) => {
-        try {
-          const scenarios = await get().api.listScenarios(projectId)
-          set((state) => ({
-            scenarios,
-            activeScenarioId:
-              state.activeScenarioId && scenarios.some((p) => p.id === state.activeScenarioId)
-                ? state.activeScenarioId
-                : (scenarios[0]?.id ?? null),
-          }))
-        } catch (error) {
-          if (isBackendDown(error)) set({ status: 'unavailable' })
-        }
-      },
-
-      proposeScenario: async (projectId, conversationId, requestText, context, scenarioId) => {
-        const clean = requestText.trim()
-        if (!clean || get().scenarioGenerating) return null
-        set({ scenarioGenerating: true, scenarioError: null })
-        try {
-          const scenario = await get().api.proposeScenario({
-            projectId,
-            conversationId,
-            request: clean,
-            context,
-            scenarioId,
-          })
-          set((state) => ({
-            scenarioById: { ...state.scenarioById, [scenario.id]: scenario },
-            scenarios: [
-              {
-                id: scenario.id,
-                projectId: scenario.projectId,
-                conversationId: scenario.conversationId,
-                title: scenario.title,
-                status: scenario.status,
-                stepCount: scenario.steps.length,
-                modified: scenario.modified,
-              },
-              ...state.scenarios.filter((p) => p.id !== scenario.id),
-            ],
-            activeScenarioId: scenario.id,
-            scenarioRequest: '',
-          }))
-          try {
-            const messages = await get().api.listMessages(conversationId)
-            set((state) => ({
-              messagesById: { ...state.messagesById, [conversationId]: messages },
-            }))
-          } catch {
-            // Scenario itself succeeded; message refresh is best-effort.
-          }
-          return scenario
-        } catch (error) {
-          if (isBackendDown(error)) {
-            set({ status: 'unavailable' })
-            return null
-          }
-          const message =
-            error instanceof Error ? error.message : 'Scenario generation failed — retry.'
-          set({ scenarioError: { code: 'provider_error', message } })
-          try {
-            const messages = await get().api.listMessages(conversationId)
-            set((state) => ({
-              messagesById: { ...state.messagesById, [conversationId]: messages },
-            }))
-          } catch {
-            // Keep the scenario error visible even if refresh fails.
-          }
-          return null
-        } finally {
-          set({ scenarioGenerating: false })
-        }
-      },
-
-      loadScenario: async (id) => {
-        try {
-          const scenario = await get().api.getScenario(id)
-          set((state) => ({ scenarioById: { ...state.scenarioById, [id]: scenario } }))
-        } catch (error) {
-          if (isBackendDown(error)) set({ status: 'unavailable' })
-        }
-      },
-
-      updateScenario: async (id, patch) => {
-        try {
-          const scenario = await get().api.updateScenario(id, patch)
-          set((state) => ({
-            scenarioById: { ...state.scenarioById, [id]: scenario },
-            scenarios: state.scenarios.map((p) =>
-              p.id === id
-                ? {
-                    ...p,
-                    title: scenario.title,
-                    status: scenario.status,
-                    modified: scenario.modified,
-                  }
-                : p,
-            ),
-          }))
-        } catch (error) {
-          if (isBackendDown(error)) set({ status: 'unavailable' })
-        }
-      },
-
-      acceptScenario: async (id) => {
-        try {
-          const scenario = await get().api.acceptScenario(id)
-          set((state) => ({
-            scenarioById: { ...state.scenarioById, [id]: scenario },
-            scenarios: state.scenarios.map((p) =>
-              p.id === id ? { ...p, status: scenario.status, modified: scenario.modified } : p,
-            ),
-          }))
-        } catch (error) {
-          if (isBackendDown(error)) set({ status: 'unavailable' })
-        }
-      },
-
-      rejectScenario: async (id) => {
-        try {
-          const scenario = await get().api.rejectScenario(id)
-          set((state) => ({
-            scenarioById: { ...state.scenarioById, [id]: scenario },
-            scenarios: state.scenarios.map((p) =>
-              p.id === id ? { ...p, status: scenario.status, modified: scenario.modified } : p,
-            ),
-          }))
-        } catch (error) {
-          if (isBackendDown(error)) set({ status: 'unavailable' })
-        }
-      },
+      // Scenario slice seam (issue #460): thin delegation to the slice owner.
+      // Later tickets edit `stores/scenarioSlice.ts` without touching this file.
+      ...createScenarioSlice(set, get),
 
       setActiveReconciliation: (id) => set({ activeReconciliationId: id }),
 

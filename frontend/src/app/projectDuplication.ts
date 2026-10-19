@@ -1,5 +1,6 @@
 import type { LessonJSON } from '../engine'
 import { newId } from '../engine/ids'
+import { duplicateScenarioSection, getScenarioSection } from '../engine/scenarioSection'
 import { newClipId } from '../engine/clipDefinition'
 import { newClipCollectionId } from '../engine/clipCollection'
 import { newClipInstanceId } from '../engine/clipInstance'
@@ -29,6 +30,18 @@ export function duplicateLessonJSON(
 ): LessonJSON {
   const clone = JSON.parse(JSON.stringify(original)) as LessonJSONMutable
   const now = new Date().toISOString()
+
+  // Scenario section seam (issue #460): duplicate verbatim, no id remap.
+  // Delegates to the scenarioSection owner; current deep clone already
+  // preserves it, this makes the seam explicit for #461.
+  {
+    const duplicated = duplicateScenarioSection(getScenarioSection(original))
+    if (duplicated !== undefined) {
+      ;(clone as unknown as Record<string, unknown>).scenario = duplicated
+    } else {
+      delete (clone as unknown as Record<string, unknown>).scenario
+    }
+  }
 
   const slideIdMap = new Map<string, string>()
   const sceneIdMap = new Map<string, string>()

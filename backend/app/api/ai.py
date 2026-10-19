@@ -88,6 +88,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Scenario request route cluster seam (issue #460): small owner for the
+# scenario HTTP surface. Future scenario markdown endpoints land in
+# `app/api/scenario_routes.py`; this include is the seam they build on
+# without editing this god owner.
+from app.api.scenario_routes import router as _scenario_router
+
+router.include_router(_scenario_router)
+
 
 def _now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
@@ -1080,6 +1088,9 @@ def reject_ai_plan(request: Request, plan_id: str) -> dict[str, object]:
 
 
 # -- action scenarios (Stage A) --------------------------------------------
+# Scenario request route cluster seam (issue #460): thin delegation to the
+# scenario_routes owner. Later tickets edit that owner plus new scenario
+# modules without touching this god owner.
 
 
 def _generate_scenario_structured(
@@ -1093,82 +1104,26 @@ def _generate_scenario_structured(
     session_id: str,
 ) -> dict[str, object]:
     """Call Zen chat/completions with an Action Scenario JSON schema. Mock seam for tests."""
-    from app.ai.scenarios import SCENARIO_JSON_SCHEMA
+    from app.api import scenario_routes
 
-    path, payload = _structured_inference_payload(
+    return scenario_routes.generate_scenario_structured(
+        endpoint=endpoint,
+        api_key=api_key,
         model=model,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
-        name="action_scenario",
-        schema=SCENARIO_JSON_SCHEMA,
+        session_id=session_id,
     )
-    try:
-        response = httpx.post(
-            f"{inference_endpoint(endpoint)}{path}",
-            headers=opencode_headers(api_key, session_id),
-            json=payload,
-            timeout=60.0,
-        )
-    except httpx.HTTPError as exc:
-        raise ZenFetchError(0, str(exc)) from exc
-    if response.status_code != 200:
-        raise ZenFetchError(response.status_code, response.text)
-    try:
-        data = response.json()
-        content = _inference_response_text(data)
-        if not isinstance(content, str) or not content.strip():
-            raise TypeError("empty scenario content")
-        parsed: object = json.loads(content)
-        if not isinstance(parsed, dict):
-            raise TypeError("scenario content is not an object")
-        return parsed
-    except ZenFetchError:
-        raise
-    except (ValueError, TypeError, KeyError, AttributeError) as exc:
-        raise ZenFetchError(0, f"malformed scenario content: {exc}") from exc
 
 
 def _scenario_to_out(request: Request, scenario_id: str) -> dict[str, object]:
-    import json as _json
+    from app.api import scenario_routes
 
-    library = _library(request)
     try:
-        row = library.get_scenario(scenario_id)
+        return scenario_routes.scenario_to_out(_library(request), scenario_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="scenario not found") from exc
-    try:
-        loaded_steps: object = _json.loads(row.steps_json or "[]")
-        steps = loaded_steps if isinstance(loaded_steps, list) else []
-    except (ValueError, TypeError):
-        steps = []
-    revisions = []
-    for rev in library.list_scenario_revisions(scenario_id):
-        revisions.append(
-            {
-                "id": rev.id,
-                "sourceRequest": rev.source_request,
-                "created": _iso(rev.created_at),
-            }
-        )
-    try:
-        loaded_edits: object = _json.loads(row.user_edits_json or "{}")
-        user_edits = loaded_edits if isinstance(loaded_edits, dict) else {}
-    except (ValueError, TypeError):
-        user_edits = {}
-    return {
-        "id": row.id,
-        "projectId": row.project_id,
-        "conversationId": row.conversation_id,
-        "title": row.title,
-        "description": row.description,
-        "status": row.status,
-        "steps": steps,
-        "revisions": revisions,
-        "userEdits": user_edits if isinstance(user_edits, dict) else {},
-        "created": _iso(row.created_at),
-        "modified": _iso(row.updated_at),
-    }
 
 
 @router.post("/ai/scenarios", status_code=200)
@@ -1293,28 +1248,10 @@ def post_ai_scenario(request: Request, body: AiScenarioCreate) -> dict[str, obje
 def list_ai_scenarios(request: Request, projectId: str = "") -> list[dict[str, object]]:
     if not projectId.strip():
         raise HTTPException(status_code=422, detail="projectId is required")
-    library = _library(request)
-    out: list[dict[str, object]] = []
-    for row in library.list_scenarios(projectId):
-        import json as _json
+    # Scenario request route cluster seam (issue #460): thin delegation.
+    from app.api import scenario_routes
 
-        try:
-            loaded: object = _json.loads(row.steps_json or "[]")
-            count = len(loaded) if isinstance(loaded, list) else 0
-        except (ValueError, TypeError):
-            count = 0
-        out.append(
-            {
-                "id": row.id,
-                "projectId": row.project_id,
-                "conversationId": row.conversation_id,
-                "title": row.title,
-                "status": row.status,
-                "stepCount": count,
-                "modified": _iso(row.updated_at),
-            }
-        )
-    return out
+    return scenario_routes.list_scenario_summaries(_library(request), projectId)
 
 
 @router.get("/ai/scenarios/{scenario_id}")

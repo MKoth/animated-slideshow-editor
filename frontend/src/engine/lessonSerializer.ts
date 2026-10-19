@@ -31,6 +31,11 @@ import { validatePrompterJSON, prompterFromJSON } from './prompter'
 import { animationScriptFromJSON, validateAnimationScriptJSON } from './animationScript'
 import { sceneEffectFromJSON } from './sceneEffect'
 import { buildScriptLibraryEntriesFromJSON } from './scriptLibrary'
+import {
+  scenarioSectionFromJSON,
+  scenarioSectionToJSON,
+  validateScenarioSection,
+} from './scenarioSection'
 import type { MaterialParameterKindOf } from './nodeAnimation'
 import { DEFAULT_MATERIAL_DEFINITION_ID } from './materialInstance'
 import { DEFAULT_MATERIAL_PARAMETERS } from './materialResolution'
@@ -106,6 +111,11 @@ export function toLessonJSON(
           project.scriptFunctions,
         )
       : undefined
+  // Scenario section seam (issue #460): the project model carries no
+  // scenario field yet, so this stays absent. Later tickets set it via
+  // the scenarioSection owner without editing this function body beyond
+  // this delegation line.
+  const scenario = scenarioSectionToJSON()
   return {
     version: LESSON_VERSION,
     project: {
@@ -125,6 +135,7 @@ export function toLessonJSON(
       ? { clipCollections: clipCollections.map((c) => c.toJSON()) }
       : {}),
     ...(library !== undefined ? { library } : {}),
+    ...(scenario !== undefined ? { scenario } : {}),
   }
 }
 
@@ -203,6 +214,8 @@ export function validate(json: unknown): string[] {
   validateLibrary(errors, json.library)
   validateLibraryClips(errors, (json as { clips?: unknown }).clips)
   validateLibraryClipCollections(errors, (json as { clipCollections?: unknown }).clipCollections)
+  // Scenario section seam (issue #460): additive-tolerant, old files pass.
+  validateScenarioSection(json, errors)
   // also validate library clipCollections if present in library but already covered by validateLibrary
   validateClipReferencesInJSON(errors, json as LessonJSON)
   validateClipCollectionReferencesInJSON(errors, json as LessonJSON)
@@ -1098,6 +1111,10 @@ export function buildProjectFromJSON(
       }
     }
   }
+  // Scenario section seam (issue #460): read through the owner so later
+  // tickets can attach the section to the project without touching this file.
+  // Currently ignored by the project model (no behaviour change).
+  void scenarioSectionFromJSON(json)
   return new Project(
     metadata,
     slides,

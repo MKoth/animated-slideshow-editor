@@ -607,4 +607,6 @@ export type LessonJSON = {
   readonly library?: LessonLibraryJSON
   readonly ikChains?: IKManagerJSON
   readonly constraints?: ConstraintManagerJSON
+  /** Project-attached scenario section (issue #461); absent on older files. */
+  readonly scenario?: import('./scenarioSection').ScenarioSectionJSON
 }
