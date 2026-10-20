@@ -157,7 +157,7 @@ beforeEach(() => {
 })
 
 describe('AiReconciliationView Stage B gate', () => {
-  it('renders middle-only verdicts with motion evidence, sound, and briefs', () => {
+  it('slim section opens the reconciliation modal; details live in the modal', async () => {
     render(
       <AiReconciliationView
         projectId="p-1"
@@ -166,6 +166,27 @@ describe('AiReconciliationView Stage B gate', () => {
         context={{}}
       />,
     )
+    expect(screen.getByTestId('ai-reconciliation-section')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-reconciliation-open-modal')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-reconciliation-motion-st-2')).not.toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('ai-reconciliation-open-modal'))
+    expect(await screen.findByTestId('ai-reconciliation-modal')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-reconciliation-motion-st-2')).toBeInTheDocument()
+  })
+
+  it('renders middle-only verdicts with motion evidence, sound, and briefs', async () => {
+    render(
+      <AiReconciliationView
+        projectId="p-1"
+        scenarioId="scen-1"
+        conversationId="c-1"
+        context={{}}
+      />,
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('ai-reconciliation-open-modal'))
+    expect(await screen.findByTestId('ai-reconciliation-modal')).toBeInTheDocument()
     expect(screen.getByTestId('ai-reconciliation-section')).toBeInTheDocument()
     // Pregenerated intro left alone.
     expect(screen.getByTestId('ai-reconciliation-skipped-st-1')).toHaveTextContent('left alone')
@@ -207,6 +228,8 @@ describe('AiReconciliationView Stage B gate', () => {
       />,
     )
     const user = userEvent.setup()
+    await user.click(screen.getByTestId('ai-reconciliation-open-modal'))
+    expect(await screen.findByTestId('ai-reconciliation-modal')).toBeInTheDocument()
 
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ ...sampleReconciliation, status: 'accepted' }), {

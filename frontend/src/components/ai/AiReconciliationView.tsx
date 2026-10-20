@@ -27,6 +27,7 @@ export function AiReconciliationView({
   const active = activeReconciliationId
     ? (reconciliationById[activeReconciliationId] ?? null)
     : null
+  const [reconciliationModalOpen, setReconciliationModalOpen] = useState(false)
 
   useEffect(() => {
     if (projectId) void store.loadReconciliations(projectId, scenarioId ?? undefined)
@@ -57,46 +58,71 @@ export function AiReconciliationView({
 
   return (
     <div className="ai-reconciliation" data-testid="ai-reconciliation-section">
-      <div className="ai-reconciliation__request">
+      <div data-testid="ai-reconciliation-header">
+        <span>Reconciliation</span>{' '}
         <button
-          data-testid="ai-reconciliation-run"
-          disabled={!canRun}
-          onClick={handleRun}
-          title={
-            !scenarioId
-              ? 'Accept an Action Scenario first — Stage B reads only the accepted version'
-              : undefined
-          }
+          data-testid="ai-reconciliation-open-modal"
+          onClick={() => setReconciliationModalOpen(true)}
         >
-          Reconcile middle steps
+          Reconciliation
         </button>
-        {reconciliationBusy && <span data-testid="ai-reconciliation-generating">Reconciling…</span>}
-        {reconciliationError && (
-          <span data-testid="ai-reconciliation-error">{reconciliationError.message}</span>
-        )}
       </div>
+      {reconciliationModalOpen && (
+        <div data-testid="ai-reconciliation-modal" role="dialog" aria-label="Reconciliation">
+          <button
+            data-testid="ai-reconciliation-modal-close"
+            onClick={() => setReconciliationModalOpen(false)}
+          >
+            Close
+          </button>
+          <div className="ai-reconciliation__request">
+            <button
+              data-testid="ai-reconciliation-run"
+              disabled={!canRun}
+              onClick={handleRun}
+              title={
+                !scenarioId
+                  ? 'Accept an Action Scenario first — Stage B reads only the accepted version'
+                  : undefined
+              }
+            >
+              Reconcile middle steps
+            </button>
+            {reconciliationBusy && (
+              <span data-testid="ai-reconciliation-generating">Reconciling…</span>
+            )}
+            {reconciliationError && (
+              <span data-testid="ai-reconciliation-error">{reconciliationError.message}</span>
+            )}
+          </div>
 
-      {reconciliations.length > 0 && (
-        <select
-          data-testid="ai-reconciliation-select"
-          value={activeReconciliationId ?? ''}
-          onChange={(e) => store.setActiveReconciliation(e.target.value || null)}
-        >
-          {reconciliations.map((rec) => (
-            <option key={rec.id} value={rec.id}>
-              {rec.title} ({rec.status})
-            </option>
-          ))}
-        </select>
-      )}
+          {reconciliations.length > 0 && (
+            <select
+              data-testid="ai-reconciliation-select"
+              value={activeReconciliationId ?? ''}
+              onChange={(e) => store.setActiveReconciliation(e.target.value || null)}
+            >
+              {reconciliations.map((rec) => (
+                <option key={rec.id} value={rec.id}>
+                  {rec.title} ({rec.status})
+                </option>
+              ))}
+            </select>
+          )}
 
-      {active ? (
-        <AiReconciliationDetail reconciliation={active} />
-      ) : (
-        <div data-testid="ai-reconciliation-empty">
-          No reconciliation yet — accept a scenario, then reconcile its middle steps.
+          {active ? (
+            <AiReconciliationDetail reconciliation={active} />
+          ) : (
+            <div data-testid="ai-reconciliation-empty">
+              No reconciliation yet — accept a scenario, then reconcile its middle steps.
+            </div>
+          )}
         </div>
       )}
+      <div data-testid="ai-reconciliation-status-line">
+        {reconciliations.length} reconciliation(s)
+        {active ? ` — ${active.title} (${active.status})` : ''}
+      </div>
     </div>
   )
 }

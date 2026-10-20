@@ -115,9 +115,21 @@ beforeEach(() => {
 })
 
 describe('AiPlanView proposal and accept gate', () => {
-  it('renders overview, slides, classified assets, clips, and missing resources', () => {
+  it('slim section opens the plan modal; full editor lives in the modal', async () => {
     renderView()
     expect(screen.getByTestId('ai-plan-section')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-plan-open-modal')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-plan-title')).not.toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('ai-plan-open-modal'))
+    expect(await screen.findByTestId('ai-plan-modal')).toBeInTheDocument()
+  })
+
+  it('renders overview, slides, classified assets, clips, and missing resources', async () => {
+    renderView()
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('ai-plan-open-modal'))
+    expect(await screen.findByTestId('ai-plan-modal')).toBeInTheDocument()
     expect(screen.getByTestId('ai-plan-title')).toHaveValue('Intro to Ser and Estar')
     expect(screen.getByTestId('ai-plan-slide-s-1')).toBeInTheDocument()
     expect(screen.getByTestId('ai-plan-asset-s-1-0')).toHaveTextContent('existing')
@@ -130,6 +142,8 @@ describe('AiPlanView proposal and accept gate', () => {
   it('view/edit/revise/accept cycle never dispatches engine commands', async () => {
     const { dispatchSpy } = renderView()
     const user = userEvent.setup()
+    await user.click(screen.getByTestId('ai-plan-open-modal'))
+    expect(await screen.findByTestId('ai-plan-modal')).toBeInTheDocument()
 
     // Edit the lesson title then save.
     await user.clear(screen.getByTestId('ai-plan-title'))

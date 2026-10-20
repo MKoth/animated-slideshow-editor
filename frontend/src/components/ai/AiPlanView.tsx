@@ -19,6 +19,7 @@ export function AiPlanView({ projectId, conversationId, context, disabled }: AiP
   const store = useAiStore.getState()
 
   const activePlan = activePlanId ? (planById[activePlanId] ?? null) : null
+  const [planModalOpen, setPlanModalOpen] = useState(false)
 
   useEffect(() => {
     if (projectId) void store.loadPlans(projectId)
@@ -51,50 +52,67 @@ export function AiPlanView({ projectId, conversationId, context, disabled }: AiP
 
   return (
     <div className="ai-plan" data-testid="ai-plan-section">
-      <div className="ai-plan__request">
-        <input
-          data-testid="ai-plan-request"
-          placeholder="Describe the lesson to plan…"
-          value={planRequest}
-          onChange={(e) => store.setPlanRequest(e.target.value)}
-        />
-        <button
-          data-testid="ai-plan-propose"
-          disabled={!conversationId || !planRequest.trim() || planGenerating}
-          onClick={handlePropose}
-        >
-          Propose plan
+      <div data-testid="ai-plan-header">
+        <span>Lesson plan</span>{' '}
+        <button data-testid="ai-plan-open-modal" onClick={() => setPlanModalOpen(true)}>
+          Lesson Plan
         </button>
-        <button
-          data-testid="ai-plan-revise"
-          disabled={!conversationId || !planRequest.trim() || !activePlanId || planGenerating}
-          onClick={handleRevise}
-        >
-          Revise plan
-        </button>
-        {planGenerating && <span data-testid="ai-plan-generating">Generating plan…</span>}
-        {planError && <span data-testid="ai-plan-error">{planError.message}</span>}
       </div>
+      {planModalOpen && (
+        <div data-testid="ai-plan-modal" role="dialog" aria-label="Lesson plan">
+          <button data-testid="ai-plan-modal-close" onClick={() => setPlanModalOpen(false)}>
+            Close
+          </button>
+          <div className="ai-plan__request">
+            <input
+              data-testid="ai-plan-request"
+              placeholder="Describe the lesson to plan…"
+              value={planRequest}
+              onChange={(e) => store.setPlanRequest(e.target.value)}
+            />
+            <button
+              data-testid="ai-plan-propose"
+              disabled={!conversationId || !planRequest.trim() || planGenerating}
+              onClick={handlePropose}
+            >
+              Propose plan
+            </button>
+            <button
+              data-testid="ai-plan-revise"
+              disabled={!conversationId || !planRequest.trim() || !activePlanId || planGenerating}
+              onClick={handleRevise}
+            >
+              Revise plan
+            </button>
+            {planGenerating && <span data-testid="ai-plan-generating">Generating plan…</span>}
+            {planError && <span data-testid="ai-plan-error">{planError.message}</span>}
+          </div>
 
-      {plans.length > 0 && (
-        <select
-          data-testid="ai-plan-select"
-          value={activePlanId ?? ''}
-          onChange={(e) => store.setActivePlan(e.target.value || null)}
-        >
-          {plans.map((plan) => (
-            <option key={plan.id} value={plan.id}>
-              {plan.title} ({plan.status})
-            </option>
-          ))}
-        </select>
-      )}
+          {plans.length > 0 && (
+            <select
+              data-testid="ai-plan-select"
+              value={activePlanId ?? ''}
+              onChange={(e) => store.setActivePlan(e.target.value || null)}
+            >
+              {plans.map((plan) => (
+                <option key={plan.id} value={plan.id}>
+                  {plan.title} ({plan.status})
+                </option>
+              ))}
+            </select>
+          )}
 
-      {activePlan ? (
-        <AiPlanEditor key={`${activePlan.id}-${activePlan.modified}`} plan={activePlan} />
-      ) : (
-        <div data-testid="ai-plan-empty">No lesson plan yet — describe the lesson above.</div>
+          {activePlan ? (
+            <AiPlanEditor key={`${activePlan.id}-${activePlan.modified}`} plan={activePlan} />
+          ) : (
+            <div data-testid="ai-plan-empty">No lesson plan yet — describe the lesson above.</div>
+          )}
+        </div>
       )}
+      <div data-testid="ai-plan-status-line">
+        {plans.length} plan(s)
+        {activePlan ? ` — ${activePlan.title} (${activePlan.status})` : ''}
+      </div>
     </div>
   )
 }
