@@ -104,14 +104,31 @@ beforeEach(() => {
     scenarioGenerating: false,
     scenarioError: null,
     scenarioRequest: '',
+    scenarioModalOpen: false,
   })
   useBackendStore.setState({ status: 'available' })
 })
 
-describe('AiScenarioView draft and accept gate', () => {
-  it('renders steps with part tags, spoken lines, actions, hints, and durations', () => {
+describe('AiScenarioView slim inline surface', () => {
+  it('renders header, open button, and status without embedding the doc or editor', () => {
     renderView()
     expect(screen.getByTestId('ai-scenario-section')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-open-modal')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-status')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-downstream-gate')).toBeInTheDocument()
+    // The full surfaces live in the modal, not inline.
+    expect(screen.queryByTestId('ai-scenario-tabs')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-scenario-doc')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-scenario-request')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-scenario-title')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-scenario-step-st-1')).not.toBeInTheDocument()
+  })
+
+  it('opens the modal with the legacy editor inside', async () => {
+    renderView()
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('ai-scenario-open-modal'))
+    expect(await screen.findByTestId('ai-scenario-modal')).toBeInTheDocument()
     expect(screen.getByTestId('ai-scenario-title')).toHaveValue('Ser vs Estar cat lesson')
     expect(screen.getByTestId('ai-scenario-step-st-1')).toBeInTheDocument()
     expect(screen.getByTestId('ai-scenario-step-tag-st-1')).toHaveTextContent('intro')
@@ -126,9 +143,11 @@ describe('AiScenarioView draft and accept gate', () => {
     )
   })
 
-  it('view/edit/accept cycle never dispatches engine commands', async () => {
+  it('view/edit/accept cycle in the modal never dispatches engine commands', async () => {
     const { dispatchSpy } = renderView()
     const user = userEvent.setup()
+    await user.click(screen.getByTestId('ai-scenario-open-modal'))
+    expect(await screen.findByTestId('ai-scenario-modal')).toBeInTheDocument()
 
     await user.clear(screen.getByTestId('ai-scenario-title'))
     await user.type(screen.getByTestId('ai-scenario-title'), 'My edited scenario')
