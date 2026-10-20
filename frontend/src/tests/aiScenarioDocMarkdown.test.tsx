@@ -74,4 +74,18 @@ describe('ScenarioDocMarkdown board actions', () => {
     expect(screen.queryByText('[reveal: text1]')).not.toBeInTheDocument()
     expect(screen.queryByText('[wipe]')).not.toBeInTheDocument()
   })
+
+  it('renders asset visuals as chips, never bare images', () => {
+    const { container } = render(
+      <ScenarioDocMarkdown content={['![Oak tree](asset:oak-tree)', ''].join('\n')} />,
+    )
+    // The asset: reference is a doc-contract pointer, not a loadable URL:
+    // it must surface as a chip, never as an <img> (which react-markdown's
+    // URL sanitizer would strip to a broken-image icon).
+    expect(container.querySelectorAll('img')).toHaveLength(0)
+    const chip = container.querySelector('.scenario-visual')
+    expect(chip).not.toBeNull()
+    expect(chip).toHaveTextContent('Oak tree')
+    expect(chip).toHaveTextContent('oak-tree')
+  })
 })

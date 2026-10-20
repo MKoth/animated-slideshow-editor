@@ -104,6 +104,20 @@ describe('scenarioChalkRender pure seam (issue #464)', () => {
     expect(html).toContain('alt="Empty classroom chairs"')
   })
 
+  it('resolveAssetUrl rewrites image sources (preview embeds data URIs)', () => {
+    const html = renderScenarioChalkHtml(MD, {
+      imageFiles: {
+        'young-doctor-smiling': 'young-doctor-smiling.png',
+        'empty-classroom-chairs': 'empty-classroom-chairs.png',
+      },
+      resolveAssetUrl: (file) => `data:image/png;base64,BYTES-FOR-${file}`,
+    })
+    expect(html).toContain('src="data:image/png;base64,BYTES-FOR-young-doctor-smiling.png"')
+    expect(html).toContain('src="data:image/png;base64,BYTES-FOR-empty-classroom-chairs.png"')
+    expect(html).not.toContain('src="assets/')
+    expect(html).toContain('alt="Young doctor smiling"')
+  })
+
   it('keeps briefs and reuse names out of the page', () => {
     const html = renderScenarioChalkHtml(MD, {
       imageFiles: {

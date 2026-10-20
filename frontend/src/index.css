@@ -5001,6 +5001,250 @@ button:disabled {
   color: var(--color-accent);
 }
 
+/* Inline doc comments — icon buttons over the rendered doc, anchor
+   outlines plus exact-range marks, and the thread panel below the doc. */
+.ai-scenario-modal-doc {
+  position: relative;
+}
+
+.ai-scenario-modal-doc .has-doc-comment {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 65%, transparent);
+  outline-offset: 2px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+}
+
+.ai-scenario-modal-doc mark.scenario-comment-mark {
+  background: color-mix(in srgb, #e8a13d 55%, transparent);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.ai-scenario-modal-doc th.has-doc-comment-cell,
+.ai-scenario-modal-doc td.has-doc-comment-cell {
+  background: color-mix(in srgb, #e8a13d 28%, transparent);
+}
+
+.scenario-comment-hover-btn {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-accent);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* The button lives inside its block, so hovering the button keeps the
+   block hovered: no JS hit-testing, no flicker, no unmount under cursor. */
+.ai-scenario-modal-doc.commentable > .ai-markdown > * {
+  position: relative;
+}
+
+.ai-scenario-modal-doc.commentable > .ai-markdown > *:hover > .scenario-comment-hover-btn,
+.scenario-comment-hover-btn:focus-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.scenario-comment-hover-btn:hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+  opacity: 1;
+  visibility: visible;
+}
+
+.scenario-comment-cell-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  color: var(--color-accent);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  visibility: hidden;
+}
+
+.ai-scenario-modal-doc.commentable td,
+.ai-scenario-modal-doc.commentable th {
+  position: relative;
+}
+
+.ai-scenario-modal-doc.commentable td:hover > .scenario-comment-cell-btn,
+.ai-scenario-modal-doc.commentable th:hover > .scenario-comment-cell-btn,
+.scenario-comment-cell-btn:focus-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.scenario-comment-cell-btn:hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+  opacity: 1;
+  visibility: visible;
+}
+
+.scenario-comment-hover-btn svg,
+.scenario-comment-cell-btn svg,
+.scenario-comment-float-btn svg {
+  display: block;
+  flex: none;
+}
+
+.scenario-comment-float-btn {
+  position: fixed;
+  z-index: 1101;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.scenario-comment-composer {
+  position: fixed;
+  z-index: 1102;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-panel);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+.scenario-comment-composer-head {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.scenario-comment-composer-quote {
+  margin: 0;
+  padding: 6px 8px;
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-bg-elevated);
+  border-radius: 0 6px 6px 0;
+  font-size: 12.5px;
+  font-style: italic;
+  max-height: 88px;
+  overflow: auto;
+}
+
+.scenario-comment-composer textarea {
+  font: inherit;
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.scenario-comment-composer-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.scenario-comments {
+  margin-top: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.scenario-comments-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.scenario-comments-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.scenario-comment-item {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--color-bg-panel);
+  display: grid;
+  gap: 6px;
+}
+
+.scenario-comment-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.scenario-comment-item-quote {
+  margin: 0;
+  padding: 4px 8px;
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-bg-elevated);
+  border-radius: 0 6px 6px 0;
+  font-size: 12.5px;
+  font-style: italic;
+}
+
+.scenario-comment-item textarea {
+  font: inherit;
+  width: 100%;
+  min-height: 40px;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
 /* Chat edit brief — compact replacement for the reprinted doc. */
 .ai-scenario-edit-brief {
   display: flex;

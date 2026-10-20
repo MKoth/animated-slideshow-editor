@@ -49,4 +49,19 @@ describe('AiMarkdown', () => {
     expect(screen.getByText(/x = 1/)).toBeInTheDocument()
     expect(screen.getByText(/"a"/)).toBeInTheDocument()
   })
+
+  it('never renders asset: references as broken images', () => {
+    const { container } = render(
+      <AiMarkdown
+        content={['![Oak tree](asset:oak-tree)', '', '![Red fox](asset:red-fox)'].join('\n')}
+      />,
+    )
+    // No <img> may point at an asset: reference (chat/streaming surfaces
+    // have no base for them, so each rendered as a broken-image icon).
+    for (const img of Array.from(container.querySelectorAll('img'))) {
+      expect(img.getAttribute('src') ?? '').not.toMatch(/^asset:/i)
+    }
+    expect(container.textContent).toContain('Oak tree')
+    expect(container.textContent).toContain('oak-tree')
+  })
 })

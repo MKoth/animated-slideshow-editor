@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AssetFolder } from '../api/assetsApi'
-import { useAssetLibraryStore } from '../stores/assetLibraryStore'
+import { LESSON_ASSETS_FOLDER, useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { useNotificationStore } from '../stores/notificationStore'
 
 function makeFolder(overrides: Partial<AssetFolder> = {}): AssetFolder {
@@ -105,10 +105,21 @@ describe('assetLibraryStore folders', () => {
     expect(useAssetLibraryStore.getState().folders).toEqual([makeFolder()])
   })
 
-  it('uploads into the current folder', async () => {
+  it('uploads outside files into the lesson assets group, not the current folder', async () => {
     const postedForms: FormData[] = []
-    stubFetch((_url, init) => {
-      if (init.method === 'POST') {
+    stubFetch((url, init) => {
+      const method = init.method ?? 'GET'
+      if (url === '/api/assets/folders' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+      }
+      if (url === '/api/assets/folders' && method === 'POST') {
+        return Promise.resolve(
+          new Response(JSON.stringify(makeFolder({ id: 'f-lessons', name: 'lesson assets' })), {
+            status: 201,
+          }),
+        )
+      }
+      if (url === '/api/assets' && method === 'POST') {
         postedForms.push(init.body as FormData)
         return Promise.resolve(
           new Response(JSON.stringify({ created: [], errors: [] }), { status: 200 }),
@@ -122,7 +133,8 @@ describe('assetLibraryStore folders', () => {
       .getState()
       .importFiles([new File(['x'], 'boy.png', { type: 'image/png' })])
 
-    expect(postedForms[0]?.get('folder_id')).toBe('f1')
+    expect(postedForms).toHaveLength(1)
+    expect(postedForms[0]?.get('folder_id')).toBe('f-lessons')
   })
 
   it('creates a folder under the current folder and reloads', async () => {
@@ -189,5 +201,110 @@ describe('assetLibraryStore folders', () => {
       /Folder operation failed/,
     )
     expect(useAssetLibraryStore.getState().unavailable).toBe(false)
+  })
+
+  it('creates the lesson assets group on first outside upload', async () => {
+    const posts: Array<{ url: string; body: FormData | string }> = []
+    stubFetch((url, init) => {
+      const method = init.method ?? 'GET'
+      if (url === '/api/assets/folders' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+      }
+      if (url === '/api/assets/folders' && method === 'POST') {
+        posts.push({ url, body: init.body as string })
+        return Promise.resolve(
+          new Response(
+            JSON.stringify(makeFolder({ id: 'f-lessons', name: LESSON_ASSETS_FOLDER })),
+            { status: 201 },
+          ),
+        )
+      }
+      if (url === '/api/assets' && method === 'POST') {
+        posts.push({ url, body: init.body as FormData })
+        return Promise.resolve(
+          new Response(JSON.stringify({ created: [], errors: [] }), { status: 200 }),
+        )
+      }
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+    })
+
+    const result = await useAssetLibraryStore
+      .getState()
+      .importFiles([new File(['x'], 'mite.png', { type: 'image/png' })])
+
+    expect(result.errors).toEqual([])
+    const upload = posts.find((p) => p.url === '/api/assets')
+    expect((upload?.body as FormData).get('folder_id')).toBe('f-lessons')
+    expect(useAssetLibraryStore.getState().folders.map((f) => f.name)).toContain(
+      LESSON_ASSETS_FOLDER,
+    )
+  })
+
+  it('reuses the existing lesson assets group instead of duplicating it', async () => {
+    const created: unknown[] = []
+    stubFetch((url, init) => {
+      const method = init.method ?? 'GET'
+      if (url === '/api/assets/folders' && method === 'GET') {
+        return Promise.resolve(
+          new Response(JSON.stringify([makeFolder({ id: 'f-lessons', name: 'Lesson Assets' })]), {
+            status: 200,
+          }),
+        )
+      }
+      if (url === '/api/assets/folders' && method === 'POST') {
+        created.push(init.body)
+        return Promise.resolve(new Response(JSON.stringify({}), { status: 201 }))
+      }
+      if (url === '/api/assets' && method === 'POST') {
+        const form = init.body as FormData
+        expect(form.get('folder_id')).toBe('f-lessons')
+        return Promise.resolve(
+          new Response(JSON.stringify({ created: [], errors: [] }), { status: 200 }),
+        )
+      }
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+    })
+
+    await useAssetLibraryStore
+      .getState()
+      .importFiles([new File(['x'], 'mite.png', { type: 'image/png' })])
+
+    expect(created).toEqual([])
+  })
+
+  it('recovers when a parallel import wins the lesson assets race', async () => {
+    // First list is empty so creation is attempted (409: someone else won),
+    // then the retry finds the group and the upload targets it.
+    let lists = 0
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/assets/folders' && (init?.method ?? 'GET') === 'GET') {
+        lists += 1
+        if (lists === 1) return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([makeFolder({ id: 'f-lessons', name: LESSON_ASSETS_FOLDER })]),
+            { status: 200 },
+          ),
+        )
+      }
+      if (url === '/api/assets/folders' && init?.method === 'POST') {
+        return Promise.resolve(new Response('{}', { status: 409 }))
+      }
+      if (url === '/api/assets' && init?.method === 'POST') {
+        const form = init?.body as FormData
+        expect(form.get('folder_id')).toBe('f-lessons')
+        return Promise.resolve(
+          new Response(JSON.stringify({ created: [], errors: [] }), { status: 200 }),
+        )
+      }
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+    })
+
+    await useAssetLibraryStore
+      .getState()
+      .importFiles([new File(['x'], 'mite.png', { type: 'image/png' })])
+
+    expect(lists).toBeGreaterThanOrEqual(2)
   })
 })

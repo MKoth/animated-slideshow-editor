@@ -19,3 +19,18 @@ export function folderPath(folders: AssetFolder[], folderId: string | null): Ass
   }
   return path
 }
+
+/**
+ * User-visible group label for an asset: the folder path (`folder1/folder2`)
+ * when the asset lives in a folder, `Uncategorized` when it sits at root.
+ * The AI `category` field stays as library metadata; grouping is folders.
+ */
+export function folderDisplayName(
+  folders: AssetFolder[],
+  folderId: string | null | undefined,
+): string {
+  if (!folderId) return 'Uncategorized'
+  const path = folderPath(folders, folderId)
+  if (path.length === 0) return 'Uncategorized'
+  return path.map((folder) => folder.name).join('/')
+}

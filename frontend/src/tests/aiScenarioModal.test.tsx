@@ -251,6 +251,83 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
     ).toHaveTextContent('Bound')
   })
 
+  it('binding signals persistence so reload keeps the selection', async () => {
+    const { engine, value } = setupEngine(MD, {})
+    useAiStore.setState({ scenarioModalOpen: true })
+    const persisted = vi.fn()
+    render(
+      <EngineContext.Provider
+        value={{ ...value, persistence: { ...value.persistence, onCommandSucceeded: persisted } }}
+      >
+        <AiScenarioModal projectId="p-1" conversationId="c-1" />
+      </EngineContext.Provider>,
+    )
+    await screen.findByTestId('ai-scenario-checklist-row-young-doctor-smiling')
+    const user = userEvent.setup()
+    const select = screen.getByTestId(
+      'ai-scenario-checklist-bind-young-doctor-smiling',
+    ) as HTMLSelectElement
+    await user.selectOptions(select, 'def-doctor')
+    expect(engine.project!.scenario!.bindings['young-doctor-smiling']).toBe('def-doctor')
+    // Without this signal autosave skips the project and the binding is
+    // lost on reload (scenario writes bypass the engine Undo Stack).
+    expect(persisted).toHaveBeenCalled()
+  })
+
+  it('group-first filter narrows the bind list to one folder', async () => {
+    const { value } = setupEngine(MD, {})
+    const folders = [
+      {
+        id: 'f-animals',
+        name: 'Animals',
+        parent_id: null,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+    ]
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('/api/assets/folders')) {
+        return new Response(JSON.stringify(folders), { status: 200 })
+      }
+      return new Response(JSON.stringify([]), { status: 200 })
+    })
+    useAssetLibraryStore.setState({
+      definitions: [
+        { ...makeDefinition('def-doctor', 'Doctor'), folder_id: 'f-animals' },
+        { ...makeDefinition('def-chairs', 'Classroom Chairs'), folder_id: null },
+      ],
+      allDefinitions: [
+        { ...makeDefinition('def-doctor', 'Doctor'), folder_id: 'f-animals' },
+        { ...makeDefinition('def-chairs', 'Classroom Chairs'), folder_id: null },
+      ],
+      folders: [],
+      loaded: true,
+      unavailable: false,
+    })
+    renderModal(value)
+    await screen.findByTestId('ai-scenario-checklist-row-young-doctor-smiling')
+    const user = userEvent.setup()
+    const group = screen.getByTestId(
+      'ai-scenario-checklist-group-young-doctor-smiling',
+    ) as HTMLSelectElement
+    // Fresh folders load on mount: All, Uncategorized, then folder paths.
+    await vi.waitFor(() => {
+      expect([...group.options].map((o) => o.text)).toEqual(['All', 'Uncategorized', 'Animals'])
+    })
+    const bind = screen.getByTestId(
+      'ai-scenario-checklist-bind-young-doctor-smiling',
+    ) as HTMLSelectElement
+    // Default All shows every asset.
+    expect([...bind.options].map((o) => o.text)).toEqual(['Unbound', 'Classroom Chairs', 'Doctor'])
+    // Pick the Animals group: only Doctor remains.
+    await user.selectOptions(group, 'f-animals')
+    expect([...bind.options].map((o) => o.text)).toEqual(['Unbound', 'Doctor'])
+    // Uncategorized group: only the unfiled chair.
+    await user.selectOptions(group, 'ungrouped')
+    expect([...bind.options].map((o) => o.text)).toEqual(['Unbound', 'Classroom Chairs'])
+  })
+
   it('per-row Edit brief resolves in one click', async () => {
     const { engine, value } = setupEngine(MD, {})
     useAiStore.setState({ scenarioModalOpen: true })

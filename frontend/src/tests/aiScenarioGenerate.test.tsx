@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AiScenarioModal } from '../components/ai/AiScenarioModal'
@@ -10,6 +10,7 @@ import {
   createEmptyScenarioSection,
   createScenarioVersion,
   withScenarioBindings,
+  withScenarioMarkdown,
 } from '../engine/scenarioSection'
 import { useAiStore } from '../stores/aiStore'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
@@ -62,6 +63,30 @@ function makeDefinition(id: string, name: string): AssetDefinition {
     original_url: '',
     thumbnail_url: '',
   }
+}
+
+function toBase64(bytes: number[]): string {
+  return btoa(String.fromCharCode(...bytes))
+}
+
+function setupEngineWithEmbedded() {
+  const { engine, value } = setupEngine(MD, {
+    'young-doctor-smiling': 'emb-doctor',
+    'empty-classroom-chairs': 'emb-chairs',
+  })
+  engine.embedAsset({
+    id: 'emb-doctor',
+    name: 'doctor.png',
+    data: toBase64([137, 80, 78, 71, 1, 2, 3]),
+    mimeType: 'image/png',
+  })
+  engine.embedAsset({
+    id: 'emb-chairs',
+    name: 'chairs.png',
+    data: toBase64([137, 80, 78, 71, 4, 5, 6]),
+    mimeType: 'image/png',
+  })
+  return { engine, value }
 }
 
 function setupEngine(markdown: string, bindings: Record<string, string> = {}) {
@@ -138,11 +163,8 @@ beforeEach(() => {
 })
 
 describe('AiScenarioModal Generate lifecycle (issue #464)', () => {
-  it('manual Generate renders deterministic chalk HTML and View reports ready', async () => {
-    const { engine, value } = setupEngine(MD, {
-      'young-doctor-smiling': 'def-doctor',
-      'empty-classroom-chairs': 'def-chairs',
-    })
+  it('manual Generate renders deterministic chalk HTML and View embeds images', async () => {
+    const { engine, value } = setupEngineWithEmbedded()
     render(
       <EngineContext.Provider value={value}>
         <AiScenarioModal projectId="p-1" conversationId="c-1" />
@@ -158,7 +180,7 @@ describe('AiScenarioModal Generate lifecycle (issue #464)', () => {
     // One section per Step in markdown order.
     expect(stored).toContain('data-step="1"')
     expect(stored).toContain('data-step="2"')
-    // Images reference the assets folder with alt preserved.
+    // Stored HTML keeps portable assets/ paths (zip context) with alt preserved.
     expect(stored).toContain('src="assets/young-doctor-smiling.png"')
     expect(stored).toContain('alt="Young doctor smiling"')
     // Briefs and reuse names stay internal.
@@ -170,15 +192,69 @@ describe('AiScenarioModal Generate lifecycle (issue #464)', () => {
     expect(stored.toLowerCase()).not.toContain('<script')
     expect(stored).not.toContain('https://')
 
-    // View lifecycle: empty → ready, View opens the stored render.
+    // View lifecycle: empty → ready. The preview embeds bound bytes as
+    // data: URIs — relative assets/ paths 404 in a srcDoc iframe, so the
+    // stored HTML alone would render every image broken.
     expect(await screen.findByTestId('ai-scenario-html-state')).toHaveTextContent('ready')
     await user.click(screen.getByTestId('ai-scenario-view'))
-    expect(await screen.findByTestId('ai-scenario-html-preview')).toBeInTheDocument()
-    expect(screen.getByTestId('ai-scenario-html-frame')).toHaveAttribute('srcDoc', stored)
+    const frame = await screen.findByTestId('ai-scenario-html-frame')
+    await waitFor(() => {
+      expect(frame.getAttribute('srcDoc')).toContain('data:image/png;base64,')
+    })
+    expect(frame.getAttribute('srcDoc')).not.toContain('src="assets/')
+    expect(frame.getAttribute('srcDoc')).toContain('alt="Young doctor smiling"')
   })
 
   it('doc edits after generation mark stale while View still opens the old render', async () => {
-    const { engine, value } = setupEngine(MD, {
+    const { engine, value } = setupEngineWithEmbedded()
+    const view = render(
+      <EngineContext.Provider value={value}>
+        <AiScenarioModal projectId="p-1" conversationId="c-1" />
+      </EngineContext.Provider>,
+    )
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('ai-scenario-generate'))
+    const firstHtml = engine.project!.scenario!.lastHtml ?? ''
+    expect(firstHtml).toContain('data-step="1"')
+
+    // Edit rendered content (the narrator) via a direct doc mutation, then
+    // re-render — the modal recomputes from the fresh markdown every render.
+    const edited = MD.replace('Ser is for who you are.', 'Edited narrator line.')
+    engine.project!.setScenario(withScenarioMarkdown(engine.project!.scenario!, edited))
+    view.rerender(
+      <EngineContext.Provider value={value}>
+        <AiScenarioModal projectId="p-1" conversationId="c-1" />
+      </EngineContext.Provider>,
+    )
+
+    expect(await screen.findByTestId('ai-scenario-stale-hint')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-html-state')).toHaveTextContent('stale')
+    // View stays enabled and still opens the old render.
+    const viewButton = screen.getByTestId('ai-scenario-view')
+    expect(viewButton).not.toBeDisabled()
+    await user.click(viewButton)
+    const frame = await screen.findByTestId('ai-scenario-html-frame')
+    await waitFor(() => {
+      expect(frame.getAttribute('srcDoc')).toContain('Ser is for who you are.')
+    })
+    expect(frame.getAttribute('srcDoc')).not.toContain('Edited narrator line.')
+
+    // Re-generation is allowed and the fresh render carries the edit.
+    await user.click(screen.getByTestId('ai-scenario-generate'))
+    expect(await screen.findByTestId('ai-scenario-html-state')).toHaveTextContent('ready')
+    await user.click(screen.getByTestId('ai-scenario-view'))
+    // The iframe remounts with fresh HTML: re-query on every poll.
+    await waitFor(() => {
+      const frames = screen.queryAllByTestId('ai-scenario-html-frame')
+      expect(frames.length).toBeGreaterThan(0)
+      expect(frames[frames.length - 1]!.getAttribute('srcDoc')).toContain('Edited narrator line.')
+    })
+  })
+
+  it('View reports missing bytes instead of showing broken images', async () => {
+    // Bound to library defs with no retrievable bytes: Generate still works
+    // (binding gate only), but the preview refuses to render broken images.
+    const { value } = setupEngine(MD, {
       'young-doctor-smiling': 'def-doctor',
       'empty-classroom-chairs': 'def-chairs',
     })
@@ -189,29 +265,13 @@ describe('AiScenarioModal Generate lifecycle (issue #464)', () => {
     )
     const user = userEvent.setup()
     await user.click(await screen.findByTestId('ai-scenario-generate'))
-    const firstHtml = engine.project!.scenario!.lastHtml ?? ''
-    expect(firstHtml).toContain('data-step="1"')
-
-    // Edit via the checklist brief input (unversioned doc mutation).
-    const briefInput = screen.getByTestId(
-      'ai-scenario-checklist-brief-input-young-doctor-smiling',
-    ) as HTMLInputElement
-    await user.clear(briefInput)
-    await user.type(briefInput, 'Edited after generation.')
-    await user.click(screen.getByTestId('ai-scenario-checklist-save-brief-young-doctor-smiling'))
-
-    expect(await screen.findByTestId('ai-scenario-stale-hint')).toBeInTheDocument()
-    expect(screen.getByTestId('ai-scenario-html-state')).toHaveTextContent('stale')
-    // View stays enabled and still opens the old render.
-    const view = screen.getByTestId('ai-scenario-view')
-    expect(view).not.toBeDisabled()
-    await user.click(view)
-    const frame = await screen.findByTestId('ai-scenario-html-frame')
-    expect(frame).toHaveAttribute('srcDoc', firstHtml)
-
-    // Re-generation is allowed and returns to ready.
-    await user.click(screen.getByTestId('ai-scenario-generate'))
     expect(await screen.findByTestId('ai-scenario-html-state')).toHaveTextContent('ready')
+    await user.click(screen.getByTestId('ai-scenario-view'))
+    expect(await screen.findByTestId('ai-scenario-html-preview')).toBeInTheDocument()
+    expect(await screen.findByTestId('ai-scenario-html-preview-error')).toHaveTextContent(
+      'missing image bytes',
+    )
+    expect(screen.queryByTestId('ai-scenario-html-frame')).not.toBeInTheDocument()
   })
 
   it('Generate stays hard-blocked while any row is unbound', async () => {

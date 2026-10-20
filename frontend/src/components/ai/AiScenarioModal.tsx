@@ -15,21 +15,59 @@ import {
 } from '../../engine/scenarioSection'
 import { buildScenarioImageFiles, renderScenarioChalkHtml } from '../../engine/scenarioChalkRender'
 import {
-  base64ToUint8Array,
   buildScenarioPortablePack,
   encodeScenarioPortableZip,
-  yieldToEventLoop,
 } from '../../engine/scenarioPortableZip'
 import { parseScenarioMarkdown } from '../../engine/scenarioMarkdown'
+import { imageBytesToDataUrl, resolveScenarioImageBytes } from '../../engine/scenarioImageBytes'
+import { AiScenarioDocComments } from './AiScenarioDocComments'
+import type { ScenarioDocComment } from '../../engine/scenarioDocComments'
 import { useAiStore } from '../../stores/aiStore'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { AiScenarioChecklist } from './AiScenarioChecklist'
 import { AiScenarioHistory } from './AiScenarioHistory'
-import { ScenarioDocMarkdown } from '../../ai/markdown'
 import type { AiScenario, AiScenarioStep, ScenarioMarkdownVersion } from '../../api/aiApi'
+import type { AssetDefinition } from '../../api'
 
 const EMPTY_MARKDOWN_VERSIONS: ScenarioMarkdownVersion[] = []
+
+/**
+ * Shared asset resolution maps: checklist binding ids resolve to filename
+ * hints (Generate imageFiles), embedded snapshots, and library originals
+ * (zip + preview byte resolution). One builder so Generate, Download, and
+ * View never disagree about what a binding points at.
+ */
+function collectScenarioAssetMaps(
+  embeddedAssets: ReadonlyArray<{ id: string; data: string; mimeType: string; name: string }>,
+  allDefinitions: readonly AssetDefinition[],
+  definitions: readonly AssetDefinition[],
+): {
+  byMeta: Map<string, { mime?: string; filenameHint?: string }>
+  embeddedById: Map<string, { data: string; mimeType: string; name: string }>
+  libraryById: Map<string, { mime?: string; filenameHint?: string; url?: string }>
+} {
+  const byMeta = new Map<string, { mime?: string; filenameHint?: string }>()
+  const embeddedById = new Map<string, { data: string; mimeType: string; name: string }>()
+  for (const asset of embeddedAssets) {
+    byMeta.set(asset.id, { mime: asset.mimeType, filenameHint: asset.name })
+    embeddedById.set(asset.id, { data: asset.data, mimeType: asset.mimeType, name: asset.name })
+  }
+  const libraryById = new Map<string, { mime?: string; filenameHint?: string; url?: string }>()
+  for (const def of [...allDefinitions, ...definitions]) {
+    if (!byMeta.has(def.id)) {
+      byMeta.set(def.id, { mime: def.mimeType, filenameHint: def.original_filename })
+    }
+    if (!libraryById.has(def.id)) {
+      libraryById.set(def.id, {
+        mime: def.mimeType,
+        filenameHint: def.original_filename,
+        url: def.original_url,
+      })
+    }
+  }
+  return { byMeta, embeddedById, libraryById }
+}
 
 interface AiScenarioModalProps {
   projectId: string
@@ -50,6 +88,7 @@ interface AiScenarioModalProps {
  */
 export function AiScenarioModal({ projectId, conversationId, context }: AiScenarioModalProps) {
   const engine = useContext(EngineContext)?.engine
+  const persistence = useContext(EngineContext)?.persistence
   const scenarioTab = useAiStore((s) => s.scenarioTab)
   const scenarios = useAiStore((s) => s.scenarios)
   const scenarioById = useAiStore((s) => s.scenarioById)
@@ -65,12 +104,18 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const allDefinitions = useAssetLibraryStore((s) => s.allDefinitions)
   const definitions = useAssetLibraryStore((s) => s.definitions)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   const [scenarioRev, setScenarioRev] = useState(0)
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [copyMdState, setCopyMdState] = useState<'copied' | 'failed' | null>(null)
+  // Inline doc comments live in the modal (survive Doc/History tab switches)
+  // and clear once the doc itself changes to a new markdown version.
+  const [docComments, setDocComments] = useState<ScenarioDocComment[]>([])
 
   // Legacy Action Scenario data stays loadable for the in-modal editor and
   // Stage B reconciliation (which still reads the accepted scenario row).
@@ -83,6 +128,10 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     if (activeScenarioId) void store.loadScenario(activeScenarioId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScenarioId])
+
+  // Scenario writes bypass the engine Undo Stack by design — signal
+  // persistence explicitly or the change vanishes on reload.
+  const persistScenario = () => persistence?.onCommandSucceeded()
 
   const handlePropose = () => {
     if (!projectId || !conversationId || !scenarioRequest.trim() || scenarioGenerating) return
@@ -168,20 +217,16 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
 
     // Resolve each bound key to a filename hint (mime + original name) so
     // render and the later zip builder share the slug mapping.
-    const byId = new Map<string, { mime?: string; filenameHint?: string }>()
-    for (const asset of engineValue.embeddedAssets ?? []) {
-      byId.set(asset.id, { mime: asset.mimeType, filenameHint: asset.name })
-    }
-    for (const def of [...allDefinitions, ...definitions]) {
-      if (!byId.has(def.id)) {
-        byId.set(def.id, { mime: def.mimeType, filenameHint: def.original_filename })
-      }
-    }
+    const { byMeta } = collectScenarioAssetMaps(
+      engineValue.embeddedAssets ?? [],
+      allDefinitions,
+      definitions,
+    )
     const keys = rows.map((row) => row.key)
     const imageFiles = buildScenarioImageFiles(keys, (key) => {
       const binding = current.bindings[key]
       if (!binding) return undefined
-      return byId.get(binding)
+      return byMeta.get(binding)
     })
     const html = renderScenarioChalkHtml(currentMarkdown, { imageFiles })
 
@@ -206,6 +251,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     }
     engineValue.project.setScenario(withScenarioHtml(next, html, pointer))
     setScenarioRev((n) => n + 1)
+    persistScenario()
   }
 
   // Portable zip with manifest (issue #465). Separate builder from lesson
@@ -220,25 +266,11 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     try {
       const current = engineValue.project.scenario ?? createEmptyScenarioSection(markdown)
       const currentMarkdown = current.currentMarkdown ?? markdown
-      const byMeta = new Map<string, { mime?: string; filenameHint?: string }>()
-      const embeddedById = new Map<string, { data: string; mimeType: string; name: string }>()
-      for (const asset of engineValue.embeddedAssets ?? []) {
-        byMeta.set(asset.id, { mime: asset.mimeType, filenameHint: asset.name })
-        embeddedById.set(asset.id, { data: asset.data, mimeType: asset.mimeType, name: asset.name })
-      }
-      const defById = new Map<string, { mime?: string; filenameHint?: string; url?: string }>()
-      for (const def of [...allDefinitions, ...definitions]) {
-        if (!byMeta.has(def.id)) {
-          byMeta.set(def.id, { mime: def.mimeType, filenameHint: def.original_filename })
-        }
-        if (!defById.has(def.id)) {
-          defById.set(def.id, {
-            mime: def.mimeType,
-            filenameHint: def.original_filename,
-            url: def.original_url,
-          })
-        }
-      }
+      const { byMeta, embeddedById, libraryById } = collectScenarioAssetMaps(
+        engineValue.embeddedAssets ?? [],
+        allDefinitions,
+        definitions,
+      )
       const keys = rows.map((row) => row.key)
       const imageFiles = buildScenarioImageFiles(keys, (key) => {
         const binding = current.bindings[key]
@@ -247,33 +279,12 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
       })
       // Resolve bytes per key with periodic yields so large packs stay
       // responsive; any missing bytes abort instead of shipping broken refs.
-      const imageBytes: Record<string, { bytes: Uint8Array; mime: string }> = {}
-      for (let i = 0; i < keys.length; i += 1) {
-        const key = keys[i]!
-        const binding = current.bindings[key]
-        if (!binding) throw new Error(`Scenario pack is missing a binding for asset "${key}"`)
-        const embedded = embeddedById.get(binding)
-        if (embedded) {
-          imageBytes[key] = {
-            bytes: base64ToUint8Array(embedded.data),
-            mime: embedded.mimeType,
-          }
-        } else {
-          const def = defById.get(binding)
-          if (!def?.url) throw new Error(`Scenario pack is missing image bytes for asset "${key}"`)
-          const response = await fetch(def.url)
-          if (!response.ok)
-            throw new Error(`Scenario pack could not fetch bytes for asset "${key}"`)
-          const buffer = await response.arrayBuffer()
-          if (buffer.byteLength === 0) {
-            throw new Error(`Scenario pack fetched empty bytes for asset "${key}"`)
-          }
-          const mime =
-            def.mime ?? response.headers.get('content-type')?.split(';')[0]?.trim() ?? 'image/png'
-          imageBytes[key] = { bytes: new Uint8Array(buffer), mime }
-        }
-        if (i % 8 === 7) await yieldToEventLoop()
-      }
+      const imageBytes = await resolveScenarioImageBytes(
+        keys,
+        current.bindings,
+        embeddedById,
+        libraryById,
+      )
       const pack = buildScenarioPortablePack({
         markdown: currentMarkdown,
         imageFiles,
@@ -310,6 +321,76 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     }
   }
 
+  // View builds preview HTML on demand: the stored render keeps portable
+  // `assets/` paths (the zip context), but a `srcDoc` iframe inherits the
+  // app origin where those paths 404 — so every image renders broken even
+  // with all bytes bound. The preview re-renders with the same bytes
+  // embedded as `data:` URIs. Stale opens the generating version's content
+  // (the old render), matching the stale hint; missing versions fall back
+  // to the current doc.
+  const handleView = async () => {
+    const engineValue = engine
+    if (!engineValue?.project || htmlState === 'empty') return
+    setPreviewOpen(true)
+    setPreviewLoading(true)
+    setPreviewError(null)
+    setPreviewHtml(null)
+    try {
+      const current = engineValue.project.scenario ?? createEmptyScenarioSection(markdown)
+      const pointer = current.generatedFromVersionId ?? null
+      const versionContent = pointer
+        ? versionsForState.find((v) => v.id === pointer)?.content
+        : undefined
+      const previewMarkdown = versionContent ?? current.currentMarkdown ?? markdown
+      let previewKeys: string[] = []
+      try {
+        previewKeys = [
+          ...new Set(
+            parseScenarioMarkdown(previewMarkdown).steps.flatMap((s) =>
+              s.visuals.map((v) => v.key),
+            ),
+          ),
+        ]
+      } catch {
+        previewKeys = []
+      }
+      const { byMeta, embeddedById, libraryById } = collectScenarioAssetMaps(
+        engineValue.embeddedAssets ?? [],
+        allDefinitions,
+        definitions,
+      )
+      const imageFiles = buildScenarioImageFiles(previewKeys, (key) => {
+        const binding = current.bindings[key]
+        if (!binding) return undefined
+        return byMeta.get(binding)
+      })
+      const resolved = await resolveScenarioImageBytes(
+        previewKeys,
+        current.bindings,
+        embeddedById,
+        libraryById,
+      )
+      const dataUris: Record<string, string> = {}
+      for (const key of previewKeys) {
+        const file = imageFiles[key]
+        const record = resolved[key]
+        if (file && record) dataUris[file] = imageBytesToDataUrl(record.bytes, record.mime)
+      }
+      setPreviewHtml(
+        renderScenarioChalkHtml(previewMarkdown, {
+          imageFiles,
+          resolveAssetUrl: (file) => dataUris[file] ?? `assets/${file}`,
+        }),
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Scenario preview failed.'
+      setPreviewError(message)
+      useNotificationStore.getState().notify(message)
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
   const handleClose = () => {
     setConfirmingDelete(false)
     setDeleteError(null)
@@ -337,6 +418,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
       }
       engineValue.project.setScenario(createEmptyScenarioSection(''))
       setScenarioRev((n) => n + 1)
+      persistScenario()
     })
   }
 
@@ -428,7 +510,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
             disabled={htmlState === 'empty'}
             title={htmlState === 'empty' ? 'No HTML yet — generate first' : 'View stored HTML'}
             onClick={() => {
-              if (htmlState !== 'empty') setPreviewOpen(true)
+              if (htmlState !== 'empty') void handleView()
             }}
           >
             View HTML
@@ -557,26 +639,37 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
               style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginTop: 8 }}
             >
               <div>
-                <div data-testid="ai-scenario-modal-doc" className="ai-scenario-modal-doc">
-                  {markdown ? (
-                    <ScenarioDocMarkdown content={markdown} />
-                  ) : (
-                    <div data-testid="ai-scenario-modal-empty">
-                      No scenario markdown yet — chat to iterate or edit the doc.
-                    </div>
-                  )}
-                </div>
-                {previewOpen && htmlState !== 'empty' && lastHtml && (
+                <AiScenarioDocComments
+                  projectId={projectId}
+                  conversationId={conversationId}
+                  context={context}
+                  markdown={markdown}
+                  comments={docComments}
+                  onCommentsChange={setDocComments}
+                />
+                {previewOpen && htmlState !== 'empty' && (
                   <div data-testid="ai-scenario-html-preview">
                     <div>Preview (stored HTML{htmlState === 'stale' ? ' — stale' : ''})</div>
-                    <iframe
-                      data-testid="ai-scenario-html-frame"
-                      title="Scenario HTML preview"
-                      srcDoc={lastHtml}
-                    />
+                    {previewLoading && (
+                      <div data-testid="ai-scenario-html-preview-loading">Resolving images…</div>
+                    )}
+                    {previewError && (
+                      <div data-testid="ai-scenario-html-preview-error">{previewError}</div>
+                    )}
+                    {previewHtml && (
+                      <iframe
+                        data-testid="ai-scenario-html-frame"
+                        title="Scenario HTML preview"
+                        srcDoc={previewHtml}
+                      />
+                    )}
                     <button
                       data-testid="ai-scenario-html-preview-close"
-                      onClick={() => setPreviewOpen(false)}
+                      onClick={() => {
+                        setPreviewOpen(false)
+                        setPreviewHtml(null)
+                        setPreviewError(null)
+                      }}
                     >
                       Close preview
                     </button>

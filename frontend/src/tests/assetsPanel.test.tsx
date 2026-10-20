@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AssetDefinition } from '../api'
+import type { AssetDefinition, AssetFolder } from '../api'
 import { AssetsPanel } from '../components/panels/AssetsPanel'
 import { ASSET_DEFINITION_MIME } from '../pixi/renderer/dropPlacement'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
@@ -30,12 +30,44 @@ const BOY: AssetDefinition = {
 
 const GIRL: AssetDefinition = { ...BOY, id: 'a2', name: 'Girl', category: 'Character' }
 
-function stubLibrary(definitions: AssetDefinition[]): void {
+function stubLibrary(definitions: AssetDefinition[], folders: AssetFolder[] = []): void {
   vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
-    if (url.startsWith('/api/assets') && init?.method === 'POST') {
+    const method = init?.method ?? 'GET'
+    if (url === '/api/assets/folders' && method === 'GET') {
+      return Promise.resolve(new Response(JSON.stringify(folders), { status: 200 }))
+    }
+    if (url === '/api/assets/folders' && method === 'POST') {
+      const body = JSON.parse(String(init?.body ?? '{}')) as {
+        name?: string
+        parent_id?: string | null
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: 'f-new',
+            name: body.name ?? 'New',
+            parent_id: body.parent_id ?? null,
+            created_at: '2026-08-11T12:00:00',
+            updated_at: '2026-08-11T12:00:00',
+          }),
+          { status: 201 },
+        ),
+      )
+    }
+    if (url.startsWith('/api/assets') && method === 'POST') {
       return Promise.resolve(
         new Response(JSON.stringify({ created: [], errors: [] }), { status: 200 }),
+      )
+    }
+    const single = url.match(/^\/api\/assets\/([^/?]+)$/)
+    if (single && method === 'PATCH') {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { folder_id?: string | null }
+      const def = definitions.find((d) => d.id === single[1])
+      return Promise.resolve(
+        new Response(JSON.stringify({ ...def, folder_id: body.folder_id ?? null }), {
+          status: 200,
+        }),
       )
     }
     if (url.startsWith('/api/assets')) {
@@ -101,7 +133,7 @@ describe('AssetsPanel', () => {
     expect(screen.queryByText('Boy')).not.toBeInTheDocument()
   })
 
-  it('renders the grid with thumbnail, name, and category per asset', async () => {
+  it('renders the grid with thumbnail, name, and group per asset', async () => {
     stubLibrary([BOY, GIRL])
     const { container } = renderPanel()
 
@@ -112,12 +144,61 @@ describe('AssetsPanel', () => {
     })
     const boyCell = within(grid).getByRole('button', { name: 'Select Boy' })
     expect(boyCell).toHaveTextContent('Boy')
-    expect(boyCell).toHaveTextContent('Character')
+    // Unfiled assets read Uncategorized — the group, not the AI category.
+    expect(boyCell).toHaveTextContent('Uncategorized')
+    expect(boyCell).not.toHaveTextContent('Character')
     expect(within(boyCell).getByRole('img', { name: 'Boy' })).toHaveAttribute(
       'src',
       '/api/assets/thumbnails/a1.png',
     )
     expect(within(grid).getAllByRole('img')).toHaveLength(2)
+  })
+
+  it('shows the nested folder path as the group for filed assets', async () => {
+    const animals = {
+      id: 'f-animals',
+      name: 'Animals',
+      parent_id: null,
+      created_at: '2026-08-11T12:00:00',
+      updated_at: '2026-08-11T12:00:00',
+    }
+    const leaf = {
+      id: 'f-leaf',
+      name: 'Leaf',
+      parent_id: 'f-animals',
+      created_at: '2026-08-11T12:00:00',
+      updated_at: '2026-08-11T12:00:00',
+    }
+    stubLibrary([{ ...BOY, folder_id: 'f-leaf' }], [animals, leaf])
+    const { container } = renderPanel()
+
+    const grid = await waitFor(() => {
+      const element = container.querySelector('.asset-grid')
+      expect(element).not.toBeNull()
+      return element as HTMLElement
+    })
+    const boyCell = within(grid).getByRole('button', { name: 'Select Boy' })
+    expect(boyCell).toHaveTextContent('Animals/Leaf')
+  })
+
+  it('creates a group from the preview and files the asset into it', async () => {
+    stubLibrary([BOY], [])
+    renderPanel()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Select Boy' }))
+    expect(await screen.findByText('AI description')).toBeInTheDocument()
+
+    await user.type(screen.getByRole('textbox', { name: 'New group name' }), 'Mites')
+    await user.click(screen.getByRole('button', { name: 'Create group' }))
+
+    await waitFor(() => {
+      const patch = vi
+        .mocked(fetch)
+        .mock.calls.map(([url, init]) => ({ url: String(url), init: init ?? {} }))
+        .find((call) => call.url === '/api/assets/a1')
+      expect(patch).toBeDefined()
+      expect(JSON.parse(String(patch!.init.body))).toEqual({ folder_id: 'f-new' })
+    })
   })
 
   it('makes asset cells draggable and carries the definition id in the drag payload', async () => {

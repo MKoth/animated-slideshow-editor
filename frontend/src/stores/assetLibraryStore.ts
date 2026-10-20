@@ -7,11 +7,15 @@ import {
   type AssetSortOrder,
   type AssetUploadResult,
 } from '../api'
+import { ApiError } from '../api/apiClient'
 import { libraryEventBus } from './libraryEvents'
 import { useNotificationStore } from './notificationStore'
 import { notifyRequestFailure } from './requestNotifications'
 
 export const SEARCH_DEBOUNCE_MS = 300
+
+/** Uploads from outside the library always land in this root folder. */
+export const LESSON_ASSETS_FOLDER = 'lesson assets'
 
 export const IMPORT_FAILED_MESSAGE = 'Asset import failed.'
 export const IMPORT_BACKEND_DOWN_MESSAGE = 'Asset import failed — backend unavailable.'
@@ -52,7 +56,8 @@ interface AssetLibraryState {
   selectAsset: (assetId: string | null) => void
   importFiles: (files: File[]) => Promise<AssetUploadResult>
   deleteAsset: (assetId: string) => Promise<void>
-  createFolder: (name: string) => Promise<AssetFolder | null>
+  createFolder: (name: string, parentId?: string | null) => Promise<AssetFolder | null>
+  ensureLessonAssetsFolder: () => Promise<string | null>
   renameFolder: (folderId: string, name: string) => Promise<void>
   deleteFolder: (folderId: string) => Promise<void>
   moveAsset: (assetId: string, folderId: string | null) => Promise<void>
@@ -155,8 +160,16 @@ export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
   importFiles: async (files) => {
     let result: AssetUploadResult
     try {
-      const { currentFolderId } = get()
-      result = await assetsApi.uploadAssets(files, { folderId: currentFolderId })
+      // Uploads from outside always land in the "lesson assets" group so
+      // the bind dropdown can find them without hunting the whole library.
+      // Falls back to the browsed folder when the group cannot be ensured.
+      let folderId: string | null
+      try {
+        folderId = await get().ensureLessonAssetsFolder()
+      } catch {
+        folderId = get().currentFolderId ?? null
+      }
+      result = await assetsApi.uploadAssets(files, { folderId })
     } catch (error) {
       notifyRequestFailure(IMPORT_FAILED_MESSAGE, IMPORT_BACKEND_DOWN_MESSAGE, error, () =>
         set({ unavailable: true, error: errorMessage(error) }),
@@ -193,10 +206,13 @@ export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
     libraryEventBus.emit({ type: 'AssetDeleted', id: assetId })
   },
 
-  createFolder: async (name) => {
+  createFolder: async (name, parentId) => {
     const { currentFolderId } = get()
     try {
-      const folder = await assetsApi.createFolder(name, currentFolderId)
+      const folder = await assetsApi.createFolder(
+        name,
+        parentId === undefined ? currentFolderId : parentId,
+      )
       await get().loadFolders()
       return folder
     } catch (error) {
@@ -204,6 +220,29 @@ export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
         set({ unavailable: true, error: errorMessage(error) }),
       )
       return null
+    }
+  },
+
+  ensureLessonAssetsFolder: async () => {
+    const match = (folders: AssetFolder[]) =>
+      folders.find((f) => f.name.toLowerCase() === LESSON_ASSETS_FOLDER.toLowerCase()) ?? null
+    const listed = await assetsApi.listFolders()
+    set({ folders: listed })
+    const existing = match(listed)
+    if (existing) return existing.id
+    try {
+      const created = await assetsApi.createFolder(LESSON_ASSETS_FOLDER, null)
+      set((state) => ({ folders: [...state.folders, created] }))
+      return created.id
+    } catch (error) {
+      // A parallel import may have created it first — re-list and reuse.
+      if (error instanceof ApiError && error.status === 409) {
+        const retry = await assetsApi.listFolders()
+        set({ folders: retry })
+        const found = match(retry)
+        if (found) return found.id
+      }
+      throw error
     }
   },
 

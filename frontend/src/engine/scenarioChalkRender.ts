@@ -25,6 +25,14 @@ export interface ScenarioChalkRenderOptions {
   readonly imageFiles: Readonly<Record<string, string>>
   /** Page `<title>` override; defaults to the first H1 or `Scenario`. */
   readonly title?: string
+  /**
+   * Rewrite for one image file reference. Defaults to the portable
+   * `assets/<file>` relative path (zip context). The modal preview passes a
+   * resolver returning `data:` URIs instead: `srcDoc` iframes inherit the
+   * app origin as their base URL, so relative `assets/` paths 404 there and
+   * every image renders broken even with all bytes bound.
+   */
+  readonly resolveAssetUrl?: (file: string) => string
 }
 
 const KNOWN_MIME_EXT: Readonly<Record<string, string>> = {
@@ -260,7 +268,9 @@ export function renderScenarioChalkHtml(
     }
     for (const visual of step.visuals) {
       const file = imageFiles[visual.key] ?? `${slugFilenameForAssetKey(visual.key)}.png`
-      const src = `assets/${file.replace(/^assets\//, '')}`
+      const src = options.resolveAssetUrl
+        ? options.resolveAssetUrl(file)
+        : `assets/${file.replace(/^assets\//, '')}`
       const alt = escapeHtml(visual.alt)
       const caption = escapeHtml(visual.label ?? visual.alt)
       parts.push(

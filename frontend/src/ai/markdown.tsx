@@ -1,6 +1,6 @@
 import { Children, isValidElement, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useUiStore } from '../stores/uiStore'
 
@@ -64,17 +64,28 @@ export function AiMarkdown({ content }: { content: string }) {
     <div className="ai-markdown" data-testid="ai-markdown">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={{
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          code(props: any) {
-            return <MarkdownCode className={props.className}>{props.children}</MarkdownCode>
-          },
-        }}
+        components={AI_MARKDOWN_COMPONENTS}
+        urlTransform={scenarioUrlTransform}
       >
         {content}
       </ReactMarkdown>
     </div>
   )
+}
+
+// Module-scope components: inline literals would create new component
+// identities on every render, forcing React to unmount/remount the whole
+// doc tree (destroying in-progress text selections and hover state).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const AI_MARKDOWN_COMPONENTS: any = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  code(props: any) {
+    return <MarkdownCode className={props.className}>{props.children}</MarkdownCode>
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  img(props: any) {
+    return <ScenarioVisualImage src={props.src} alt={props.alt} title={props.title} />
+  },
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -166,12 +177,39 @@ function parseBoardAction(
 }
 
 /**
- * Scenario-doc renderer for the Scenario MD modal. Same GFM + Shiki base as
- * AiMarkdown, but block types from the scenario template (Step headings,
- * `**Narrator:**`, `![alt](asset:slug)`, `> Brief:`, `<!-- reuse: -->`)
- * get semantic classes so each reads in its own color. Plain paragraphs are
- * the on-screen chalk text and keep the default color.
+ * `asset:slug` references are doc-contract pointers, not loadable URLs:
+ * react-markdown's default URL sanitizer strips them, leaving a bare
+ * `<img alt>` that renders as a broken-image icon. Pass them through so the
+ * `img` renderers below can surface the visual chip instead.
  */
+function scenarioUrlTransform(url: string): string {
+  if (/^asset:/i.test(url.trim())) return url
+  return defaultUrlTransform(url)
+}
+
+/** Board visual chip shared by the doc and chat renderers. */
+function ScenarioVisualImage({
+  src,
+  alt,
+  title,
+}: {
+  src?: unknown
+  alt?: unknown
+  title?: unknown
+}): ReactNode {
+  const target = String(src ?? '').trim()
+  if (/^asset:/i.test(target)) {
+    const label = String(alt ?? '')
+    return (
+      <span className="scenario-visual">
+        <span className="scenario-visual-label">Visual</span>
+        {label ? <span className="scenario-visual-alt">{label}</span> : null}
+        <code className="scenario-visual-slug">{target.slice('asset:'.length)}</code>
+      </span>
+    )
+  }
+  return <img alt={String(alt ?? '')} src={String(src ?? '')} title={String(title ?? '')} />
+}
 export function ScenarioDocMarkdown({ content }: { content: string }) {
   // `<!-- reuse: X -->` is invisible to markdown renderers — surface it as a
   // quote line so the reference stays visible (whole-line form only).
@@ -184,106 +222,101 @@ export function ScenarioDocMarkdown({ content }: { content: string }) {
     <div className="ai-markdown" data-testid="ai-markdown">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={{
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          code(props: any) {
-            return <MarkdownCode className={props.className}>{props.children}</MarkdownCode>
-          },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          h2(props: any) {
-            const text = plainText(props.children)
-            const match = /^Step\s+(\d+)\s*(?:[—–\-:.]?\s*(.*))?$/i.exec(text.trim())
-            if (match) {
-              const title = (match[2] ?? '').trim()
-              return (
-                <h2 className="scenario-step">
-                  <span className="scenario-step-badge">Step {match[1]}</span>
-                  {title ? <span className="scenario-step-title">{title}</span> : null}
-                </h2>
-              )
-            }
-            return <h2>{props.children}</h2>
-          },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          p(props: any) {
-            const text = plainText(props.children)
-            const trimmed = text.trim()
-            const action = parseBoardAction(trimmed)
-            if (action) {
-              return (
-                <p className="scenario-action-line">
-                  <span className="scenario-board-action" title={action.title}>
-                    <span className="scenario-board-action-label">{action.label}</span>
-                    {action.target ? (
-                      <span className="scenario-board-action-target">{action.target}</span>
-                    ) : null}
-                  </span>
-                </p>
-              )
-            }
-            if (isVisualLine(props.children)) {
-              return <p className="scenario-visual-line">{props.children}</p>
-            }
-            if (/^\s*Narrator:/i.test(text)) {
-              return <p className="scenario-narrator">{props.children}</p>
-            }
-            return <p>{props.children}</p>
-          },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          blockquote(props: any) {
-            const text = plainText(props.children)
-            const brief = /^\s*Brief:\s*([\s\S]*)$/i.exec(text)
-            if (brief) {
-              return (
-                <blockquote className="scenario-brief">
-                  <p>
-                    <span className="scenario-brief-label">Brief:</span> {brief[1]?.trim()}
-                  </p>
-                </blockquote>
-              )
-            }
-            const reuse = /^\s*Reuse:\s*([\s\S]*)$/i.exec(text)
-            if (reuse) {
-              return (
-                <blockquote className="scenario-reuse">
-                  <p>
-                    <span className="scenario-reuse-label">Reuse:</span> {reuse[1]?.trim()}
-                  </p>
-                </blockquote>
-              )
-            }
-            const label = /^\s*Label:\s*([\s\S]*)$/i.exec(text)
-            if (label) {
-              return (
-                <blockquote className="scenario-label">
-                  <p>
-                    <span className="scenario-label-tag">Label:</span> {label[1]?.trim()}
-                  </p>
-                </blockquote>
-              )
-            }
-            return <blockquote>{props.children}</blockquote>
-          },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          img(props: any) {
-            const target = String(props.src ?? '').trim()
-            if (/^asset:/i.test(target)) {
-              return (
-                <span className="scenario-visual">
-                  <span className="scenario-visual-label">Visual</span>
-                  {props.alt ? (
-                    <span className="scenario-visual-alt">{String(props.alt)}</span>
-                  ) : null}
-                  <code className="scenario-visual-slug">{target.slice('asset:'.length)}</code>
-                </span>
-              )
-            }
-            return <img alt={props.alt} src={props.src} title={props.title} />
-          },
-        }}
+        components={SCENARIO_DOC_COMPONENTS}
+        urlTransform={scenarioUrlTransform}
       >
         {prepared}
       </ReactMarkdown>
     </div>
   )
+}
+
+// Module-scope components: see AI_MARKDOWN_COMPONENTS above — inline
+// literals would remount the doc tree on every parent render, destroying
+// in-progress text selections and any DOM-anchored comment state.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const SCENARIO_DOC_COMPONENTS: any = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  code(props: any) {
+    return <MarkdownCode className={props.className}>{props.children}</MarkdownCode>
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  h2(props: any) {
+    const text = plainText(props.children)
+    const match = /^Step\s+(\d+)\s*(?:[—–\-:.]?\s*(.*))?$/i.exec(text.trim())
+    if (match) {
+      const title = (match[2] ?? '').trim()
+      return (
+        <h2 className="scenario-step">
+          <span className="scenario-step-badge">Step {match[1]}</span>
+          {title ? <span className="scenario-step-title">{title}</span> : null}
+        </h2>
+      )
+    }
+    return <h2>{props.children}</h2>
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  p(props: any) {
+    const text = plainText(props.children)
+    const trimmed = text.trim()
+    const action = parseBoardAction(trimmed)
+    if (action) {
+      return (
+        <p className="scenario-action-line">
+          <span className="scenario-board-action" title={action.title}>
+            <span className="scenario-board-action-label">{action.label}</span>
+            {action.target ? (
+              <span className="scenario-board-action-target">{action.target}</span>
+            ) : null}
+          </span>
+        </p>
+      )
+    }
+    if (isVisualLine(props.children)) {
+      return <p className="scenario-visual-line">{props.children}</p>
+    }
+    if (/^\s*Narrator:/i.test(text)) {
+      return <p className="scenario-narrator">{props.children}</p>
+    }
+    return <p>{props.children}</p>
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  blockquote(props: any) {
+    const text = plainText(props.children)
+    const brief = /^\s*Brief:\s*([\s\S]*)$/i.exec(text)
+    if (brief) {
+      return (
+        <blockquote className="scenario-brief">
+          <p>
+            <span className="scenario-brief-label">Brief:</span> {brief[1]?.trim()}
+          </p>
+        </blockquote>
+      )
+    }
+    const reuse = /^\s*Reuse:\s*([\s\S]*)$/i.exec(text)
+    if (reuse) {
+      return (
+        <blockquote className="scenario-reuse">
+          <p>
+            <span className="scenario-reuse-label">Reuse:</span> {reuse[1]?.trim()}
+          </p>
+        </blockquote>
+      )
+    }
+    const label = /^\s*Label:\s*([\s\S]*)$/i.exec(text)
+    if (label) {
+      return (
+        <blockquote className="scenario-label">
+          <p>
+            <span className="scenario-label-tag">Label:</span> {label[1]?.trim()}
+          </p>
+        </blockquote>
+      )
+    }
+    return <blockquote>{props.children}</blockquote>
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  img(props: any) {
+    return <ScenarioVisualImage src={props.src} alt={props.alt} title={props.title} />
+  },
 }

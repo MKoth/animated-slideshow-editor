@@ -35,6 +35,7 @@ export function AiScenarioHistory({ projectId, conversationId }: AiScenarioHisto
   const error = useAiStore((s) => s.markdownError)
   const store = useAiStore.getState()
   const engine = useContext(EngineContext)?.engine
+  const persistence = useContext(EngineContext)?.persistence
 
   useEffect(() => {
     if (projectId) void store.loadMarkdownVersions(projectId, conversationId ?? undefined)
@@ -42,6 +43,10 @@ export function AiScenarioHistory({ projectId, conversationId }: AiScenarioHisto
   }, [projectId, conversationId])
 
   const ordered = useMemo(() => [...versions], [versions])
+
+  // Restore/accept rewrite the portable section outside the Undo Stack —
+  // signal persistence explicitly or the change vanishes on reload.
+  const persistScenario = () => persistence?.onCommandSucceeded()
 
   const handleRestore = (versionId: string) => {
     if (!projectId || !conversationId || busy) return
@@ -57,6 +62,7 @@ export function AiScenarioHistory({ projectId, conversationId }: AiScenarioHisto
         content: restored.content,
       })
       engine.project.setScenario(next)
+      persistScenario()
     })
   }
 
@@ -70,6 +76,7 @@ export function AiScenarioHistory({ projectId, conversationId }: AiScenarioHisto
       const current = engine.project.scenario
       if (current && current.acceptedVersionId !== versionId) {
         engine.project.setScenario(withScenarioAcceptedVersion(current, versionId))
+        persistScenario()
       }
     })
   }

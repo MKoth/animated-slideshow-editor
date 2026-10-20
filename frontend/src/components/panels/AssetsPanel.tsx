@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import type { AssetDefinition, AssetFolder } from '../../api'
-import { ASSET_FOLDER_MIME, folderPath } from '../assets/folders'
+import { ASSET_FOLDER_MIME, folderDisplayName, folderPath } from '../assets/folders'
 import { ASSET_DEFINITION_MIME, AUDIO_ASSET_MIME } from '../../pixi/renderer/dropPlacement'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { registerImportOpener } from '../assets/importTrigger'
@@ -105,7 +105,21 @@ function AssetPreview({ definition, onClose }: PreviewProps) {
   const deleteAsset = useAssetLibraryStore((state) => state.deleteAsset)
   const folders = useAssetLibraryStore((state) => state.folders)
   const moveAsset = useAssetLibraryStore((state) => state.moveAsset)
+  const createFolder = useAssetLibraryStore((state) => state.createFolder)
   const [moveTarget, setMoveTarget] = useState<string>('')
+  const [newGroupName, setNewGroupName] = useState('')
+
+  // Create a root-level group and file this asset into it in one step, so a
+  // click on the image is enough to categorize an Uncategorized asset.
+  const handleCreateGroup = async () => {
+    const name = newGroupName.trim()
+    if (!name) return
+    const folder = await createFolder(name, null)
+    if (!folder) return
+    setNewGroupName('')
+    setMoveTarget('')
+    await moveAsset(definition.id, folder.id)
+  }
 
   return (
     <section className="asset-preview" aria-label="Asset preview">
@@ -146,6 +160,27 @@ function AssetPreview({ definition, onClose }: PreviewProps) {
           style={{ padding: '4px 10px', borderRadius: 4, cursor: 'pointer' }}
         >
           Move
+        </button>
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+        <input
+          aria-label="New group name"
+          placeholder="New group…"
+          value={newGroupName}
+          onChange={(event) => setNewGroupName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && newGroupName.trim() !== '') {
+              void handleCreateGroup()
+            }
+          }}
+          style={{ flex: 1, padding: '4px 6px', borderRadius: 4 }}
+        />
+        <button
+          disabled={newGroupName.trim() === ''}
+          onClick={() => void handleCreateGroup()}
+          style={{ padding: '4px 10px', borderRadius: 4, cursor: 'pointer' }}
+        >
+          Create group
         </button>
       </div>
       <dl className="asset-preview__details">
@@ -419,6 +454,7 @@ interface AssetCellProps {
 }
 
 function AssetCell({ definition, view, onSelect }: AssetCellProps) {
+  const folders = useAssetLibraryStore((state) => state.folders)
   const handleDragStart = (event: React.DragEvent) => {
     event.dataTransfer.effectAllowed = 'copy'
     event.dataTransfer.setData(ASSET_DEFINITION_MIME, definition.id)
@@ -442,7 +478,7 @@ function AssetCell({ definition, view, onSelect }: AssetCellProps) {
         {definition.name}
       </span>
       <span className={view === 'grid' ? 'asset-cell__category' : 'asset-row__category'}>
-        {definition.category}
+        {folderDisplayName(folders, definition.folder_id)}
       </span>
     </button>
   )

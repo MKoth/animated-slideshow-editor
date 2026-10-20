@@ -1,5 +1,6 @@
-import { useContext, useMemo, useState } from 'react'
+import { useContext, useEffect, useMemo, useState } from 'react'
 import { EngineContext } from '../../app/engineContext'
+import { folderDisplayName } from '../assets/folders'
 import {
   buildScenarioAvailableIds,
   buildScenarioChecklistRows,
@@ -27,12 +28,22 @@ interface AiScenarioChecklistProps {
  */
 export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklistProps) {
   const engine = useContext(EngineContext)?.engine
+  const persistence = useContext(EngineContext)?.persistence
   const missingOnly = useAiStore((s) => s.scenarioMissingOnly ?? false)
   const allDefinitions = useAssetLibraryStore((s) => s.allDefinitions)
   const definitions = useAssetLibraryStore((s) => s.definitions)
+  const folders = useAssetLibraryStore((s) => s.folders)
+  const loadFolders = useAssetLibraryStore((s) => s.loadFolders)
   const store = useAiStore.getState()
   const [briefDrafts, setBriefDrafts] = useState<Record<string, string>>({})
   const [uploadError, setUploadError] = useState<Record<string, string>>({})
+  // Group-first bind filter per row: All, Uncategorized (no folder), or one
+  // folder path (folder1/folder2). Defaults to All so nothing is hidden.
+  const [bindGroups, setBindGroups] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    void loadFolders()
+  }, [loadFolders])
   const [copyState, setCopyState] = useState<{
     key: string
     status: 'copied' | 'failed'
@@ -58,13 +69,40 @@ export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklis
     [embeddedIds, allDefinitions, definitions],
   )
 
+  const groupOptions = useMemo(() => {
+    const nested = folders
+      .map((folder) => ({ value: folder.id, label: folderDisplayName(folders, folder.id) }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+    return [
+      { value: 'all', label: 'All' },
+      { value: 'ungrouped', label: 'Uncategorized' },
+      ...nested,
+    ]
+  }, [folders])
+
   const libraryOptions = useMemo(() => {
-    const seen = new Map<string, { id: string; name: string }>()
+    const seen = new Map<string, { id: string; name: string; folderId?: string | null }>()
     for (const d of [...allDefinitions, ...definitions]) {
-      if (!seen.has(d.id)) seen.set(d.id, { id: d.id, name: d.name })
+      if (!seen.has(d.id)) seen.set(d.id, { id: d.id, name: d.name, folderId: d.folder_id })
     }
     return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name))
   }, [allDefinitions, definitions])
+
+  const optionsForRow = (row: ScenarioChecklistRow) => {
+    const group = bindGroups[row.key] ?? 'all'
+    const inGroup =
+      group === 'all'
+        ? libraryOptions
+        : group === 'ungrouped'
+          ? libraryOptions.filter((opt) => !opt.folderId)
+          : libraryOptions.filter((opt) => opt.folderId === group)
+    // Keep the current binding selectable even when it sits outside the group.
+    if (row.bindingAssetId && !inGroup.some((opt) => opt.id === row.bindingAssetId)) {
+      const bound = libraryOptions.find((opt) => opt.id === row.bindingAssetId)
+      if (bound) return [bound, ...inGroup]
+    }
+    return inGroup
+  }
 
   const rows = useMemo(
     () => buildScenarioChecklistRows(markdown, bindings, availableIds),
@@ -72,6 +110,11 @@ export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklis
     [markdown, bindings, availableIds, scenarioDocRev],
   )
   const visible = missingOnly ? rows.filter((r) => !r.bound) : rows
+
+  // Scenario writes bypass the engine Undo Stack by design, so they never
+  // mark the project dirty on their own — signal persistence explicitly or
+  // bindings vanish on reload (autosave only persists dirty projects).
+  const persistScenario = () => persistence?.onCommandSucceeded()
 
   const handleBind = (row: ScenarioChecklistRow, assetId: string) => {
     if (!engine?.project?.scenario) return
@@ -87,6 +130,7 @@ export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklis
     }
     refreshChecklist((n) => n + 1)
     onMutated?.()
+    persistScenario()
   }
 
   const handleUpload = async (row: ScenarioChecklistRow, files: FileList | null) => {
@@ -110,6 +154,7 @@ export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklis
       )
       refreshChecklist((n) => n + 1)
       onMutated?.()
+      persistScenario()
     } catch (error) {
       setUploadError((prev) => ({
         ...prev,
@@ -126,6 +171,7 @@ export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklis
     engine.project.setScenario(withScenarioMarkdown(current, nextMarkdown))
     refreshChecklist((n) => n + 1)
     onMutated?.()
+    persistScenario()
   }
 
   const handleCopyPrompt = async (row: ScenarioChecklistRow) => {
@@ -244,6 +290,22 @@ export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklis
                 )}
                 <div className="scenario-checklist-controls">
                   <label className="scenario-checklist-field">
+                    <span>Group</span>
+                    <select
+                      data-testid={`ai-scenario-checklist-group-${row.key}`}
+                      value={bindGroups[row.key] ?? 'all'}
+                      onChange={(e) =>
+                        setBindGroups((prev) => ({ ...prev, [row.key]: e.target.value }))
+                      }
+                    >
+                      {groupOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="scenario-checklist-field">
                     <span>Bind library asset</span>
                     <select
                       data-testid={`ai-scenario-checklist-bind-${row.key}`}
@@ -251,7 +313,7 @@ export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklis
                       onChange={(e) => handleBind(row, e.target.value)}
                     >
                       <option value="">Unbound</option>
-                      {libraryOptions.map((opt) => (
+                      {optionsForRow(row).map((opt) => (
                         <option key={opt.id} value={opt.id}>
                           {opt.name}
                         </option>
