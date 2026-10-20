@@ -66,12 +66,12 @@ function renderView(context: unknown = {}) {
     dispatch: dispatchSpy as unknown as EngineContextValue['dispatch'],
     persistence: { save: vi.fn(), onCommandSucceeded: () => undefined, dispose: () => undefined },
   }
-  render(
+  const rendered = render(
     <EngineContext.Provider value={value}>
       <AiScenarioView projectId="p-1" conversationId="c-1" context={context} />
     </EngineContext.Provider>,
   )
-  return { engine, dispatchSpy }
+  return { engine, dispatchSpy, container: rendered.container }
 }
 
 beforeEach(() => {
@@ -109,25 +109,13 @@ beforeEach(() => {
   useBackendStore.setState({ status: 'available' })
 })
 
-describe('AiScenarioView slim inline surface', () => {
-  it('renders header, open button, and status without embedding the doc or editor', () => {
-    renderView()
-    expect(screen.getByTestId('ai-scenario-section')).toBeInTheDocument()
-    expect(screen.getByTestId('ai-scenario-open-modal')).toBeInTheDocument()
-    expect(screen.getByTestId('ai-scenario-status')).toBeInTheDocument()
-    expect(screen.getByTestId('ai-scenario-downstream-gate')).toBeInTheDocument()
-    // The full surfaces live in the modal, not inline.
-    expect(screen.queryByTestId('ai-scenario-tabs')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('ai-scenario-doc')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('ai-scenario-request')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('ai-scenario-title')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('ai-scenario-step-st-1')).not.toBeInTheDocument()
-  })
+describe('AiScenarioView headless host', () => {
+  it('renders nothing inline; the modal opens from the store flag', async () => {
+    const { container } = renderView()
+    expect(container).toBeEmptyDOMElement()
+    expect(screen.queryByTestId('ai-scenario-modal')).not.toBeInTheDocument()
 
-  it('opens the modal with the legacy editor inside', async () => {
-    renderView()
-    const user = userEvent.setup()
-    await user.click(screen.getByTestId('ai-scenario-open-modal'))
+    useAiStore.setState({ scenarioModalOpen: true })
     expect(await screen.findByTestId('ai-scenario-modal')).toBeInTheDocument()
     expect(screen.getByTestId('ai-scenario-title')).toHaveValue('Ser vs Estar cat lesson')
     expect(screen.getByTestId('ai-scenario-step-st-1')).toBeInTheDocument()
@@ -145,10 +133,10 @@ describe('AiScenarioView slim inline surface', () => {
 
   it('view/edit/accept cycle in the modal never dispatches engine commands', async () => {
     const { dispatchSpy } = renderView()
-    const user = userEvent.setup()
-    await user.click(screen.getByTestId('ai-scenario-open-modal'))
+    useAiStore.setState({ scenarioModalOpen: true })
     expect(await screen.findByTestId('ai-scenario-modal')).toBeInTheDocument()
 
+    const user = userEvent.setup()
     await user.clear(screen.getByTestId('ai-scenario-title'))
     await user.type(screen.getByTestId('ai-scenario-title'), 'My edited scenario')
     const updateFetch = vi.mocked(fetch).mockResolvedValue(
@@ -166,8 +154,10 @@ describe('AiScenarioView slim inline surface', () => {
     expect(dispatchSpy).not.toHaveBeenCalled()
   })
 
-  it('shows degraded state when the backend is down', () => {
-    render(<AiScenarioView projectId="p-1" conversationId="c-1" context={{}} disabled />)
-    expect(screen.getByTestId('ai-scenario-disabled')).toBeInTheDocument()
+  it('renders nothing when the backend is down', () => {
+    const { container } = render(
+      <AiScenarioView projectId="p-1" conversationId="c-1" context={{}} disabled />,
+    )
+    expect(container).toBeEmptyDOMElement()
   })
 })

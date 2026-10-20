@@ -1,7 +1,6 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { AiScenarioView } from '../components/ai/AiScenarioView'
 import { AiScenarioModal } from '../components/ai/AiScenarioModal'
 import { EngineContext, type EngineContextValue } from '../app/engineContext'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
@@ -150,17 +149,9 @@ beforeEach(() => {
 })
 
 describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
-  it('entry button is always present; empty state opens the modal instead of hiding', async () => {
+  it('empty state opens the modal instead of hiding', async () => {
     const { value } = setupEngine('')
-    render(
-      <EngineContext.Provider value={value}>
-        <AiScenarioView projectId="p-1" conversationId="c-1" context={{}} />
-      </EngineContext.Provider>,
-    )
-    const entry = await screen.findByTestId('ai-scenario-open-modal')
-    expect(entry).toBeInTheDocument()
-    const user = userEvent.setup()
-    await user.click(entry)
+    renderModal(value)
     expect(await screen.findByTestId('ai-scenario-modal')).toBeInTheDocument()
     expect(screen.getByTestId('ai-scenario-modal-empty')).toBeInTheDocument()
   })

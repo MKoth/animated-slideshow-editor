@@ -157,37 +157,41 @@ beforeEach(() => {
 })
 
 describe('AiReconciliationView Stage B gate', () => {
-  it('slim section opens the reconciliation modal; details live in the modal', async () => {
-    render(
+  function renderOpen() {
+    return render(
       <AiReconciliationView
         projectId="p-1"
         scenarioId="scen-1"
         conversationId="c-1"
         context={{}}
+        open
+        onClose={() => undefined}
       />,
     )
-    expect(screen.getByTestId('ai-reconciliation-section')).toBeInTheDocument()
-    expect(screen.getByTestId('ai-reconciliation-open-modal')).toBeInTheDocument()
-    expect(screen.queryByTestId('ai-reconciliation-motion-st-2')).not.toBeInTheDocument()
-    const user = userEvent.setup()
-    await user.click(screen.getByTestId('ai-reconciliation-open-modal'))
+  }
+
+  it('renders only the modal when open; nothing inline', async () => {
+    const { container } = render(
+      <AiReconciliationView
+        projectId="p-1"
+        scenarioId="scen-1"
+        conversationId="c-1"
+        context={{}}
+        open={false}
+        onClose={() => undefined}
+      />,
+    )
+    expect(container).toBeEmptyDOMElement()
+    expect(screen.queryByTestId('ai-reconciliation-modal')).not.toBeInTheDocument()
+
+    renderOpen()
     expect(await screen.findByTestId('ai-reconciliation-modal')).toBeInTheDocument()
     expect(screen.getByTestId('ai-reconciliation-motion-st-2')).toBeInTheDocument()
   })
 
   it('renders middle-only verdicts with motion evidence, sound, and briefs', async () => {
-    render(
-      <AiReconciliationView
-        projectId="p-1"
-        scenarioId="scen-1"
-        conversationId="c-1"
-        context={{}}
-      />,
-    )
-    const user = userEvent.setup()
-    await user.click(screen.getByTestId('ai-reconciliation-open-modal'))
+    renderOpen()
     expect(await screen.findByTestId('ai-reconciliation-modal')).toBeInTheDocument()
-    expect(screen.getByTestId('ai-reconciliation-section')).toBeInTheDocument()
     // Pregenerated intro left alone.
     expect(screen.getByTestId('ai-reconciliation-skipped-st-1')).toHaveTextContent('left alone')
     // Middle step motion verdict cites the gap.
@@ -219,17 +223,10 @@ describe('AiReconciliationView Stage B gate', () => {
   })
 
   it('accept/reject cycle and brief edits hit the backend, never the engine', async () => {
-    render(
-      <AiReconciliationView
-        projectId="p-1"
-        scenarioId="scen-1"
-        conversationId="c-1"
-        context={{}}
-      />,
-    )
-    const user = userEvent.setup()
-    await user.click(screen.getByTestId('ai-reconciliation-open-modal'))
+    renderOpen()
     expect(await screen.findByTestId('ai-reconciliation-modal')).toBeInTheDocument()
+
+    const user = userEvent.setup()
 
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ ...sampleReconciliation, status: 'accepted' }), {
@@ -253,16 +250,18 @@ describe('AiReconciliationView Stage B gate', () => {
     expect(vi.mocked(fetch)).toHaveBeenCalled()
   })
 
-  it('shows degraded state when the backend is down', () => {
-    render(
+  it('renders nothing when the backend is down', () => {
+    const { container } = render(
       <AiReconciliationView
         projectId="p-1"
         scenarioId="scen-1"
         conversationId="c-1"
         context={{}}
         disabled
+        open
+        onClose={() => undefined}
       />,
     )
-    expect(screen.getByTestId('ai-reconciliation-disabled')).toBeInTheDocument()
+    expect(container).toBeEmptyDOMElement()
   })
 })

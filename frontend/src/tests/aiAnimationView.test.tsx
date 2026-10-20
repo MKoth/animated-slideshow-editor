@@ -613,10 +613,11 @@ describe('AiPanel animation mode', () => {
 
     await user.click(screen.getByTestId('ai-mode-animation'))
 
-    // Dedicated mode surfaces the live (unsaved) project, not lesson stages.
+    // Dedicated mode surfaces the live (unsaved) project, not scenario stages.
     expect(screen.getByTestId('ai-animation-section')).toBeInTheDocument()
     expect(screen.getByTestId('ai-animation-project')).toHaveTextContent('Live Unsaved Name')
-    expect(screen.queryByTestId('ai-plan-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-scenario-open-modal')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-reconciliation-open-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('ai-board-section')).not.toBeInTheDocument()
     // Proposals live inline in the conversation now — no bottom section.
     expect(screen.queryByTestId('ai-proposal-section')).not.toBeInTheDocument()
@@ -630,17 +631,17 @@ describe('AiPanel animation mode', () => {
     await user.click(screen.getByTestId('ai-mode-scenario'))
 
     expect(screen.queryByTestId('ai-animation-section')).not.toBeInTheDocument()
-    expect(screen.getByTestId('ai-plan-section')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-open-modal')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-reconciliation-open-modal')).toBeInTheDocument()
   })
 
-  it('splits lesson stages across scenario, audio, and blackboard modes', async () => {
+  it('splits scenario stages across scenario, audio, and blackboard modes', async () => {
     renderPanel()
     const user = userEvent.setup()
 
     await user.click(screen.getByTestId('ai-mode-scenario'))
-    expect(screen.getByTestId('ai-plan-section')).toBeInTheDocument()
-    expect(screen.getByTestId('ai-scenario-section')).toBeInTheDocument()
-    expect(screen.getByTestId('ai-reconciliation-section')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-open-modal')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-reconciliation-open-modal')).toBeInTheDocument()
     expect(screen.queryByTestId('ai-narration-section')).not.toBeInTheDocument()
     expect(screen.queryByTestId('ai-board-section')).not.toBeInTheDocument()
     expect(screen.queryByTestId('ai-animation-section')).not.toBeInTheDocument()
@@ -648,12 +649,14 @@ describe('AiPanel animation mode', () => {
     await user.click(screen.getByTestId('ai-mode-audio'))
     expect(screen.getByTestId('ai-narration-section')).toBeInTheDocument()
     expect(screen.getByTestId('ai-calibration-section')).toBeInTheDocument()
-    expect(screen.queryByTestId('ai-plan-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-scenario-open-modal')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-reconciliation-open-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('ai-board-section')).not.toBeInTheDocument()
 
     await user.click(screen.getByTestId('ai-mode-blackboard'))
     expect(screen.getByTestId('ai-board-section')).toBeInTheDocument()
-    expect(screen.queryByTestId('ai-plan-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-scenario-open-modal')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-reconciliation-open-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('ai-narration-section')).not.toBeInTheDocument()
   })
 
@@ -663,11 +666,13 @@ describe('AiPanel animation mode', () => {
 
     await user.click(screen.getByTestId('ai-mode-shape'))
     expect(screen.getByTestId('ai-animation-section')).toBeInTheDocument()
-    expect(screen.queryByTestId('ai-plan-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-scenario-open-modal')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-reconciliation-open-modal')).not.toBeInTheDocument()
 
     await user.click(screen.getByTestId('ai-mode-collection'))
     expect(screen.getByTestId('ai-animation-section')).toBeInTheDocument()
-    expect(screen.queryByTestId('ai-plan-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-scenario-open-modal')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-reconciliation-open-modal')).not.toBeInTheDocument()
   })
 })
 

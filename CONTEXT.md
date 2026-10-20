@@ -368,12 +368,8 @@ _Avoid_: Inactive control, unbound control (bindings may still exist)
 A project-scoped AI chat thread: an id, title, timestamps, and an ordered list of messages (user/assistant). Persists server-side with the project; never part of the `.lesson` file.
 _Avoid_: Chat session, thread
 
-**Lesson Plan**:
-A structured, reviewable AI proposal for a lesson: title, description, language, estimated duration, learning objective, teaching strategy, and per-slide proposals (title, goal, duration, explanation, suggested narration, required assets classified existing/missing/optional, recommended clips). Plans are edited and accepted before anything becomes a project; acceptance stores the plan without modifying the project.
-_Avoid_: Storyboard, outline
-
 **AI Edit Proposal**:
-A reviewable batch of editor commands the AI generates from a natural-language request or an accepted lesson plan: title, description, optional confidence, affected slides, warnings, and the commands themselves. Validated (server-side schema, then a client dry-run against the live engine) and executed only with user approval — wholly, partially, or not at all. Execution dispatches the canonical engine commands; one approved proposal executes as one transaction and links back to the conversation that produced it.
+A reviewable batch of editor commands the AI generates from a natural-language request: title, description, optional confidence, affected slides, warnings, and the commands themselves. Validated (server-side schema, then a client dry-run against the live engine) and executed only with user approval — wholly, partially, or not at all. Execution dispatches the canonical engine commands; one approved proposal executes as one transaction and links back to the conversation that produced it.
 _Avoid_: AI action, edit suggestion
 
 **Context Snapshot**:
@@ -404,7 +400,7 @@ History restore that copies a prior version's content forward as a new append-on
 _Avoid_: Undo, revert
 
 **Asset Discovery Run**:
-One reconciliation pass over a lesson plan's required assets, evaluating its missing-class assets against the library: a backend SQLite record, project-scoped and never in the `.lesson` file, holding per-required-asset verdicts (matched or missing), ranked candidates with match scores and explanations, and accept/reject/replace decisions. The latest run is the authoritative state; older runs remain as history. Acceptance maps a required asset to a library definition so build-from-plan can place it.
+One reconciliation pass over a scenario's asset hints, evaluating its missing-class assets against the library: a backend SQLite record, project-scoped and never in the `.lesson` file, holding per-required-asset verdicts (matched or missing), ranked candidates with match scores and explanations, and accept/reject/replace decisions. The latest run is the authoritative state; older runs remain as history. Acceptance maps a required asset to a library definition so later stages can place it.
 _Avoid_: Recommendation, asset search session
 
 **Match Score**:

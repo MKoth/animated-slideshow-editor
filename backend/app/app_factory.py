@@ -12,8 +12,6 @@ from app.ai.model import (  # noqa: F401
     AiMessageRow,
     AiNarrationRevisionRow,
     AiNarrationRow,
-    AiPlanRevisionRow,
-    AiPlanRow,
     AiProposalExecutionRow,
     AiProposalRow,
     AiReconciliationRevisionRow,

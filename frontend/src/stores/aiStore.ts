@@ -12,9 +12,6 @@ import {
   type AiNarration,
   type AiNarrationGenerateResult,
   type AiNarrationSummary,
-  type AiPlan,
-  type AiPlanPatch,
-  type AiPlanSummary,
   type AiProposal,
   type AiProposalCreateInput,
   type AiProposalValidationError,
@@ -88,12 +85,6 @@ interface AiState {
   lastError: { code: string; message: string } | null
   api: AiApi
   aborter: AbortController | null
-  plans: AiPlanSummary[]
-  planById: Record<string, AiPlan>
-  activePlanId: string | null
-  planGenerating: boolean
-  planError: { code: string; message: string } | null
-  planRequest: string
   scenarios: AiScenarioSummary[]
   scenarioById: Record<string, AiScenario>
   activeScenarioId: string | null
@@ -143,8 +134,6 @@ interface AiState {
   setActive: (projectId: string, conversationId: string, mode?: AiAssistantMode) => void
   clearActive: (projectId: string, mode?: AiAssistantMode) => void
   activeIdFor: (projectId: string, mode?: AiAssistantMode) => string | null
-  setPlanRequest: (request: string) => void
-  setActivePlan: (id: string | null) => void
 
   loadConversations: (projectId: string, mode?: AiAssistantMode) => Promise<void>
   createConversation: (
@@ -169,19 +158,6 @@ interface AiState {
   ) => Promise<void>
   stopStreaming: () => void
   markUnavailable: () => void
-
-  loadPlans: (projectId: string) => Promise<void>
-  proposePlan: (
-    projectId: string,
-    conversationId: string,
-    requestText: string,
-    context: unknown,
-    planId?: string,
-  ) => Promise<AiPlan | null>
-  loadPlan: (id: string) => Promise<void>
-  updatePlan: (id: string, patch: AiPlanPatch) => Promise<void>
-  acceptPlan: (id: string) => Promise<void>
-  rejectPlan: (id: string) => Promise<void>
 
   setScenarioRequest: (request: string) => void
   setActiveScenario: (id: string | null) => void
@@ -370,12 +346,6 @@ export const useAiStore = create<AiState>()(
       lastError: null,
       api: new AiApi(apiClient),
       aborter: null,
-      plans: [],
-      planById: {},
-      activePlanId: null,
-      planGenerating: false,
-      planError: null,
-      planRequest: '',
       // Scenario slice seam (issue #460): owned by `stores/scenarioSlice.ts`.
       // Later scenario markdown tickets edit the slice owner only.
       ...initialScenarioSliceState,
@@ -743,138 +713,6 @@ export const useAiStore = create<AiState>()(
       },
 
       markUnavailable: () => set({ status: 'unavailable' }),
-
-      setPlanRequest: (request) => set({ planRequest: request }),
-      setActivePlan: (id) => set({ activePlanId: id }),
-
-      loadPlans: async (projectId) => {
-        try {
-          const plans = await get().api.listPlans(projectId)
-          set((state) => ({
-            plans,
-            activePlanId:
-              state.activePlanId && plans.some((p) => p.id === state.activePlanId)
-                ? state.activePlanId
-                : (plans[0]?.id ?? null),
-          }))
-        } catch (error) {
-          if (isBackendDown(error)) set({ status: 'unavailable' })
-        }
-      },
-
-      proposePlan: async (projectId, conversationId, requestText, context, planId) => {
-        const clean = requestText.trim()
-        if (!clean || get().planGenerating) return null
-        set({ planGenerating: true, planError: null })
-        try {
-          const plan = await get().api.proposePlan({
-            projectId,
-            conversationId,
-            request: clean,
-            context,
-            planId,
-          })
-          set((state) => ({
-            planById: { ...state.planById, [plan.id]: plan },
-            plans: [
-              {
-                id: plan.id,
-                projectId: plan.projectId,
-                conversationId: plan.conversationId,
-                title: plan.title,
-                status: plan.status,
-                slideCount: plan.slides.length,
-                modified: plan.modified,
-              },
-              ...state.plans.filter((p) => p.id !== plan.id),
-            ],
-            activePlanId: plan.id,
-            planRequest: '',
-          }))
-          // Refresh conversation messages: plan generation appends narration.
-          try {
-            const messages = await get().api.listMessages(conversationId)
-            set((state) => ({
-              messagesById: { ...state.messagesById, [conversationId]: messages },
-            }))
-          } catch {
-            // Plan itself succeeded; message refresh is best-effort.
-          }
-          return plan
-        } catch (error) {
-          if (isBackendDown(error)) {
-            set({ status: 'unavailable' })
-            return null
-          }
-          const code = 'provider_error'
-          const message = error instanceof Error ? error.message : 'Plan generation failed — retry.'
-          set({ planError: { code, message } })
-          try {
-            const messages = await get().api.listMessages(conversationId)
-            set((state) => ({
-              messagesById: { ...state.messagesById, [conversationId]: messages },
-            }))
-          } catch {
-            // Keep the plan error visible even if refresh fails.
-          }
-          return null
-        } finally {
-          set({ planGenerating: false })
-        }
-      },
-
-      loadPlan: async (id) => {
-        try {
-          const plan = await get().api.getPlan(id)
-          set((state) => ({ planById: { ...state.planById, [id]: plan } }))
-        } catch (error) {
-          if (isBackendDown(error)) set({ status: 'unavailable' })
-        }
-      },
-
-      updatePlan: async (id, patch) => {
-        try {
-          const plan = await get().api.updatePlan(id, patch)
-          set((state) => ({
-            planById: { ...state.planById, [id]: plan },
-            plans: state.plans.map((p) =>
-              p.id === id
-                ? { ...p, title: plan.title, status: plan.status, modified: plan.modified }
-                : p,
-            ),
-          }))
-        } catch (error) {
-          if (isBackendDown(error)) set({ status: 'unavailable' })
-        }
-      },
-
-      acceptPlan: async (id) => {
-        try {
-          const plan = await get().api.acceptPlan(id)
-          set((state) => ({
-            planById: { ...state.planById, [id]: plan },
-            plans: state.plans.map((p) =>
-              p.id === id ? { ...p, status: plan.status, modified: plan.modified } : p,
-            ),
-          }))
-        } catch (error) {
-          if (isBackendDown(error)) set({ status: 'unavailable' })
-        }
-      },
-
-      rejectPlan: async (id) => {
-        try {
-          const plan = await get().api.rejectPlan(id)
-          set((state) => ({
-            planById: { ...state.planById, [id]: plan },
-            plans: state.plans.map((p) =>
-              p.id === id ? { ...p, status: plan.status, modified: plan.modified } : p,
-            ),
-          }))
-        } catch (error) {
-          if (isBackendDown(error)) set({ status: 'unavailable' })
-        }
-      },
 
       // Scenario slice seam (issue #460): thin delegation to the slice owner.
       // Later tickets edit `stores/scenarioSlice.ts` without touching this file.
@@ -1726,8 +1564,6 @@ export const useAiStore = create<AiState>()(
         drafts: state.drafts,
         panelOpen: state.panelOpen,
         assistantMode: state.assistantMode,
-        activePlanId: state.activePlanId,
-        planRequest: state.planRequest,
         activeScenarioId: state.activeScenarioId,
         scenarioRequest: state.scenarioRequest,
         activeReconciliationId: state.activeReconciliationId,

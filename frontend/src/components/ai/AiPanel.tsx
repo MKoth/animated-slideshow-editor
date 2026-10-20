@@ -15,7 +15,6 @@ import { conversationModeOf, normalizeAiMode, useAiStore } from '../../stores/ai
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useBackendStore } from '../../stores/backendStore'
-import { AiPlanView } from './AiPlanView'
 import { AiProposalModal, type ProposalModalState } from './AiProposalModal'
 import { AiProposalDetail } from './AiProposalView'
 import { AiAnimationView } from './AiAnimationView'
@@ -62,6 +61,7 @@ export function AiPanel() {
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
   const [proposalModal, setProposalModal] = useState<ProposalModalState | null>(null)
+  const [reconciliationModalOpen, setReconciliationModalOpen] = useState(false)
   const [othersOpen, setOthersOpen] = useState(false)
   const [copyConversationState, setCopyConversationState] = useState<{
     id: string
@@ -152,6 +152,10 @@ export function AiPanel() {
         assetNames,
         audioNames,
         animationAssets: conversationAssets,
+        // Blackboard-only (scenario assistant): no scene, assets, animation,
+        // or timeline context — the lesson, markdown, and version lines only.
+        // The backend drops these keys again as defense in depth.
+        blackboardOnly: normalizeAiMode(assistantMode) === 'scenario',
         ...(scenarioMarkdown ? { scenarioMarkdown } : {}),
         ...(activeMarkdownVersion
           ? {
@@ -180,6 +184,7 @@ export function AiPanel() {
     [
       engine,
       projectId,
+      assistantMode,
       selectionKey,
       assetKey,
       audioKey,
@@ -225,8 +230,8 @@ export function AiPanel() {
   const isStreaming = status === 'streaming' && streamingConversationId === activeId
   const unavailable = status === 'unavailable' || backendStatus === 'unavailable'
   const mode = normalizeAiMode(assistantMode)
-  // Lesson was split into scenario/audio/blackboard: those render the
-  // plan/scenario/reconciliation/narration/calibration/board stages while
+  // Scenario/audio/blackboard render the
+  // scenario/reconciliation/narration/calibration/board stages while
   // animation/shapes/collections share the asset chat + proposals chrome.
   const isStageMode = mode === 'scenario' || mode === 'audio' || mode === 'blackboard'
   const usesAssetChrome = !isStageMode
@@ -684,12 +689,6 @@ export function AiPanel() {
             />
           ) : (
             <>
-              <AiPlanView
-                projectId={projectId}
-                conversationId={activeId}
-                context={context}
-                disabled
-              />
               <AiScenarioView
                 projectId={projectId}
                 conversationId={activeId}
@@ -702,6 +701,8 @@ export function AiPanel() {
                 conversationId={activeId}
                 context={context}
                 disabled
+                open={false}
+                onClose={() => setReconciliationModalOpen(false)}
               />
             </>
           )}
@@ -1100,7 +1101,7 @@ export function AiPanel() {
                         ? 'Describe the speech…'
                         : mode === 'blackboard'
                           ? 'Describe the blackboard…'
-                          : 'Describe the lesson plan…'
+                          : 'Describe the scenario…'
               }
               value={draft}
               onChange={(e) =>
@@ -1158,6 +1159,18 @@ export function AiPanel() {
                 >
                   Edit (new version)
                 </button>
+                <button
+                  data-testid="ai-scenario-open-modal"
+                  onClick={() => store.setScenarioModalOpen(true)}
+                >
+                  Scenario MD
+                </button>
+                <button
+                  data-testid="ai-reconciliation-open-modal"
+                  onClick={() => setReconciliationModalOpen(true)}
+                >
+                  Reconciliation
+                </button>
               </>
             )}
             <button data-testid="ai-settings-open" onClick={() => store.setSettingsOpen(true)}>
@@ -1198,13 +1211,6 @@ export function AiPanel() {
             />
           ) : (
             <>
-              <AiPlanView
-                projectId={projectId}
-                conversationId={activeId}
-                context={context}
-                disabled={unavailable}
-              />
-
               <AiScenarioView
                 projectId={projectId}
                 conversationId={activeId}
@@ -1218,6 +1224,8 @@ export function AiPanel() {
                 conversationId={activeId}
                 context={context}
                 disabled={unavailable}
+                open={reconciliationModalOpen}
+                onClose={() => setReconciliationModalOpen(false)}
               />
             </>
           )}

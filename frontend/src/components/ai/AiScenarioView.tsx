@@ -98,45 +98,12 @@ export function AiScenarioView({
     (engine as { project?: { id?: string } } | undefined)?.project?.id,
   ])
 
-  if (disabled) {
-    return (
-      <div className="ai-scenario" data-testid="ai-scenario-section">
-        <div data-testid="ai-scenario-disabled">
-          Action scenarios unavailable — backend unreachable.
-        </div>
-      </div>
-    )
-  }
-
-  const handleOpenModal = () => {
-    store.setScenarioModalOpen(true)
-  }
-
-  // Slim inline surface: the chat keeps a header, an open button, and a
-  // one-line status. The full doc, History, request inputs, and legacy
-  // editor live in the modal so the message list keeps its scroll height.
-  return (
-    <div className="ai-scenario" data-testid="ai-scenario-section">
-      <div data-testid="ai-scenario-header">
-        <span>Scenario mode</span>{' '}
-        <button data-testid="ai-scenario-open-modal" onClick={handleOpenModal}>
-          Scenario MD
-        </button>
-      </div>
-      {scenarioModalOpen && (
-        <AiScenarioModal projectId={projectId} conversationId={conversationId} context={context} />
-      )}
-      <div data-testid="ai-scenario-status">
-        {markdownVersions.length} version(s)
-        {acceptedMarkdownVersionId
-          ? ` — accepted ${acceptedMarkdownVersionId.slice(0, 8)}`
-          : ' — no accepted version'}
-      </div>
-      <div data-testid="ai-scenario-downstream-gate">
-        {acceptedMarkdownVersionId
-          ? `Accepted ${acceptedMarkdownVersionId.slice(0, 8)} is the downstream snapshot — later assistants read it, not the active draft.`
-          : 'No accepted version — downstream reconciliation blocks until one is accepted in History.'}
-      </div>
-    </div>
-  )
+  // Headless host: loads scenario data, syncs server versions into the
+  // portable `.lesson` doc, and renders the modal when the store flag (set
+  // from the AiPanel input bar) is on. No inline section — the chat keeps
+  // its scroll height; everything lives in the modal.
+  if (disabled) return null
+  return scenarioModalOpen ? (
+    <AiScenarioModal projectId={projectId} conversationId={conversationId} context={context} />
+  ) : null
 }

@@ -178,6 +178,15 @@ export interface SnapshotSources {
   }[]
   /** Scenario markdown doc (issue #462): project-attached doc working view. */
   scenarioMarkdown?: string
+  /**
+   * Blackboard-only mode (scenario assistant): omit every room key (scene
+   * nodes, selection, materials, shaders, clips, library assets, collections,
+   * audio, animation digest, timeline duration) and keep the lesson structure
+   * plus the scenario markdown working view. The global asset library (e.g. a
+   * living-room asset authored for a staged video) must never leak into a
+   * blackboard-only lesson.
+   */
+  blackboardOnly?: boolean
   /** Active draft version line (issue #462): summary + touched steps + id. */
   scenarioActiveVersion?: { id: string; summary?: string; touchedSteps?: number[] }
   /** Accepted downstream snapshot (issue #466): stable read for later assistants. */
@@ -206,15 +215,46 @@ export const SNAPSHOT_ANIMATABLE_PARAMS: readonly string[] = [
 export const SNAPSHOT_SCRIPT_VERBS: readonly string[] = ['reveal', 'mark', 'wipe', 'carry']
 
 /**
+ * Empty animation digest for blackboard-only snapshots: no nodes, no rig, no
+ * clips, no collections, no timeline. Fresh object per call — never shared.
+ */
+function emptyAnimationSnapshot(): AnimationAssistantSnapshot {
+  return {
+    nodes: [],
+    rig: { boneCount: 0, bones: [], shapeInventory: [], morphBindings: [], controls: [] },
+    clips: [],
+    collections: [],
+    timeline: {
+      slideId: null,
+      duration: null,
+      animatedNodeCount: 0,
+      totalKeyframes: 0,
+      clipInstanceCount: 0,
+      placementCount: 0,
+      perNode: [],
+      controlHosts: [],
+      hasAnimationScript: false,
+    },
+    shapeGeometry: [],
+    shapeGeometryTruncated: false,
+    truncated: { nodes: false, clips: false, collections: false, timelineNodes: false },
+  }
+}
+
+/**
  * Assemble a read-only digest of the current project state for AI requests.
  * Reads only from the engine read API + UI stores — never from mutation paths.
  * Regenerated per request, never serialized into conversations or the project.
+ *
+ * With `sources.blackboardOnly` (scenario assistant), room state is omitted:
+ * no scene walk, no animation digest, no library assets, no timeline duration.
  */
 export function buildContextSnapshot(
   engine: EnginePublic,
   sources: SnapshotSources = {},
 ): ContextSnapshot {
   const started = performance.now()
+  const blackboardOnly = sources.blackboardOnly === true
   const project = engine.project
   const slides: ContextSnapshotSlide[] = project
     ? project.slides.map((slide, index) => ({ id: slide.id, name: slide.name, order: index }))
@@ -228,7 +268,7 @@ export function buildContextSnapshot(
   const sceneNodes: string[] = []
   const collected: { node: SceneNode; depth: number }[] = []
   let nodesTruncated = false
-  if (active) {
+  if (active && !blackboardOnly) {
     const visit = (nodeId: string, depth: number): void => {
       if (collected.length >= ANIMATION_SNAPSHOT_LIMITS.nodes) {
         nodesTruncated = true
@@ -255,27 +295,23 @@ export function buildContextSnapshot(
   const snapshot: ContextSnapshot = {
     projectName: project?.name ?? '',
     projectId: project?.id ?? null,
-    activeSlideName: active?.name ?? null,
-    activeSlideDuration: active ? active.duration : null,
+    activeSlideName: blackboardOnly ? null : (active?.name ?? null),
+    activeSlideDuration: blackboardOnly ? null : active ? active.duration : null,
     slides,
-    sceneNodes: sceneNodes.slice(0, 200),
-    selection: [...(sources.selection ?? [])].slice(0, 100),
-    materials: engine.materialDefinitions.map((m) => m.name).slice(0, 200),
-    shaders: engine.shaderDefinitions.map((s) => s.name).slice(0, 200),
-    clips: engine.clips.map((c) => c.name).slice(0, 200),
-    assets: [...(sources.assetNames ?? [])].slice(0, 300),
-    clipCollections: readCollectionNames(engine).slice(0, 200),
-    audio: [...(sources.audioNames ?? [])].slice(0, 200),
-    embeddedAudio: readEmbeddedAudioNames(engine).slice(0, 200),
-    animatableParams: [...SNAPSHOT_ANIMATABLE_PARAMS],
-    scriptVerbs: [...SNAPSHOT_SCRIPT_VERBS],
-    animation: buildAnimationSnapshot(
-      engine,
-      active,
-      collected,
-      nodesTruncated,
-      sources.selection ?? [],
-    ),
+    sceneNodes: blackboardOnly ? [] : sceneNodes.slice(0, 200),
+    selection: blackboardOnly ? [] : [...(sources.selection ?? [])].slice(0, 100),
+    materials: blackboardOnly ? [] : engine.materialDefinitions.map((m) => m.name).slice(0, 200),
+    shaders: blackboardOnly ? [] : engine.shaderDefinitions.map((s) => s.name).slice(0, 200),
+    clips: blackboardOnly ? [] : engine.clips.map((c) => c.name).slice(0, 200),
+    assets: blackboardOnly ? [] : [...(sources.assetNames ?? [])].slice(0, 300),
+    clipCollections: blackboardOnly ? [] : readCollectionNames(engine).slice(0, 200),
+    audio: blackboardOnly ? [] : [...(sources.audioNames ?? [])].slice(0, 200),
+    embeddedAudio: blackboardOnly ? [] : readEmbeddedAudioNames(engine).slice(0, 200),
+    animatableParams: blackboardOnly ? [] : [...SNAPSHOT_ANIMATABLE_PARAMS],
+    scriptVerbs: blackboardOnly ? [] : [...SNAPSHOT_SCRIPT_VERBS],
+    animation: blackboardOnly
+      ? emptyAnimationSnapshot()
+      : buildAnimationSnapshot(engine, active, collected, nodesTruncated, sources.selection ?? []),
     ...(sources.scenarioMarkdown
       ? { scenarioMarkdown: sources.scenarioMarkdown.slice(0, 8000) }
       : {}),
@@ -308,7 +344,7 @@ export function buildContextSnapshot(
           },
         }
       : {}),
-    ...(sources.animationAssets && sources.animationAssets.length > 0
+    ...(sources.animationAssets && sources.animationAssets.length > 0 && !blackboardOnly
       ? { animationAssistantAssets: sources.animationAssets.map((asset) => ({ ...asset })) }
       : {}),
   }

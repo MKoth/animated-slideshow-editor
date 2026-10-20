@@ -1,8 +1,10 @@
 from app.ai.library import AiLibrary
 from app.ai.prompting import ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS
 from app.api.ai import (
+    _ROOM_MODES,
     _effective_assistant_mode,
     _proposal_asset_instructions,
+    _scenario_blackboard_context,
     _system_prompt_for_mode,
 )
 from app.config import (
@@ -133,8 +135,14 @@ def test_shape_and_collection_defaults_differ_from_animation() -> None:
 
 def test_scenario_audio_blackboard_prompts_scope_to_their_stages() -> None:
     scenario = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "scenario").lower()
-    assert "high-level lesson plan" in scenario
-    assert "action scenario" in scenario or "action" in scenario
+    assert "scenario markdown doc" in scenario
+    assert "high-level lesson plan" not in scenario
+    # Blackboard-only: no legacy action-scenario block with staged directions.
+    assert "action scenario" not in scenario
+    assert "intro/middle/outro" not in scenario
+    assert "blackboard" in scenario
+    # Room constructs are named only to forbid them in this mode.
+    assert "on-screen actions" in scenario
     assert "never claim a mutation happened before approval" in scenario
     assert ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS not in _system_prompt_for_mode(
         DEFAULT_SYSTEM_PROMPT, "scenario"
@@ -214,3 +222,54 @@ def test_every_mode_prompt_teaches_ask_blocks() -> None:
 def test_animation_ask_blocks_keep_two_phase_policy() -> None:
     assert "## Open questions" in DEFAULT_ANIMATION_SYSTEM_PROMPT
     assert "instead of prose bullets" in DEFAULT_ANIMATION_SYSTEM_PROMPT
+
+
+def test_scenario_blackboard_context_drops_room_keys() -> None:
+    """Blackboard-only scenario view: room keys go, lesson + doc stay."""
+    assert _ROOM_MODES == frozenset({"animation", "shape", "collection"})
+    context = _scenario_blackboard_context(
+        {
+            "projectName": "Lesson",
+            "slides": [{"name": "Intro"}],
+            "activeSlideName": "Intro",
+            "activeSlideDuration": 10,
+            "sceneNodes": ["living-room [n-1]"],
+            "selection": ["n-1"],
+            "materials": ["chalk"],
+            "shaders": ["grain"],
+            "clips": ["Pop"],
+            "assets": ["living-room"],
+            "clipCollections": ["Walking"],
+            "audio": ["take-1"],
+            "embeddedAudio": ["take-1"],
+            "animation": {"timeline": {"duration": 10}},
+            "animationAssistantAssets": [],
+            "scenarioMarkdown": "## Step 1 -- Hi",
+            "scenarioActiveVersion": {"id": "v-1"},
+        }
+    )
+    assert isinstance(context, dict)
+    for dropped in (
+        "sceneNodes",
+        "selection",
+        "materials",
+        "shaders",
+        "clips",
+        "assets",
+        "clipCollections",
+        "audio",
+        "embeddedAudio",
+        "animation",
+        "animationAssistantAssets",
+        "activeSlideDuration",
+    ):
+        assert dropped not in context
+    assert context["projectName"] == "Lesson"
+    assert context["slides"] == [{"name": "Intro"}]
+    assert context["scenarioMarkdown"] == "## Step 1 -- Hi"
+    assert context["scenarioActiveVersion"] == {"id": "v-1"}
+
+
+def test_scenario_blackboard_context_passes_through_non_dicts() -> None:
+    assert _scenario_blackboard_context(None) is None
+    assert _scenario_blackboard_context("raw") == "raw"

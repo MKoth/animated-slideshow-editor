@@ -283,3 +283,66 @@ def test_chat_injects_linked_histories_from_other_modes(
     assert "teach cats" in joined
     assert "scenario conversation" in joined
     assert "read-only linked context" in joined
+
+
+def test_scenario_chat_is_blackboard_only(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scenario chats never see room state: no room linked histories, no room context keys."""
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+    seen: dict[str, Any] = {}
+
+    def _stream(self: ZenClient, **kwargs: Any) -> Iterator[str]:
+        seen["messages"] = kwargs.get("messages")
+        yield "ok"
+
+    monkeypatch.setattr(ZenClient, "chat_stream", _stream)
+
+    animation = client.post(
+        "/api/ai/conversations", json={"projectId": "p-1", "mode": "animation"}
+    ).json()
+    shape = client.post("/api/ai/conversations", json={"projectId": "p-1", "mode": "shape"}).json()
+    audio = client.post("/api/ai/conversations", json={"projectId": "p-1", "mode": "audio"}).json()
+    for conv, text in (
+        (animation, "room dance wave"),
+        (shape, "room morph wing"),
+        (audio, "speak softly"),
+    ):
+        r = client.post(
+            "/api/ai/chat",
+            json={"conversationId": conv["id"], "message": text, "mode": "send", "context": {}},
+        )
+        assert r.status_code == 200, r.text
+    scenario = client.post(
+        "/api/ai/conversations", json={"projectId": "p-1", "mode": "scenario"}
+    ).json()
+    r = client.post(
+        "/api/ai/chat",
+        json={
+            "conversationId": scenario["id"],
+            "message": "teach ser and estar",
+            "mode": "send",
+            "context": {
+                "projectName": "Lesson",
+                "assets": ["living-room"],
+                "sceneNodes": ["living-room [n-1]"],
+                "animation": {"timeline": {"duration": 10}},
+                "activeSlideDuration": 10,
+                "scenarioMarkdown": "## Step 1 -- Hola",
+            },
+        },
+    )
+    assert r.status_code == 200, r.text
+    joined = "\n".join(str(m.get("content", "")) for m in seen["messages"])
+    # Room linked histories are excluded; the blackboard family stays visible.
+    assert "room dance wave" not in joined
+    assert "room morph wing" not in joined
+    assert "animation conversation" not in joined
+    assert "shape conversation" not in joined
+    assert "speak softly" in joined
+    assert "audio conversation" in joined
+    # Room context keys are sanitized; the markdown working view rides along.
+    assert "living-room" not in joined
+    assert "## Step 1 -- Hola" in joined

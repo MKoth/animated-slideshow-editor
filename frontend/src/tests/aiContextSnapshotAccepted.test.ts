@@ -35,3 +35,42 @@ describe('context snapshot accepted version', () => {
     expect(snapshot.scenarioAcceptedVersion).toBeUndefined()
   })
 })
+
+describe('context snapshot blackboard-only mode', () => {
+  it('omits room state for the scenario assistant but keeps the doc', () => {
+    const snapshot = buildContextSnapshot(mockEngine(), {
+      selection: ['n-1'],
+      assetNames: ['living-room'],
+      audioNames: ['take-1'],
+      scenarioMarkdown: '## Step 1 -- Hi',
+      scenarioActiveVersion: { id: 'v-active', summary: 'Draft', touchedSteps: [1] },
+      blackboardOnly: true,
+    })
+    expect(snapshot.scenarioMarkdown).toContain('## Step 1')
+    expect(snapshot.scenarioActiveVersion?.id).toBe('v-active')
+    expect(snapshot.sceneNodes).toEqual([])
+    expect(snapshot.selection).toEqual([])
+    expect(snapshot.materials).toEqual([])
+    expect(snapshot.shaders).toEqual([])
+    expect(snapshot.clips).toEqual([])
+    expect(snapshot.assets).toEqual([])
+    expect(snapshot.clipCollections).toEqual([])
+    expect(snapshot.audio).toEqual([])
+    expect(snapshot.embeddedAudio).toEqual([])
+    expect(snapshot.animation.nodes).toEqual([])
+    expect(snapshot.animation.clips).toEqual([])
+    expect(snapshot.animation.collections).toEqual([])
+    expect(snapshot.animation.timeline.duration).toBeNull()
+    expect(snapshot.activeSlideDuration).toBeNull()
+    expect(snapshot.animationAssistantAssets).toBeUndefined()
+  })
+
+  it('keeps full context without the flag', () => {
+    const snapshot = buildContextSnapshot(mockEngine(), {
+      selection: ['n-1'],
+      assetNames: ['living-room'],
+    })
+    expect(snapshot.selection).toEqual(['n-1'])
+    expect(snapshot.assets).toEqual(['living-room'])
+  })
+})
