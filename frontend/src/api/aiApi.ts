@@ -695,6 +695,11 @@ export class AiApi {
     )
   }
 
+  async clearMarkdownVersions(projectId: string): Promise<void> {
+    const params = new URLSearchParams({ projectId })
+    return this.client.delete(`/api/ai/scenarios/markdown/versions?${params.toString()}`)
+  }
+
   async getAcceptedMarkdownVersion(projectId: string): Promise<{
     projectId: string
     acceptedVersionId: string | null

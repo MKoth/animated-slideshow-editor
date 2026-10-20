@@ -328,7 +328,9 @@ _ROOM_MODES = frozenset({"animation", "shape", "collection"})
 #: Context-snapshot keys carrying room state: scene graph, library assets,
 #: canvas selection, animation digest, and timeline duration. Dropped for the
 #: scenario assistant so a global library (e.g. a living-room asset authored
-#: for a staged video) can never leak into a blackboard-only lesson.
+#: for a staged video) can never leak into a blackboard-only lesson: the
+#: assistant stays agnostic to library contents and always proposes fresh
+#: visuals, while binding stays the author's job in the checklist.
 _SCENARIO_DROPPED_CONTEXT_KEYS = frozenset(
     {
         "sceneNodes",

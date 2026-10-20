@@ -59,6 +59,27 @@ describe('scenarioChecklist pure seam (issue #463)', () => {
     expect(rows[2]).toMatchObject({ bound: false, hasBrief: false })
   })
 
+  it('carries chalk labels onto rows for binding context', () => {
+    const rows = buildScenarioChecklistRows(
+      [
+        '# Lesson',
+        '',
+        '## Step 1 — One',
+        '',
+        '![Green tree](asset:green-tree)',
+        '',
+        '> Brief: A tree.',
+        '',
+        '> Label: El árbol ES verde',
+        '',
+      ].join('\n'),
+      {},
+      new Set(),
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ key: 'green-tree', label: 'El árbol ES verde' })
+  })
+
   it('brief text alone never unblocks; missing binding or unknown id stays unbound', () => {
     const rows = buildScenarioChecklistRows(
       MD,

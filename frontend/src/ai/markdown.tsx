@@ -1,4 +1,4 @@
-import { Children, isValidElement, useEffect, useState } from 'react'
+import { Children, isValidElement, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -114,6 +114,57 @@ function isVisualLine(children: ReactNode): boolean {
 
 const REUSE_COMMENT_RE = /^<!--\s*reuse:\s*(.+?)\s*-->$/gim
 
+// Board lines that must stand alone: the model often writes them glued to
+// surrounding paragraphs (no blank lines), which markdown then merges into
+// one paragraph so no chip renders. Isolation inserts the blank lines;
+// fenced code blocks are left untouched. Table rows must never match.
+const BOARD_LINE_RE =
+  /^\s*(\[place:|\[reveal:|\[remove:|\[wipe\]|!\[|> Brief:|> Label:|<!-- reuse:)/i
+
+function isolateBoardLines(content: string): string {
+  const lines = content.split('\n')
+  const out: string[] = []
+  let fenced = false
+  lines.forEach((line, index) => {
+    if (/^\s*```/.test(line)) fenced = !fenced
+    const marker = !fenced && BOARD_LINE_RE.test(line)
+    if (marker && out.length > 0 && out[out.length - 1]!.trim() !== '') out.push('')
+    out.push(line)
+    if (marker) {
+      const next = lines[index + 1]
+      if (next !== undefined && next.trim() !== '') out.push('')
+    }
+  })
+  return out.join('\n')
+}
+
+/** Reveal targets are bookkeeping ids (`text1`); chips show the kind only. */
+function revealKind(target: string): string {
+  const kind = target.replace(/\d+$/g, '').trim() || target.trim()
+  return kind.charAt(0).toUpperCase() + kind.slice(1)
+}
+
+/** Board-action marker lines (`[place:]`, `[reveal:]`, `[remove:]`, `[wipe]`) render as chips. */
+function parseBoardAction(
+  trimmed: string,
+): { label: string; target?: string; title?: string } | null {
+  const remove = /^\[remove:\s*(.+?)\]$/i.exec(trimmed)
+  if (remove) return { label: 'Remove', target: remove[1]?.trim() }
+  const place = /^\[place:\s*(.+?)\]$/i.exec(trimmed)
+  if (place) return { label: 'Place', target: place[1]?.trim() }
+  const reveal = /^\[reveal:\s*(.+?)\]$/i.exec(trimmed)
+  if (reveal) {
+    const full = (reveal[1] ?? '').trim()
+    return { label: 'Reveal', target: revealKind(full), title: full }
+  }
+  const wipe = /^\[wipe(?::\s*(.+?))?\]$/i.exec(trimmed)
+  if (wipe) {
+    const targets = (wipe[1] ?? '').trim()
+    return targets ? { label: 'Wipe', target: targets } : { label: 'Wipe board' }
+  }
+  return null
+}
+
 /**
  * Scenario-doc renderer for the Scenario MD modal. Same GFM + Shiki base as
  * AiMarkdown, but block types from the scenario template (Step headings,
@@ -124,7 +175,11 @@ const REUSE_COMMENT_RE = /^<!--\s*reuse:\s*(.+?)\s*-->$/gim
 export function ScenarioDocMarkdown({ content }: { content: string }) {
   // `<!-- reuse: X -->` is invisible to markdown renderers — surface it as a
   // quote line so the reference stays visible (whole-line form only).
-  const prepared = content.replace(REUSE_COMMENT_RE, '> Reuse: $1')
+  // Board lines are isolated so glued markers still render as their own blocks.
+  const prepared = useMemo(
+    () => isolateBoardLines(content.replace(REUSE_COMMENT_RE, '> Reuse: $1')),
+    [content],
+  )
   return (
     <div className="ai-markdown" data-testid="ai-markdown">
       <ReactMarkdown
@@ -151,10 +206,25 @@ export function ScenarioDocMarkdown({ content }: { content: string }) {
           },
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           p(props: any) {
+            const text = plainText(props.children)
+            const trimmed = text.trim()
+            const action = parseBoardAction(trimmed)
+            if (action) {
+              return (
+                <p className="scenario-action-line">
+                  <span className="scenario-board-action" title={action.title}>
+                    <span className="scenario-board-action-label">{action.label}</span>
+                    {action.target ? (
+                      <span className="scenario-board-action-target">{action.target}</span>
+                    ) : null}
+                  </span>
+                </p>
+              )
+            }
             if (isVisualLine(props.children)) {
               return <p className="scenario-visual-line">{props.children}</p>
             }
-            if (/^\s*Narrator:/i.test(plainText(props.children))) {
+            if (/^\s*Narrator:/i.test(text)) {
               return <p className="scenario-narrator">{props.children}</p>
             }
             return <p>{props.children}</p>
@@ -178,6 +248,16 @@ export function ScenarioDocMarkdown({ content }: { content: string }) {
                 <blockquote className="scenario-reuse">
                   <p>
                     <span className="scenario-reuse-label">Reuse:</span> {reuse[1]?.trim()}
+                  </p>
+                </blockquote>
+              )
+            }
+            const label = /^\s*Label:\s*([\s\S]*)$/i.exec(text)
+            if (label) {
+              return (
+                <blockquote className="scenario-label">
+                  <p>
+                    <span className="scenario-label-tag">Label:</span> {label[1]?.trim()}
                   </p>
                 </blockquote>
               )

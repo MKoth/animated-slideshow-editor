@@ -42,6 +42,14 @@ export interface ScenarioSliceState {
   scenarioModalOpen: boolean
   /** Checklist missing-only filter (issue #463): one-click missing filter. */
   scenarioMissingOnly: boolean
+  /**
+   * Portable-doc revision per project, bumped whenever the background
+   * server→portable sync mutates the doc. `setScenario` is a silent
+   * mutation with no React notification, so Doc/Checklist subscribe to
+   * this to re-render after a sync instead of showing stale content
+   * until the next unrelated render (or page refresh).
+   */
+  scenarioDocRevByProject: Record<string, number>
 }
 
 export interface ScenarioSliceActions {
@@ -89,6 +97,14 @@ export interface ScenarioSliceActions {
     conversationId?: string,
   ) => Promise<ScenarioMarkdownVersion | null>
   loadMarkdownAccepted: (projectId: string) => Promise<void>
+  /**
+   * Clean slate: drop every server version/audit/pointer for the project
+   * and reset the client slices. The caller also clears the portable doc
+   * copy (markdown, bindings, stored HTML). Returns false on failure.
+   */
+  clearMarkdownVersions: (projectId: string) => Promise<boolean>
+  /** Notify Doc/Checklist that the background sync mutated the portable doc. */
+  bumpScenarioDocRev: (projectId: string) => void
 }
 
 export type ScenarioSlice = ScenarioSliceState & ScenarioSliceActions
@@ -109,6 +125,7 @@ export const initialScenarioSliceState: ScenarioSliceState = {
   scenarioTab: 'doc',
   scenarioModalOpen: false,
   scenarioMissingOnly: false,
+  scenarioDocRevByProject: {},
 }
 
 function isBackendDown(error: unknown): boolean {
@@ -470,6 +487,50 @@ export function createScenarioSlice(set: SliceSet, get: SliceGet): ScenarioSlice
         }))
       } catch (error) {
         if (isBackendDown(error)) set({ status: 'unavailable' })
+      }
+    },
+
+    bumpScenarioDocRev: (projectId) => {
+      set((state: ScenarioSliceState) => ({
+        scenarioDocRevByProject: {
+          ...state.scenarioDocRevByProject,
+          [projectId]: (state.scenarioDocRevByProject[projectId] ?? 0) + 1,
+        },
+      }))
+    },
+
+    clearMarkdownVersions: async (projectId) => {
+      if (get().markdownBusy) return false
+      set({ markdownBusy: true, markdownError: null })
+      try {
+        await get().api.clearMarkdownVersions(projectId)
+        set((state: ScenarioSliceState) => ({
+          markdownVersionsByProject: { ...state.markdownVersionsByProject, [projectId]: [] },
+          activeMarkdownVersionIdByProject: {
+            ...state.activeMarkdownVersionIdByProject,
+            [projectId]: null,
+          },
+          acceptedMarkdownVersionIdByProject: {
+            ...state.acceptedMarkdownVersionIdByProject,
+            [projectId]: null,
+          },
+          markdownAuditsByProject: { ...state.markdownAuditsByProject, [projectId]: [] },
+        }))
+        return true
+      } catch (error) {
+        if (isBackendDown(error)) {
+          set({ status: 'unavailable' })
+          return false
+        }
+        set({
+          markdownError: {
+            code: 'markdown_clear_failed',
+            message: error instanceof Error ? error.message : 'Clear failed — retry.',
+          },
+        })
+        return false
+      } finally {
+        set({ markdownBusy: false })
       }
     },
   }

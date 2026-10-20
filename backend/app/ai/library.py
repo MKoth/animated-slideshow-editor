@@ -635,6 +635,10 @@ class AiLibrary:
     def list_markdown_audits(self, project_id: str) -> list[object]:
         return scenario_store.list_markdown_audits(self._database, project_id)
 
+    def delete_markdown_versions_for_project(self, project_id: str) -> None:
+        """Clean slate: drop every version, audit, and pointer for the project."""
+        scenario_store.delete_markdown_for_project(self._database, project_id)
+
     # -- reconciliations (Stage B) -----------------------------------------
 
     def list_reconciliations(

@@ -262,8 +262,9 @@ export function renderScenarioChalkHtml(
       const file = imageFiles[visual.key] ?? `${slugFilenameForAssetKey(visual.key)}.png`
       const src = `assets/${file.replace(/^assets\//, '')}`
       const alt = escapeHtml(visual.alt)
+      const caption = escapeHtml(visual.label ?? visual.alt)
       parts.push(
-        `<figure class="visual"><img src="${escapeHtml(src)}" alt="${alt}" loading="lazy"><figcaption>${alt}</figcaption></figure>`,
+        `<figure class="visual"><img src="${escapeHtml(src)}" alt="${alt}" loading="lazy"><figcaption>${caption}</figcaption></figure>`,
       )
     }
     if (step.table !== undefined) {

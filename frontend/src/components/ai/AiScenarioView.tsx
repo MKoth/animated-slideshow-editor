@@ -90,6 +90,9 @@ export function AiScenarioView({
       changed = true
     }
     if (changed) engine.project.setScenario(next)
+    // setScenario is a silent mutation — bump the doc revision so the
+    // modal and checklist re-render instead of showing stale content.
+    if (changed) store.bumpScenarioDocRev(projectId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     markdownVersions.length,

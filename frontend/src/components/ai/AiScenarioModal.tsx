@@ -57,6 +57,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const scenarioGenerating = useAiStore((s) => s.scenarioGenerating)
   const scenarioError = useAiStore((s) => s.scenarioError)
   const scenarioRequest = useAiStore((s) => s.scenarioRequest)
+  const markdownBusy = useAiStore((s) => s.markdownBusy)
   const markdownVersions = useAiStore(
     (s) => s.markdownVersionsByProject[projectId] ?? EMPTY_MARKDOWN_VERSIONS,
   )
@@ -67,6 +68,9 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const [scenarioRev, setScenarioRev] = useState(0)
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [copyMdState, setCopyMdState] = useState<'copied' | 'failed' | null>(null)
 
   // Legacy Action Scenario data stays loadable for the in-modal editor and
   // Stage B reconciliation (which still reads the accepted scenario row).
@@ -104,6 +108,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   }
 
   const scenario = engine?.project?.scenario
+  const scenarioDocRev = useAiStore((s) => s.scenarioDocRevByProject[projectId] ?? 0)
   const markdown = scenario?.currentMarkdown ?? ''
   const bindings = scenario?.bindings ?? {}
   const lastHtml = scenario?.lastHtml
@@ -111,7 +116,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const portableVersions = useMemo(
     () => scenario?.versions ?? [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scenario, scenarioRev],
+    [scenario, scenarioRev, scenarioDocRev],
   )
 
   const embeddedIds = useMemo(
@@ -127,7 +132,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const rows = useMemo(
     () => buildScenarioChecklistRows(markdown, bindings, availableIds),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [markdown, bindings, availableIds, scenarioRev],
+    [markdown, bindings, availableIds, scenarioRev, scenarioDocRev],
   )
   const unboundCount = getScenarioUnboundCount(rows)
   // Hard block: brief text alone never unblocks, only resolved bytes do.
@@ -305,7 +310,72 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     }
   }
 
-  const handleClose = () => store.setScenarioModalOpen(false)
+  const handleClose = () => {
+    setConfirmingDelete(false)
+    setDeleteError(null)
+    setCopyMdState(null)
+    store.setScenarioModalOpen(false)
+  }
+
+  // Clean slate: first click arms, second click deletes server versions plus
+  // the portable doc copy (markdown, versions, bindings, stored HTML).
+  // Plain project.setScenario — never through the engine Undo Stack.
+  const handleDelete = () => {
+    const engineValue = engine
+    if (!engineValue?.project || markdownBusy) return
+    if (!confirmingDelete) {
+      setConfirmingDelete(true)
+      setDeleteError(null)
+      return
+    }
+    setConfirmingDelete(false)
+    setDeleteError(null)
+    void store.clearMarkdownVersions(projectId).then((ok) => {
+      if (!ok || !engineValue.project) {
+        setDeleteError(useAiStore.getState().markdownError?.message ?? 'Clear failed — retry.')
+        return
+      }
+      engineValue.project.setScenario(createEmptyScenarioSection(''))
+      setScenarioRev((n) => n + 1)
+    })
+  }
+
+  const handleCopyMd = () => {
+    if (!markdown) return
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(markdown)
+        setCopyMdState('copied')
+        window.setTimeout(() => setCopyMdState(null), 1800)
+      } catch {
+        setCopyMdState('failed')
+        window.setTimeout(() => setCopyMdState(null), 2500)
+      }
+    })()
+  }
+
+  // Warnings-only validation surfaced in the Doc tab: the model drifts from
+  // the script contract (missing title, unpaired actions), and one click
+  // sends the list back as a fix request through the normal chat flow.
+  const docWarnings = useMemo(
+    () => (markdown ? parseScenarioMarkdown(markdown).warnings : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [markdown, scenarioDocRev],
+  )
+
+  const handleSendWarnings = () => {
+    if (!projectId || !conversationId || docWarnings.length === 0) return
+    const lines = docWarnings.map(
+      (w) => `- [${w.code}]${w.step ? ` step ${w.step}` : ''}: ${w.message}`,
+    )
+    void store.sendMessage(
+      projectId,
+      conversationId,
+      `The scenario doc has these validation warnings — fix them all and reply with the corrected full markdown (same steps, corrected):\n${lines.join('\n')}\nDeclare intent: edit with Summary: and Touched-steps: lines as usual. Do not claim anything was created.`,
+      context,
+      'scenario',
+    )
+  }
 
   return (
     <div
@@ -378,9 +448,43 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
             {downloading ? 'Preparing zip…' : 'Download .zip'}
           </button>
           <button
-            data-testid="ai-scenario-modal-close"
-            onClick={() => store.setScenarioModalOpen(false)}
+            data-testid="ai-scenario-delete"
+            disabled={markdownBusy}
+            title={
+              confirmingDelete
+                ? 'Click again to permanently delete the doc, history, and HTML'
+                : 'Delete doc and HTML'
+            }
+            onClick={handleDelete}
           >
+            {confirmingDelete ? 'Confirm delete doc + HTML?' : 'Delete'}
+          </button>
+          <button
+            data-testid="ai-scenario-copy-md"
+            disabled={!markdown}
+            aria-label={
+              copyMdState === 'copied'
+                ? 'Scenario markdown copied'
+                : copyMdState === 'failed'
+                  ? 'Copy scenario markdown failed'
+                  : 'Copy scenario markdown'
+            }
+            title={
+              copyMdState === 'copied'
+                ? 'Copied'
+                : copyMdState === 'failed'
+                  ? 'Copy failed'
+                  : 'Copy markdown'
+            }
+            onClick={handleCopyMd}
+          >
+            {copyMdState === 'copied'
+              ? 'Copied'
+              : copyMdState === 'failed'
+                ? 'Copy failed'
+                : 'Copy MD'}
+          </button>
+          <button data-testid="ai-scenario-modal-close" onClick={handleClose}>
             Close
           </button>
         </div>
@@ -390,6 +494,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         </div>
         <div data-testid="ai-scenario-html-state">html: {htmlState}</div>
         {downloadError && <div data-testid="ai-scenario-download-error">{downloadError}</div>}
+        {deleteError && <div data-testid="ai-scenario-delete-error">{deleteError}</div>}
         {htmlState === 'empty' && (
           <div data-testid="ai-scenario-view-empty-hint">No HTML yet — generate first.</div>
         )}
@@ -419,42 +524,71 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         {scenarioTab === 'history' ? (
           <AiScenarioHistory projectId={projectId} conversationId={conversationId} />
         ) : (
-          <div
-            data-testid="ai-scenario-modal-body"
-            style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginTop: 8 }}
-          >
-            <div>
-              <div data-testid="ai-scenario-modal-doc" className="ai-scenario-modal-doc">
-                {markdown ? (
-                  <ScenarioDocMarkdown content={markdown} />
-                ) : (
-                  <div data-testid="ai-scenario-modal-empty">
-                    No scenario markdown yet — chat to iterate or edit the doc.
+          <>
+            {docWarnings.length > 0 && (
+              <div data-testid="ai-scenario-warnings" className="scenario-warnings">
+                <div className="scenario-warnings-title">
+                  Doc warnings ({docWarnings.length})
+                  <button
+                    data-testid="ai-scenario-warnings-send"
+                    disabled={!conversationId}
+                    title={
+                      conversationId
+                        ? 'Send warnings to the assistant as a fix request'
+                        : 'Start a conversation to send fix requests'
+                    }
+                    onClick={handleSendWarnings}
+                  >
+                    Send to assistant
+                  </button>
+                </div>
+                <ul>
+                  {docWarnings.map((warning, index) => (
+                    <li key={index}>
+                      <code>[{warning.code}]</code>
+                      {warning.step ? ` step ${warning.step}` : ''}: {warning.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div
+              data-testid="ai-scenario-modal-body"
+              style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginTop: 8 }}
+            >
+              <div>
+                <div data-testid="ai-scenario-modal-doc" className="ai-scenario-modal-doc">
+                  {markdown ? (
+                    <ScenarioDocMarkdown content={markdown} />
+                  ) : (
+                    <div data-testid="ai-scenario-modal-empty">
+                      No scenario markdown yet — chat to iterate or edit the doc.
+                    </div>
+                  )}
+                </div>
+                {previewOpen && htmlState !== 'empty' && lastHtml && (
+                  <div data-testid="ai-scenario-html-preview">
+                    <div>Preview (stored HTML{htmlState === 'stale' ? ' — stale' : ''})</div>
+                    <iframe
+                      data-testid="ai-scenario-html-frame"
+                      title="Scenario HTML preview"
+                      srcDoc={lastHtml}
+                    />
+                    <button
+                      data-testid="ai-scenario-html-preview-close"
+                      onClick={() => setPreviewOpen(false)}
+                    >
+                      Close preview
+                    </button>
                   </div>
                 )}
               </div>
-              {previewOpen && htmlState !== 'empty' && lastHtml && (
-                <div data-testid="ai-scenario-html-preview">
-                  <div>Preview (stored HTML{htmlState === 'stale' ? ' — stale' : ''})</div>
-                  <iframe
-                    data-testid="ai-scenario-html-frame"
-                    title="Scenario HTML preview"
-                    srcDoc={lastHtml}
-                  />
-                  <button
-                    data-testid="ai-scenario-html-preview-close"
-                    onClick={() => setPreviewOpen(false)}
-                  >
-                    Close preview
-                  </button>
-                </div>
-              )}
+              <AiScenarioChecklist
+                projectId={projectId}
+                onMutated={() => setScenarioRev((n) => n + 1)}
+              />
             </div>
-            <AiScenarioChecklist
-              projectId={projectId}
-              onMutated={() => setScenarioRev((n) => n + 1)}
-            />
-          </div>
+          </>
         )}
 
         <div data-testid="ai-scenario-legacy">

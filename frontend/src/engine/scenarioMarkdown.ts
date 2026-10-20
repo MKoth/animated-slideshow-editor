@@ -4,14 +4,24 @@
  * Pure client markdown parse / validate / normalize plus legacy Stage-A
  * upgrade. No I/O, no engine access — tested at the pure seam.
  *
- * Template contract (from #454 decision):
- * - Steps open with `## Step N — Title`, N sequential from 1.
- * - Body blocks in canonical narrator → visuals → table → text order when
- *   present; any subset allowed with at least one block per step.
- * - Narrator is the spoken voiceover (`**Narrator:** ...`); text is the
- *   distilled on-screen chalk wording (remaining paragraphs).
- * - Each visual is `![alt](asset:slug)` + `> Brief: ...` + optional
- *   `<!-- reuse: Name -->`. Brief required unless reuse present.
+ * Template contract (from #454 decision, extended with the board-script vocabulary):
+ * - One `# Lesson title` H1 naming the subject only, then steps opening with
+ *   `## Step N — Title`, N sequential from 1.
+ * - Each step splits voice from board: a `**Narrator:** ...` spoken line plus
+ *   screen-action lines carrying what the viewer sees (short chalk text).
+ * - Each visual is `![alt](asset:slug)` (one subject per visual) + `> Brief: ...`
+ *   generation brief + optional `> Label: ...` chalk text written under the
+ *   placed image + optional `<!-- reuse: Name -->`. Brief required unless
+ *   reuse present.
+ * - `[remove: id]` takes a board item down; `[wipe]` clears the whole board
+ *   (or `[wipe: id, ...]` clears listed ids). Steps end with `[wipe]` unless
+ *   the next step continues the same board.
+ * - Every appearance is marked with an id — images under their slug,
+ *   chalk blocks under `[reveal: text1]`/`[reveal: table1]`-style ids.
+ *   `[place: slug]` places the image declared by the visual, `[reveal: id]`
+ *   reveals a chalk block. Board actions must pair with content (wipe only a
+ *   shown board, remove/wipe-target only an id on the board, place only a
+ *   declared visual).
  * - Tables are plain markdown grids, any column count.
  * - Asset key mirrors normalized alt (trim, collapse whitespace,
  *   lowercase, spaces to hyphens); doc-unique with warnings.
@@ -23,6 +33,8 @@ export interface ScenarioVisual {
   readonly key: string
   readonly slug: string
   readonly brief?: string
+  /** Chalk text written on the board under the placed image. */
+  readonly label?: string
   readonly reuse?: string
   readonly line: number
 }
@@ -34,6 +46,16 @@ export interface ScenarioStep {
   readonly visuals: readonly ScenarioVisual[]
   readonly table?: string
   readonly text?: string
+  /** Slugs explicitly placed on the board via `[place: slug]`. */
+  readonly placed: readonly string[]
+  /** Board ids revealed via `[reveal: id]` (`text1`/`table1`-style). */
+  readonly reveals: readonly string[]
+  /** Board ids this step takes down. */
+  readonly removes: readonly string[]
+  /** Board ids a targeted `[wipe: id, ...]` clears (empty when wiping all). */
+  readonly wipeTargets: readonly string[]
+  /** True when the step ends by clearing the board. */
+  readonly wiped: boolean
   readonly rawHeading: string
   readonly bare: boolean
 }
@@ -48,11 +70,17 @@ export interface ScenarioWarning {
     | 'missing-brief-and-reuse'
     | 'malformed-table'
     | 'slug-mismatch'
+    | 'missing-title'
+    | 'unknown-remove'
+    | 'dangling-place'
+    | 'dangling-wipe'
   readonly message: string
   readonly step?: number
 }
 
 export interface ParsedScenario {
+  /** First `# ` H1: the short lesson title (undefined when absent). */
+  readonly title?: string
   readonly steps: readonly ScenarioStep[]
   readonly warnings: readonly ScenarioWarning[]
 }
@@ -70,9 +98,15 @@ export function normalizeAssetKey(alt: string): string {
 }
 
 const STEP_HEADING_RE = /^##\s+Step\s+(\d+)\s*(?:[—–\-:.]?\s*(.*))?$/
+const TITLE_RE = /^#\s+(.+?)\s*$/
 const NARRATOR_RE = /^\s*(?:\*\*Narrator:\*\*|Narrator:)\s*(.*)$/i
 const VISUAL_RE = /!\[([^\]]*)\]\(\s*asset:([^)\s]+)\s*\)/
 const BRIEF_RE = /^\s*>\s*Brief:\s*(.*)$/i
+const LABEL_RE = /^\s*>\s*Label:\s*(.*)$/i
+const REMOVE_RE = /^\s*\[remove:\s*(.+?)\s*\]\s*$/i
+const WIPE_RE = /^\s*\[wipe(?::\s*(.+?))?\s*\]\s*$/i
+const PLACE_RE = /^\s*\[place:\s*(.+?)\s*\]\s*$/i
+const REVEAL_RE = /^\s*\[reveal:\s*(.+?)\s*\]\s*$/i
 const REUSE_RE = /^\s*<!--\s*reuse:\s*(.+?)\s*-->\s*$|^<!--\s*reuse:\s*(.+?)\s*-->/
 const TABLE_ROW_RE = /^\s*\|.*\|\s*$/
 
@@ -107,16 +141,24 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
 
   const rawSteps: RawStep[] = []
   let current: RawStep | null = null
+  let title: string | undefined
 
   lines.forEach((text, i) => {
     const lineNumber = i + 1
-    const match = STEP_HEADING_RE.exec(text.trim())
-    if (match && text.trim().startsWith('##')) {
+    const trimmed = text.trim()
+    const match = STEP_HEADING_RE.exec(trimmed)
+    if (match && trimmed.startsWith('##')) {
       const index = Number.parseInt(match[1] ?? '0', 10)
-      const title = (match[2] ?? '').trim()
+      const stepTitle = (match[2] ?? '').trim()
       if (current) rawSteps.push(current)
-      current = { index, title, rawHeading: text.trim(), headingLine: lineNumber, bodyLines: [] }
-      if (title === '') {
+      current = {
+        index,
+        title: stepTitle,
+        rawHeading: trimmed,
+        headingLine: lineNumber,
+        bodyLines: [],
+      }
+      if (stepTitle === '') {
         warnings.push({
           code: 'empty-title',
           message: `Step ${index} heading carries no title`,
@@ -125,6 +167,11 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
       }
     } else if (current) {
       current.bodyLines.push({ text, line: lineNumber })
+    } else if (title === undefined) {
+      const titleMatch = TITLE_RE.exec(trimmed)
+      if (titleMatch && (titleMatch[1] ?? '').trim() !== '') {
+        title = (titleMatch[1] ?? '').trim()
+      }
     }
   })
   if (current) rawSteps.push(current)
@@ -163,7 +210,13 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
 
     let pendingVisual: { alt: string; slug: string; line: number } | null = null
     let pendingBrief: string | undefined
+    let pendingLabel: string | undefined
     let pendingReuse: string | undefined
+    const placed: string[] = []
+    const reveals: string[] = []
+    const removes: string[] = []
+    const wipeTargets: string[] = []
+    let wiped = false
 
     const flushPendingVisual = () => {
       if (!pendingVisual) return
@@ -175,6 +228,7 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
         slug: pendingVisual.slug,
         line: pendingVisual.line,
         ...(pendingBrief !== undefined ? { brief: pendingBrief } : {}),
+        ...(pendingLabel !== undefined ? { label: pendingLabel } : {}),
         ...(pendingReuse !== undefined ? { reuse: pendingReuse } : {}),
       }
       if (alt.trim() === '') {
@@ -224,6 +278,7 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
       visuals.push(visual)
       pendingVisual = null
       pendingBrief = undefined
+      pendingLabel = undefined
       pendingReuse = undefined
     }
 
@@ -269,9 +324,62 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
         continue
       }
 
+      const labelMatch = LABEL_RE.exec(entry.text)
+      if (labelMatch && pendingVisual && pendingLabel === undefined) {
+        pendingLabel = (labelMatch[1] ?? '').trim()
+        idx += 1
+        continue
+      }
+
       const reuseMatch = REUSE_RE.exec(trimmed)
       if (reuseMatch && pendingVisual && pendingReuse === undefined) {
         pendingReuse = (reuseMatch[1] ?? reuseMatch[2] ?? '').trim()
+        idx += 1
+        continue
+      }
+
+      const removeMatch = REMOVE_RE.exec(entry.text)
+      if (removeMatch) {
+        flushPendingVisual()
+        flushTableBufferAsText()
+        const target = normalizeAssetKey(removeMatch[1] ?? '')
+        if (target !== '') removes.push(target)
+        idx += 1
+        continue
+      }
+
+      const wipeMatch = WIPE_RE.exec(entry.text)
+      if (wipeMatch) {
+        flushPendingVisual()
+        flushTableBufferAsText()
+        wiped = true
+        const listed = (wipeMatch[1] ?? '')
+          .split(',')
+          .map((part) => normalizeAssetKey(part))
+          .filter((part) => part !== '')
+        for (const target of listed) {
+          if (!wipeTargets.includes(target)) wipeTargets.push(target)
+        }
+        idx += 1
+        continue
+      }
+
+      const placeMatch = PLACE_RE.exec(entry.text)
+      if (placeMatch) {
+        flushPendingVisual()
+        flushTableBufferAsText()
+        const target = normalizeAssetKey(placeMatch[1] ?? '')
+        if (target !== '' && !placed.includes(target)) placed.push(target)
+        idx += 1
+        continue
+      }
+
+      const revealMatch = REVEAL_RE.exec(entry.text)
+      if (revealMatch) {
+        flushPendingVisual()
+        flushTableBufferAsText()
+        const target = normalizeAssetKey(revealMatch[1] ?? '')
+        if (target !== '' && !reveals.includes(target)) reveals.push(target)
         idx += 1
         continue
       }
@@ -337,7 +445,13 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
 
     const text = textParts.length > 0 ? textParts.join('\n\n') : undefined
     const bare =
-      narrator === undefined && visuals.length === 0 && table === undefined && text === undefined
+      narrator === undefined &&
+      visuals.length === 0 &&
+      table === undefined &&
+      text === undefined &&
+      removes.length === 0 &&
+      wipeTargets.length === 0 &&
+      !wiped
     if (bare) {
       warnings.push({
         code: 'bare-heading',
@@ -351,6 +465,11 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
       title: raw.title,
       rawHeading: raw.rawHeading,
       bare,
+      placed: [...placed],
+      reveals: [...reveals],
+      removes: [...removes],
+      wipeTargets: [...wipeTargets],
+      wiped,
       ...(narrator !== undefined ? { narrator } : {}),
       visuals,
       ...(table !== undefined ? { table } : {}),
@@ -358,7 +477,78 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
     })
   }
 
-  return { steps, warnings }
+  if (steps.length > 0 && title === undefined) {
+    warnings.push({
+      code: 'missing-title',
+      message: 'Doc carries no `# Lesson title` heading',
+    })
+  }
+
+  // Board-state pass: actions must pair with content. Images live on the
+  // board under their slug, chalk blocks under their reveal id; a wipe clears
+  // everything (or the listed ids), a remove takes down one listed id.
+  // Narrator is voice, never board content.
+  const visualKeys = new Set<string>()
+  for (const step of steps) {
+    for (const visual of step.visuals) {
+      if (visual.key !== '') visualKeys.add(visual.key)
+    }
+  }
+  const boardIds = new Set<string>()
+  let boardChalk = false
+  for (const step of steps) {
+    const stepAdds: string[] = []
+    for (const visual of step.visuals) {
+      if (visual.key !== '' && !stepAdds.includes(visual.key)) stepAdds.push(visual.key)
+    }
+    for (const key of [...step.placed, ...step.reveals]) {
+      if (!stepAdds.includes(key)) stepAdds.push(key)
+    }
+    for (const key of step.placed) {
+      if (!visualKeys.has(key)) {
+        warnings.push({
+          code: 'dangling-place',
+          message: `Step ${step.index} places "${key}" with no visual in the doc`,
+          step: step.index,
+        })
+      }
+    }
+    const stepChalk = step.table !== undefined || step.text !== undefined
+    const takes = [...step.removes, ...step.wipeTargets]
+    for (const target of takes) {
+      if (!boardIds.has(target) && !stepAdds.includes(target)) {
+        warnings.push({
+          code: 'unknown-remove',
+          message: `Step ${step.index} clears "${target}" which is not on the board`,
+          step: step.index,
+        })
+      }
+    }
+    if (
+      step.wiped &&
+      step.wipeTargets.length === 0 &&
+      boardIds.size === 0 &&
+      !boardChalk &&
+      stepAdds.length === 0 &&
+      !stepChalk
+    ) {
+      warnings.push({
+        code: 'dangling-wipe',
+        message: `Step ${step.index} wipes an empty board`,
+        step: step.index,
+      })
+    }
+    for (const target of takes) boardIds.delete(target)
+    for (const key of stepAdds) boardIds.add(key)
+    if (step.wiped && step.wipeTargets.length === 0) {
+      boardIds.clear()
+      boardChalk = false
+    } else if (stepChalk) {
+      boardChalk = true
+    }
+  }
+
+  return { ...(title !== undefined ? { title } : {}), steps, warnings }
 }
 
 export function upgradeLegacyScenarioToMarkdown(steps: readonly LegacyScenarioStep[]): string {

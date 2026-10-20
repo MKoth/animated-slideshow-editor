@@ -7,7 +7,7 @@ import { extractScriptBlock, resolveScriptSlideId } from '../../ai/scriptBlock'
 import { extractAskBlocks, stripAskBlocks } from '../../ai/askBlock'
 import { buildShapeStepOperation, extractShapeStepBlock } from '../../ai/shapeStep'
 import { buildClipBatchOperations, extractClipBatchBlock } from '../../ai/clipBatch'
-import { extractEditContent, extractQuestionText } from '../../engine/scenarioVersions'
+import { extractQuestionText } from '../../engine/scenarioVersions'
 import { useFingerprint } from '../../ai/proposalFingerprint'
 import { formatTokenCount, sumConversationUsage } from '../../ai/tokens'
 import { useEngine } from '../../app/useEngine'
@@ -24,6 +24,7 @@ import { AiCalibrationView } from './AiCalibrationView'
 import { AiNarrationView } from './AiNarrationView'
 import { AiReconciliationView } from './AiReconciliationView'
 import { AiScenarioView } from './AiScenarioView'
+import { AiScenarioEditBrief } from './AiScenarioEditBrief'
 import type { ScenarioMarkdownVersion } from '../../api/aiApi'
 
 const EMPTY_MARKDOWN_VERSIONS: ScenarioMarkdownVersion[] = []
@@ -887,9 +888,7 @@ export function AiPanel() {
                       (message.scenarioIntent === 'edit' ||
                         extractQuestionText(message.content) !== null) ? (
                         <div data-testid={`ai-message-scenario-mixed-${message.id}`}>
-                          <div data-testid={`ai-message-scenario-edit-${message.id}`}>
-                            <AiMarkdown content={extractEditContent(message.content) || '…'} />
-                          </div>
+                          <AiScenarioEditBrief message={message} versions={markdownVersions} />
                           {extractQuestionText(message.content) && (
                             <div data-testid={`ai-message-scenario-question-${message.id}`}>
                               <AiMarkdown content={extractQuestionText(message.content) ?? ''} />

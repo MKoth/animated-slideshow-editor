@@ -341,6 +341,16 @@ def list_scenario_markdown_versions(
     return [_markdown_version_to_out(row) for row in rows]
 
 
+@router.delete("/ai/scenarios/markdown/versions", status_code=204)
+def delete_scenario_markdown_versions(request: Request, projectId: str = "") -> None:
+    """Clean slate: drop every version, audit, and active/accepted pointer
+    for the project. The client also clears its portable doc copy."""
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    library = _library(request)
+    library.delete_markdown_versions_for_project(projectId.strip())
+
+
 @router.get("/ai/scenarios/markdown/versions/{version_id}")
 def get_scenario_markdown_version(
     request: Request, version_id: str, projectId: str = ""

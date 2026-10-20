@@ -100,6 +100,7 @@ interface AiState {
   scenarioTab: 'doc' | 'history'
   scenarioModalOpen: boolean
   scenarioMissingOnly: boolean
+  scenarioDocRevByProject: Record<string, number>
   reconciliations: AiReconciliationSummary[]
   reconciliationById: Record<string, AiReconciliation>
   activeReconciliationId: string | null
@@ -197,6 +198,8 @@ interface AiState {
     conversationId?: string,
   ) => Promise<import('../api/aiApi').ScenarioMarkdownVersion | null>
   loadMarkdownAccepted: (projectId: string) => Promise<void>
+  clearMarkdownVersions: (projectId: string) => Promise<boolean>
+  bumpScenarioDocRev: (projectId: string) => void
 
   setActiveReconciliation: (id: string | null) => void
   loadReconciliations: (projectId: string, scenarioId?: string) => Promise<void>
@@ -654,10 +657,18 @@ export const useAiStore = create<AiState>()(
             })
           }
         }
+        // Scenario doc may have gained versions (the backend auto-applies
+        // edits): reload so the portable sync picks them up without a page
+        // refresh. Best-effort; the doc syncs on next load otherwise.
+        try {
+          if (wanted === 'scenario') await get().loadMarkdownVersions(projectId, conversationId)
+        } catch {
+          // Versions refresh is best-effort.
+        }
         set({ status: 'idle', streamingConversationId: null, streamingContent: '', aborter: null })
       },
 
-      regenerate: async (_projectId, conversationId, context, assistantMode) => {
+      regenerate: async (projectId, conversationId, context, assistantMode) => {
         if (get().status === 'streaming') return
         const existing = get().conversations.find((c) => c.id === conversationId)
         const wanted = normalizeAiMode(
@@ -704,6 +715,14 @@ export const useAiStore = create<AiState>()(
           }))
         } catch {
           // Keep idle even if refresh fails.
+        }
+        // Same post-chat versions reload as sendMessage (backend auto-applies).
+        try {
+          if (wanted === 'scenario' && projectId) {
+            await get().loadMarkdownVersions(projectId, conversationId)
+          }
+        } catch {
+          // Best-effort.
         }
         set({ status: 'idle', streamingConversationId: null, streamingContent: '', aborter: null })
       },

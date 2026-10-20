@@ -240,3 +240,51 @@ def test_project_delete_cascades_versions(client: TestClient) -> None:
         client.get("/api/ai/scenarios/markdown/versions", params={"projectId": "p-md-5"}).json()
         == []
     )
+
+
+def test_delete_versions_clears_project_slate(client: TestClient) -> None:
+    _make_project(client, "p-md-6")
+    conv = client.post("/api/ai/conversations", json={"projectId": "p-md-6"}).json()
+    for content in ("## Step 1 -- One", "## Step 1 -- Two"):
+        r = client.post(
+            "/api/ai/scenarios/markdown/versions",
+            json={
+                "projectId": "p-md-6",
+                "conversationId": conv["id"],
+                "content": content,
+                "summary": "S",
+                "touchedSteps": [1],
+            },
+        )
+        assert r.status_code == 201, r.text
+    listing = client.get(
+        "/api/ai/scenarios/markdown/versions", params={"projectId": "p-md-6"}
+    ).json()
+    assert len(listing) == 2
+    assert (
+        client.get("/api/ai/scenarios/markdown/active", params={"projectId": "p-md-6"}).json()[
+            "activeVersionId"
+        ]
+        is not None
+    )
+    # Missing projectId is rejected, not a silent no-op.
+    assert (
+        client.delete("/api/ai/scenarios/markdown/versions", params={"projectId": ""}).status_code
+        == 422
+    )
+    assert (
+        client.delete(
+            "/api/ai/scenarios/markdown/versions", params={"projectId": "p-md-6"}
+        ).status_code
+        == 204
+    )
+    assert (
+        client.get("/api/ai/scenarios/markdown/versions", params={"projectId": "p-md-6"}).json()
+        == []
+    )
+    assert (
+        client.get("/api/ai/scenarios/markdown/audits", params={"projectId": "p-md-6"}).json() == []
+    )
+    active = client.get("/api/ai/scenarios/markdown/active", params={"projectId": "p-md-6"}).json()
+    assert active["activeVersionId"] is None
+    assert active["acceptedVersionId"] is None

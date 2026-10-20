@@ -63,6 +63,34 @@ describe('scenarioChalkRender pure seam (issue #464)', () => {
     expect(html).not.toContain('<table')
   })
 
+  it('captions figures with the chalk label and ignores remove/wipe markers', () => {
+    const md = [
+      '# Lesson',
+      '',
+      '## Step 1 — One',
+      '',
+      '![Green tree](asset:green-tree)',
+      '',
+      '> Brief: A tree.',
+      '',
+      '> Label: El árbol ES verde',
+      '',
+      '[wipe]',
+      '',
+      '## Step 2 — Two',
+      '',
+      '[remove: green-tree]',
+      '',
+      'Done.',
+      '',
+    ].join('\n')
+    const html = renderScenarioChalkHtml(md, { imageFiles: { 'green-tree': 'green-tree.png' } })
+    expect(html).toContain('<figcaption>El árbol ES verde</figcaption>')
+    expect(html).not.toContain('[wipe]')
+    expect(html).not.toContain('[remove:')
+    expect(html).not.toContain('Brief:')
+  })
+
   it('maps images to the assets folder by slug filename with free-text alt preserved', () => {
     const html = renderScenarioChalkHtml(MD, {
       imageFiles: {

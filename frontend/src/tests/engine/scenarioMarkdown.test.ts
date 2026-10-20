@@ -58,6 +58,8 @@ describe('parseScenarioMarkdown', () => {
 
   it('pairs visuals with normalized keys and brief plus optional reuse', () => {
     const md = [
+      '# Who you are',
+      '',
       '## Step 1 — Who you are',
       '',
       '**Narrator:** Hello.',
@@ -80,6 +82,7 @@ describe('parseScenarioMarkdown', () => {
       '',
     ].join('\n')
     const parsed = parseScenarioMarkdown(md)
+    expect(parsed.title).toBe('Who you are')
     expect(parsed.steps[0]?.visuals).toHaveLength(1)
     expect(parsed.steps[0]?.visuals[0]).toMatchObject({
       alt: 'Young doctor smiling',
@@ -230,6 +233,241 @@ describe('parseScenarioMarkdown', () => {
     expect(parsed.steps[0]?.table).toContain('| A | B |')
     expect(parsed.steps[0]?.table).toContain('| C | D |')
   })
+
+  it('captures the H1 lesson title and warns when it is missing', () => {
+    const titled = [
+      '# Ser and estar usage',
+      '',
+      '## Step 1 — One',
+      '',
+      '**Narrator:** Hi.',
+      '',
+    ].join('\n')
+    const withTitle = parseScenarioMarkdown(titled)
+    expect(withTitle.title).toBe('Ser and estar usage')
+    expect(withTitle.warnings.map((w) => w.code)).not.toContain('missing-title')
+
+    const untitled = ['## Step 1 — One', '', '**Narrator:** Hi.', ''].join('\n')
+    const withoutTitle = parseScenarioMarkdown(untitled)
+    expect(withoutTitle.title).toBeUndefined()
+    expect(withoutTitle.warnings.some((w) => w.code === 'missing-title')).toBe(true)
+  })
+
+  it('attaches chalk labels to visuals without leaking into text', () => {
+    const md = [
+      '# Lesson',
+      '',
+      '## Step 1 — One',
+      '',
+      '![Green tree](asset:green-tree)',
+      '',
+      '> Brief: A tree.',
+      '',
+      '> Label: El árbol ES verde',
+      '',
+    ].join('\n')
+    const parsed = parseScenarioMarkdown(md)
+    expect(parsed.steps[0]?.visuals[0]).toMatchObject({
+      alt: 'Green tree',
+      key: 'green-tree',
+      brief: 'A tree.',
+      label: 'El árbol ES verde',
+    })
+    expect(parsed.steps[0]?.text ?? '').not.toContain('Label:')
+    expect(parsed.warnings).toEqual([])
+  })
+
+  it('parses remove and wipe markers as board actions, never as text', () => {
+    const md = [
+      '# Lesson',
+      '',
+      '## Step 1 — One',
+      '',
+      '![Green tree](asset:green-tree)',
+      '',
+      '> Brief: A tree.',
+      '',
+      '## Step 2 — Two',
+      '',
+      '[remove: green-tree]',
+      '',
+      '![Dry tree](asset:dry-tree)',
+      '',
+      '> Brief: A dry tree.',
+      '',
+      '[wipe]',
+      '',
+    ].join('\n')
+    const parsed = parseScenarioMarkdown(md)
+    expect(parsed.steps[0]?.wiped).toBe(false)
+    expect(parsed.steps[0]?.removes).toEqual([])
+    expect(parsed.steps[1]?.removes).toEqual(['green-tree'])
+    expect(parsed.steps[1]?.wiped).toBe(true)
+    expect(parsed.steps[0]?.text ?? '').not.toContain('wipe')
+    expect(parsed.steps[1]?.text ?? '').not.toContain('remove')
+    expect(parsed.warnings).toEqual([])
+  })
+
+  it('warns when a wipe closes an empty board', () => {
+    const md = [
+      '# Lesson',
+      '',
+      '## Step 1 — One',
+      '',
+      '**Narrator:** Just talking, nothing shown.',
+      '',
+      '[wipe]',
+      '',
+      '## Step 2 — Two',
+      '',
+      '**Narrator:** Still nothing on the board.',
+      '',
+      '[wipe]',
+      '',
+    ].join('\n')
+    const parsed = parseScenarioMarkdown(md)
+    expect(parsed.warnings.filter((w) => w.code === 'dangling-wipe').map((w) => w.step)).toEqual([
+      1, 2,
+    ])
+  })
+
+  it('warns when a remove targets an image already wiped away', () => {
+    const md = [
+      '# Lesson',
+      '',
+      '## Step 1 — One',
+      '',
+      '![Green tree](asset:green-tree)',
+      '',
+      '> Brief: A tree.',
+      '',
+      '[wipe]',
+      '',
+      '## Step 2 — Two',
+      '',
+      '[remove: green-tree]',
+      '',
+      '**Narrator:** Gone already.',
+      '',
+    ].join('\n')
+    const parsed = parseScenarioMarkdown(md)
+    expect(parsed.warnings.some((w) => w.code === 'unknown-remove' && w.step === 2)).toBe(true)
+  })
+
+  it('warns on removes pointing at unknown keys', () => {
+    const md = [
+      '# Lesson',
+      '',
+      '## Step 1 — One',
+      '',
+      '[remove: ghost-tree]',
+      '',
+      '**Narrator:** Hi.',
+      '',
+    ].join('\n')
+    const parsed = parseScenarioMarkdown(md)
+    expect(parsed.steps[0]?.bare).toBe(false)
+    expect(parsed.warnings.some((w) => w.code === 'unknown-remove' && w.step === 1)).toBe(true)
+  })
+
+  it('parses place and reveal markers as board actions, never as text', () => {
+    const md = [
+      '# Lesson',
+      '',
+      '## Step 1 — One',
+      '',
+      '[place: green-tree]',
+      '',
+      '![Green tree](asset:green-tree)',
+      '',
+      '> Brief: A tree.',
+      '',
+      '[reveal: text]',
+      '',
+      'Ser is identity.',
+      '',
+      '[reveal: table]',
+      '',
+      '| A | B |',
+      '| --- | --- |',
+      '| 1 | 2 |',
+      '',
+      '[remove: green-tree]',
+      '',
+      '[wipe]',
+      '',
+    ].join('\n')
+    const parsed = parseScenarioMarkdown(md)
+    expect(parsed.steps[0]?.placed).toEqual(['green-tree'])
+    expect(parsed.steps[0]?.reveals).toEqual(['text', 'table'])
+    expect(parsed.steps[0]?.removes).toEqual(['green-tree'])
+    expect(parsed.steps[0]?.wiped).toBe(true)
+    const text = parsed.steps[0]?.text ?? ''
+    expect(text).not.toContain('place:')
+    expect(text).not.toContain('reveal:')
+    expect(text).toContain('Ser is identity.')
+    expect(parsed.warnings).toEqual([])
+  })
+
+  it('warns when a place declares an image with no visual in the doc', () => {
+    const md = [
+      '# Lesson',
+      '',
+      '## Step 1 — One',
+      '',
+      '[place: ghost-tree]',
+      '',
+      '**Narrator:** Hi.',
+      '',
+    ].join('\n')
+    const parsed = parseScenarioMarkdown(md)
+    expect(parsed.warnings.some((w) => w.code === 'dangling-place' && w.step === 1)).toBe(true)
+  })
+
+  it('tracks text and table ids so targeted wipe and remove pair up', () => {
+    const md = [
+      '# Lesson',
+      '',
+      '## Step 1 — One',
+      '',
+      '[reveal: text1]',
+      '',
+      'Ser is identity.',
+      '',
+      '[reveal: table1]',
+      '',
+      '| A | B |',
+      '| --- | --- |',
+      '| 1 | 2 |',
+      '',
+      '[remove: text1]',
+      '',
+      '[wipe: table1]',
+      '',
+    ].join('\n')
+    const parsed = parseScenarioMarkdown(md)
+    expect(parsed.steps[0]?.reveals).toEqual(['text1', 'table1'])
+    expect(parsed.steps[0]?.removes).toEqual(['text1'])
+    expect(parsed.steps[0]?.wipeTargets).toEqual(['table1'])
+    expect(parsed.steps[0]?.wiped).toBe(true)
+    expect(parsed.warnings).toEqual([])
+  })
+
+  it('warns when a targeted wipe names an id never shown', () => {
+    const md = [
+      '# Lesson',
+      '',
+      '## Step 1 — One',
+      '',
+      '**Narrator:** Hi.',
+      '',
+      '[wipe: ghost-text]',
+      '',
+    ].join('\n')
+    const parsed = parseScenarioMarkdown(md)
+    expect(parsed.warnings.some((w) => w.code === 'unknown-remove' && w.step === 1)).toBe(true)
+    expect(parsed.warnings.some((w) => w.code === 'dangling-wipe')).toBe(false)
+  })
 })
 
 describe('upgradeLegacyScenarioToMarkdown', () => {
@@ -248,6 +486,7 @@ describe('upgradeLegacyScenarioToMarkdown', () => {
     expect(parsed.steps[0]?.text).toContain('Cat waves at camera')
     expect(parsed.steps[0]?.visuals[0]?.alt).toBe('cat')
     expect(parsed.steps[0]?.visuals[0]?.brief).toContain('Cat waves at camera')
-    expect(parsed.warnings).toEqual([])
+    // Legacy output carries no H1 — warns instead of blocking.
+    expect(parsed.warnings.map((w) => w.code)).toEqual(['missing-title'])
   })
 })

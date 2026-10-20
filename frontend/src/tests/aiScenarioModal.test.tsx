@@ -10,6 +10,7 @@ import {
   createEmptyScenarioSection,
   createScenarioVersion,
   withScenarioBindings,
+  withScenarioMarkdown,
 } from '../engine/scenarioSection'
 import { useAiStore } from '../stores/aiStore'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
@@ -358,5 +359,95 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
     const withinModal = within(screen.getByTestId('ai-scenario-modal'))
     await userEvent.click(withinModal.getByTestId('ai-scenario-modal-tab-doc'))
     expect(await screen.findByTestId('ai-scenario-modal-doc')).toBeInTheDocument()
+  })
+
+  it('Delete arms on first click and clears doc, history, and HTML on confirm', async () => {
+    const { value, engine } = setupEngine(MD, {})
+    useAiStore.setState({ scenarioModalOpen: true })
+    renderModal(value)
+    expect(await screen.findByTestId('ai-scenario-modal-doc')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('ai-scenario-delete'))
+    // Armed only — nothing deleted yet.
+    expect(screen.getByTestId('ai-scenario-delete')).toHaveTextContent('Confirm')
+    expect(engine.project?.scenario?.currentMarkdown).toContain('Step 1')
+    await userEvent.click(screen.getByTestId('ai-scenario-delete'))
+    expect(await screen.findByTestId('ai-scenario-modal-empty')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-checklist-empty')).toBeInTheDocument()
+    const cleared = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([url, init]) =>
+          String(url).includes('/api/ai/scenarios/markdown/versions?projectId=') &&
+          (init as { method?: string } | undefined)?.method === 'DELETE',
+      )
+    expect(cleared).toBeDefined()
+    expect(engine.project?.scenario?.currentMarkdown).toBe('')
+    expect(engine.project?.scenario?.versions).toEqual([])
+    expect(engine.project?.scenario?.lastHtml).toBeUndefined()
+  })
+
+  it('Copy MD copies the current markdown to the clipboard', async () => {
+    const { value } = setupEngine(MD, {})
+    useAiStore.setState({ scenarioModalOpen: true })
+    renderModal(value)
+    expect(await screen.findByTestId('ai-scenario-modal-doc')).toBeInTheDocument()
+    // userEvent.setup() installs its own clipboard — stub after it.
+    const user = userEvent.setup()
+    const writeText = vi.fn(async (...args: unknown[]) => {
+      void args
+    })
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    await user.click(screen.getByTestId('ai-scenario-copy-md'))
+    expect(writeText).toHaveBeenCalledTimes(1)
+    expect(String(writeText.mock.calls[0]![0])).toContain('## Step 1 — Who you are')
+    expect(await screen.findByText('Copied')).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
+  it('shows a background-synced doc without refresh after the doc revision bump', async () => {
+    const { value, engine } = setupEngine('', {})
+    useAiStore.setState({ scenarioModalOpen: true })
+    renderModal(value)
+    expect(await screen.findByTestId('ai-scenario-modal-empty')).toBeInTheDocument()
+    // Background server→portable sync mutates silently (no React signal)...
+    engine.project!.setScenario(
+      withScenarioMarkdown(engine.project!.scenario ?? createEmptyScenarioSection(''), MD),
+    )
+    expect(screen.queryByTestId('ai-scenario-modal-empty')).toBeInTheDocument()
+    // ...until the revision bump notifies subscribers.
+    useAiStore.getState().bumpScenarioDocRev('p-1')
+    expect(await screen.findByTestId('ai-scenario-modal-doc')).toHaveTextContent('Who you are')
+    expect(screen.queryByTestId('ai-scenario-modal-empty')).not.toBeInTheDocument()
+  })
+
+  it('shows doc warnings with a send-to-assistant fix request', async () => {
+    const warnMd = [
+      '# Lesson',
+      '',
+      '## Step 1 — One',
+      '',
+      '[remove: ghost-key]',
+      '',
+      '**Narrator:** Hi.',
+      '',
+    ].join('\n')
+    const { value } = setupEngine(warnMd, {})
+    useAiStore.setState({ scenarioModalOpen: true })
+    renderModal(value)
+    expect(await screen.findByTestId('ai-scenario-warnings')).toHaveTextContent('unknown-remove')
+    await userEvent.click(screen.getByTestId('ai-scenario-warnings-send'))
+    await vi.waitFor(() => {
+      const chatCall = vi
+        .mocked(fetch)
+        .mock.calls.find(
+          ([url, init]) =>
+            String(url).endsWith('/api/ai/chat') &&
+            (init as { method?: string } | undefined)?.method === 'POST',
+        )
+      expect(chatCall).toBeDefined()
+      expect(String((chatCall![1] as { body?: unknown } | undefined)?.body)).toContain(
+        'unknown-remove',
+      )
+    })
   })
 })

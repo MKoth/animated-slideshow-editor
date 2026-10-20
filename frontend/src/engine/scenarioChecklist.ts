@@ -21,10 +21,35 @@ export interface ScenarioChecklistRow {
   readonly alt: string
   readonly slug: string
   readonly brief?: string
+  /** Chalk text written on the board under the placed image. */
+  readonly label?: string
   readonly reuse?: string
   readonly bindingAssetId?: string
   readonly bound: boolean
   readonly hasBrief: boolean
+}
+
+/** Human title for a row: the visual alt, or the key prettified as fallback. */
+export function checklistTitleFor(key: string, alt: string): string {
+  const clean = alt.trim()
+  if (clean) return clean
+  const words = key
+    .split('-')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+  return words.length > 0 ? words.join(' ') : key
+}
+
+/** Self-contained generation prompt: title, picture description, sticker style. */
+export function checklistPromptFor(key: string, alt: string, brief?: string): string {
+  const text = (brief ?? '').trim()
+  return [
+    checklistTitleFor(key, alt),
+    '',
+    text || '(no brief yet — describe the image before generating)',
+    '',
+    'Style: cartoonish sticker with thick white padding around the image on a dark background, no text.',
+  ].join('\n')
 }
 
 /** Combine embedded plus library definition ids into the bound-check set. */
@@ -53,6 +78,7 @@ export function buildScenarioChecklistRows(
   const firstAlt = new Map<string, string>()
   const firstSlug = new Map<string, string>()
   const briefByKey = new Map<string, string>()
+  const labelByKey = new Map<string, string>()
   const reuseByKey = new Map<string, string>()
 
   for (const step of parsed.steps) {
@@ -66,6 +92,9 @@ export function buildScenarioChecklistRows(
       if (visual.brief !== undefined && !briefByKey.has(visual.key)) {
         briefByKey.set(visual.key, visual.brief)
       }
+      if (visual.label !== undefined && !labelByKey.has(visual.key)) {
+        labelByKey.set(visual.key, visual.label)
+      }
       if (visual.reuse !== undefined && !reuseByKey.has(visual.key)) {
         reuseByKey.set(visual.key, visual.reuse)
       }
@@ -78,11 +107,13 @@ export function buildScenarioChecklistRows(
       typeof rawBinding === 'string' && rawBinding !== '' ? rawBinding : undefined
     const bound = bindingAssetId !== undefined && availableIds.has(bindingAssetId)
     const brief = briefByKey.get(key)
+    const label = labelByKey.get(key)
     return {
       key,
       alt: firstAlt.get(key) ?? key,
       slug: firstSlug.get(key) ?? key,
       ...(brief !== undefined ? { brief } : {}),
+      ...(label !== undefined ? { label } : {}),
       ...(reuseByKey.has(key) ? { reuse: reuseByKey.get(key)! } : {}),
       ...(bindingAssetId !== undefined ? { bindingAssetId } : {}),
       bound,

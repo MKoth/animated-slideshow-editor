@@ -4563,6 +4563,66 @@ button:disabled {
   font-weight: 700;
 }
 
+/* Chalk label written on the board under a placed image. */
+.ai-scenario-modal-doc .ai-markdown blockquote.scenario-label {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--color-text-muted);
+  background: transparent;
+  font-style: italic;
+  font-size: 15px;
+}
+
+.ai-scenario-modal-doc .scenario-label-tag {
+  font-style: normal;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Board-action lines ([place:] / [reveal:] / [remove:] / [wipe]) render as
+   their own full card so they never read as part of the narrator, table,
+   or text above them. */
+.ai-scenario-modal-doc .ai-markdown p.scenario-action-line {
+  margin: 14px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+}
+
+.ai-scenario-modal-doc .ai-markdown p.scenario-action-line:first-child {
+  margin-top: 0;
+}
+
+.ai-scenario-modal-doc .scenario-board-action {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 1px dashed var(--color-border);
+  border-radius: 999px;
+  background: var(--color-bg-panel);
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12.5px;
+}
+
+.ai-scenario-modal-doc .scenario-board-action-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.ai-scenario-modal-doc .scenario-board-action-target {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+}
+
 /* Visual reference chip — replaces the raw ![alt](asset:slug) line. */
 .ai-scenario-modal-doc .ai-markdown p.scenario-visual-line {
   margin: 0 0 6px;
@@ -4699,6 +4759,278 @@ button:disabled {
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 10px;
+}
+
+/* Checklist rail — own rows scroller, status-colored row cards. */
+.scenario-checklist {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.scenario-checklist-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.scenario-checklist-count {
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+.scenario-checklist-note {
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.scenario-checklist-rows {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  overflow-y: auto;
+  max-height: 50vh;
+  min-height: 0;
+  padding-right: 2px;
+}
+
+.scenario-checklist-row {
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 8px;
+  background: var(--color-bg);
+  padding: 10px 12px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.scenario-checklist-row.is-bound {
+  border-left-color: var(--color-success);
+}
+
+.scenario-checklist-row.is-missing {
+  border-left-color: var(--color-danger);
+}
+
+.scenario-checklist-key {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.scenario-checklist-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.scenario-checklist-title {
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.scenario-checklist-copy {
+  flex: none;
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+.scenario-checklist-slug {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  color: var(--color-text-muted);
+  background: var(--color-bg-elevated);
+  border-radius: 4px;
+  padding: 1px 6px;
+  overflow-wrap: anywhere;
+}
+
+.scenario-status-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 2px 10px;
+  overflow-wrap: anywhere;
+}
+
+.scenario-status-pill.is-bound {
+  color: var(--color-success);
+}
+
+.scenario-status-pill.is-unbound {
+  color: var(--color-accent);
+}
+
+.scenario-status-pill.is-missing {
+  color: var(--color-danger);
+}
+
+.scenario-checklist-brief,
+.scenario-checklist-reuse {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.scenario-checklist-brief {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.scenario-checklist-brief-label {
+  color: var(--color-success);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.scenario-checklist-reuse {
+  color: var(--color-text-muted);
+}
+
+.scenario-checklist-reuse-label {
+  font-weight: 700;
+}
+
+.scenario-checklist-label {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.scenario-checklist-label-tag {
+  font-style: normal;
+  font-weight: 700;
+}
+
+.scenario-checklist-controls {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.scenario-checklist-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.scenario-checklist-field select,
+.scenario-checklist-field input,
+.scenario-checklist-brief-edit input {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-weight: 400;
+  color: var(--color-text);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.scenario-checklist-brief-edit {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.scenario-checklist-error {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--color-danger);
+}
+
+.scenario-checklist-project {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Doc warnings strip: validation findings with a one-click fix request. */
+.scenario-warnings {
+  margin-top: 8px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 8px;
+  background: var(--color-bg);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.scenario-warnings-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.scenario-warnings ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.scenario-warnings code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  color: var(--color-accent);
+}
+
+/* Chat edit brief — compact replacement for the reprinted doc. */
+.ai-scenario-edit-brief {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.ai-scenario-edit-brief-title {
+  font-weight: 700;
+}
+
+.ai-scenario-edit-brief-counts .is-added {
+  color: var(--color-success);
+  font-weight: 700;
+}
+
+.ai-scenario-edit-brief-counts .is-removed {
+  color: var(--color-danger);
+  font-weight: 700;
+}
+
+.ai-scenario-edit-brief-steps,
+.ai-scenario-edit-brief-version {
+  color: var(--color-text-muted);
 }
 
 .ai-scenario-modal-doc .ai-markdown table {

@@ -141,6 +141,26 @@ def test_scenario_audio_blackboard_prompts_scope_to_their_stages() -> None:
     assert "action scenario" not in scenario
     assert "intro/middle/outro" not in scenario
     assert "blackboard" in scenario
+    # Visuals name their imagery: visual lines with slugs, never library reuse.
+    assert "asset:slug" in scenario
+    assert "stay agnostic to library contents" in scenario
+    assert "sticker" in scenario
+    assert "single subject" in scenario
+    assert "no text" in scenario
+    assert "dark background" in scenario
+    assert "[wipe]" in scenario
+    assert "[remove" in scenario
+    assert "[place" in scenario
+    assert "[reveal" in scenario
+    assert "text1" in scenario
+    assert "[wipe:" in scenario
+    assert "blank lines" in scenario
+    assert "> label:" in scenario
+    assert "quiz" in scenario
+    assert "personal teacher" in scenario
+    assert "always the intro" in scenario
+    assert "always the closing" in scenario
+    assert "empty board" in scenario
     # Room constructs are named only to forbid them in this mode.
     assert "on-screen actions" in scenario
     assert "never claim a mutation happened before approval" in scenario

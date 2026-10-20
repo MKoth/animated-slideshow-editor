@@ -3,6 +3,8 @@ import { EngineContext } from '../../app/engineContext'
 import {
   buildScenarioAvailableIds,
   buildScenarioChecklistRows,
+  checklistPromptFor,
+  checklistTitleFor,
   updateScenarioBrief,
   type ScenarioChecklistRow,
 } from '../../engine/scenarioChecklist'
@@ -31,13 +33,20 @@ export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklis
   const store = useAiStore.getState()
   const [briefDrafts, setBriefDrafts] = useState<Record<string, string>>({})
   const [uploadError, setUploadError] = useState<Record<string, string>>({})
+  const [copyState, setCopyState] = useState<{
+    key: string
+    status: 'copied' | 'failed'
+  } | null>(null)
   const [, refreshChecklist] = useState(0)
 
   const markdown = engine?.project?.scenario?.currentMarkdown ?? ''
+  // Re-render when the background server→portable sync mutates the doc:
+  // setScenario is silent, so the revision bump is the refresh signal.
+  const scenarioDocRev = useAiStore((s) => s.scenarioDocRevByProject[projectId] ?? 0)
   const bindings = useMemo(
     () => engine?.project?.scenario?.bindings ?? {},
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [engine?.project?.scenario?.bindings, engine?.project?.id, markdown],
+    [engine?.project?.scenario?.bindings, engine?.project?.id, markdown, scenarioDocRev],
   )
   const embeddedIds = useMemo(
     () => (engine?.embeddedAssets ?? []).map((a) => a.id),
@@ -59,7 +68,8 @@ export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklis
 
   const rows = useMemo(
     () => buildScenarioChecklistRows(markdown, bindings, availableIds),
-    [markdown, bindings, availableIds],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [markdown, bindings, availableIds, scenarioDocRev],
   )
   const visible = missingOnly ? rows.filter((r) => !r.bound) : rows
 
@@ -118,11 +128,25 @@ export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklis
     onMutated?.()
   }
 
+  const handleCopyPrompt = async (row: ScenarioChecklistRow) => {
+    try {
+      await navigator.clipboard.writeText(checklistPromptFor(row.key, row.alt, row.brief))
+      setCopyState({ key: row.key, status: 'copied' })
+      window.setTimeout(() => setCopyState(null), 1800)
+    } catch {
+      setCopyState({ key: row.key, status: 'failed' })
+      window.setTimeout(() => setCopyState(null), 2500)
+    }
+  }
+
   return (
-    <div data-testid="ai-scenario-checklist">
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+    <div data-testid="ai-scenario-checklist" className="scenario-checklist">
+      <div className="scenario-checklist-header">
         <strong>
-          Asset checklist ({visible.length}/{rows.length})
+          Asset checklist{' '}
+          <span className="scenario-checklist-count">
+            ({visible.length}/{rows.length})
+          </span>
         </strong>
         <button
           data-testid="ai-scenario-checklist-filter"
@@ -132,84 +156,151 @@ export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklis
         </button>
       </div>
       {rows.length === 0 ? (
-        <div data-testid="ai-scenario-checklist-empty">
+        <div data-testid="ai-scenario-checklist-empty" className="scenario-checklist-note">
           No visuals in the doc yet — add an `![alt](asset:key)` line to checklist it.
         </div>
       ) : visible.length === 0 ? (
-        <div data-testid="ai-scenario-checklist-all-bound">
+        <div data-testid="ai-scenario-checklist-all-bound" className="scenario-checklist-note">
           All visuals bound — nothing missing.
         </div>
       ) : (
-        visible.map((row) => (
-          <div
-            key={row.key}
-            data-testid={`ai-scenario-checklist-row-${row.key}`}
-            style={{ border: '1px solid #888', borderRadius: 6, padding: 8, marginBottom: 6 }}
-          >
-            <div>
-              <code>{row.alt}</code> → <code>asset:{row.key}</code>
-            </div>
-            <div data-testid={`ai-scenario-checklist-status-${row.key}`}>
-              {row.bound ? (
-                <span>Bound — {row.bindingAssetId}</span>
-              ) : row.hasBrief || row.reuse ? (
-                <span>Unbound — brief only{row.reuse ? ` (reuse ${row.reuse})` : ''}</span>
-              ) : (
-                <span>Unbound — missing brief and binding</span>
-              )}
-            </div>
-            {row.brief && <div style={{ opacity: 0.8 }}>Brief: {row.brief}</div>}
-            {row.reuse && <div style={{ opacity: 0.8 }}>Reuse: {row.reuse}</div>}
-            <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
-              <label>
-                Bind library asset{' '}
-                <select
-                  data-testid={`ai-scenario-checklist-bind-${row.key}`}
-                  value={row.bindingAssetId ?? ''}
-                  onChange={(e) => handleBind(row, e.target.value)}
-                >
-                  <option value="">Unbound</option>
-                  {libraryOptions.map((opt) => (
-                    <option key={opt.id} value={opt.id}>
-                      {opt.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Upload{' '}
-                <input
-                  data-testid={`ai-scenario-checklist-upload-${row.key}`}
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => void handleUpload(row, e.target.files)}
-                />
-              </label>
-            </div>
-            {uploadError[row.key] && (
-              <div data-testid={`ai-scenario-checklist-upload-error-${row.key}`}>
-                {uploadError[row.key]}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-              <input
-                data-testid={`ai-scenario-checklist-brief-input-${row.key}`}
-                aria-label={`Brief for ${row.key}`}
-                placeholder="Edit brief…"
-                value={briefDrafts[row.key] ?? row.brief ?? ''}
-                onChange={(e) => setBriefDrafts((prev) => ({ ...prev, [row.key]: e.target.value }))}
-              />
-              <button
-                data-testid={`ai-scenario-checklist-save-brief-${row.key}`}
-                onClick={() => handleSaveBrief(row)}
+        <div className="scenario-checklist-rows">
+          {visible.map((row) => {
+            const title = checklistTitleFor(row.key, row.alt)
+            const copied = copyState?.key === row.key
+            return (
+              <div
+                key={row.key}
+                data-testid={`ai-scenario-checklist-row-${row.key}`}
+                className={
+                  row.bound
+                    ? 'scenario-checklist-row is-bound'
+                    : row.hasBrief || row.reuse
+                      ? 'scenario-checklist-row is-unbound'
+                      : 'scenario-checklist-row is-missing'
+                }
               >
-                Edit brief
-              </button>
-            </div>
-          </div>
-        ))
+                <div className="scenario-checklist-title-row">
+                  <div className="scenario-checklist-title">{title}</div>
+                  <button
+                    type="button"
+                    data-testid={`ai-scenario-checklist-copy-${row.key}`}
+                    className="scenario-checklist-copy"
+                    aria-label={
+                      copied
+                        ? copyState.status === 'copied'
+                          ? 'Generation prompt copied'
+                          : 'Copy generation prompt failed'
+                        : `Copy generation prompt for ${title}`
+                    }
+                    title={
+                      copied
+                        ? copyState.status === 'copied'
+                          ? 'Copied'
+                          : 'Copy failed'
+                        : 'Copy generation prompt'
+                    }
+                    onClick={() => void handleCopyPrompt(row)}
+                  >
+                    {copied
+                      ? copyState.status === 'copied'
+                        ? 'Copied'
+                        : 'Copy failed'
+                      : 'Copy prompt'}
+                  </button>
+                </div>
+                <div className="scenario-checklist-key">
+                  <code className="scenario-checklist-slug">asset:{row.key}</code>
+                </div>
+                <div data-testid={`ai-scenario-checklist-status-${row.key}`}>
+                  {row.bound ? (
+                    <span className="scenario-status-pill is-bound">
+                      Bound — {row.bindingAssetId}
+                    </span>
+                  ) : row.hasBrief || row.reuse ? (
+                    <span className="scenario-status-pill is-unbound">
+                      Unbound — brief only{row.reuse ? ` (reuse ${row.reuse})` : ''}
+                    </span>
+                  ) : (
+                    <span className="scenario-status-pill is-missing">
+                      Unbound — missing brief and binding
+                    </span>
+                  )}
+                </div>
+                {row.brief && (
+                  <div className="scenario-checklist-brief">
+                    <span className="scenario-checklist-brief-label">Brief:</span> {row.brief}
+                  </div>
+                )}
+                {row.label && (
+                  <div className="scenario-checklist-label">
+                    <span className="scenario-checklist-label-tag">Label:</span> {row.label}
+                  </div>
+                )}
+                {row.reuse && (
+                  <div className="scenario-checklist-reuse">
+                    <span className="scenario-checklist-reuse-label">Reuse:</span> {row.reuse}
+                  </div>
+                )}
+                <div className="scenario-checklist-controls">
+                  <label className="scenario-checklist-field">
+                    <span>Bind library asset</span>
+                    <select
+                      data-testid={`ai-scenario-checklist-bind-${row.key}`}
+                      value={row.bindingAssetId ?? ''}
+                      onChange={(e) => handleBind(row, e.target.value)}
+                    >
+                      <option value="">Unbound</option>
+                      {libraryOptions.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="scenario-checklist-field">
+                    <span>Upload</span>
+                    <input
+                      data-testid={`ai-scenario-checklist-upload-${row.key}`}
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => void handleUpload(row, e.target.files)}
+                    />
+                  </label>
+                </div>
+                {uploadError[row.key] && (
+                  <div
+                    data-testid={`ai-scenario-checklist-upload-error-${row.key}`}
+                    className="scenario-checklist-error"
+                  >
+                    {uploadError[row.key]}
+                  </div>
+                )}
+                <div className="scenario-checklist-brief-edit">
+                  <input
+                    data-testid={`ai-scenario-checklist-brief-input-${row.key}`}
+                    aria-label={`Brief for ${row.key}`}
+                    placeholder="Edit brief…"
+                    value={briefDrafts[row.key] ?? row.brief ?? ''}
+                    onChange={(e) =>
+                      setBriefDrafts((prev) => ({ ...prev, [row.key]: e.target.value }))
+                    }
+                  />
+                  <button
+                    data-testid={`ai-scenario-checklist-save-brief-${row.key}`}
+                    onClick={() => handleSaveBrief(row)}
+                  >
+                    Edit brief
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
       )}
-      <div data-testid="ai-scenario-checklist-project">{projectId}</div>
+      <div data-testid="ai-scenario-checklist-project" className="scenario-checklist-project">
+        {projectId}
+      </div>
     </div>
   )
 }

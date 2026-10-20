@@ -16,7 +16,7 @@
  * - `assets/fonts/OFL-LICENSE.txt` — font license attribution.
  * - `manifest.json` — `{ format, generator, page, visuals[], fonts[] }`
  *   where each visual carries the authoritative normalized `asset` key plus
- *   `file` and `mime` (and `alt`/`brief` metadata; reuse names stay internal
+ *   `file` and `mime` (and `alt`/`brief`/`label` metadata; reuse names stay internal
  *   and are never shipped).
  *
  * Guarantees:
@@ -89,6 +89,7 @@ export interface ScenarioZipManifestVisual {
   readonly file: string
   readonly mime: string
   readonly brief?: string
+  readonly label?: string
 }
 
 export interface ScenarioZipManifest {
@@ -288,12 +289,16 @@ export function buildScenarioPortablePack(input: ScenarioPortablePackInput): Sce
   const parsed = parseScenarioMarkdown(input.markdown || '')
   const altByKey = new Map<string, string>()
   const briefByKey = new Map<string, string>()
+  const labelByKey = new Map<string, string>()
   for (const step of parsed.steps) {
     for (const visual of step.visuals) {
       if (visual.key === '') continue
       if (!altByKey.has(visual.key)) altByKey.set(visual.key, visual.alt)
       if (visual.brief !== undefined && !briefByKey.has(visual.key)) {
         briefByKey.set(visual.key, visual.brief)
+      }
+      if (visual.label !== undefined && !labelByKey.has(visual.key)) {
+        labelByKey.set(visual.key, visual.label)
       }
     }
   }
@@ -332,12 +337,14 @@ export function buildScenarioPortablePack(input: ScenarioPortablePackInput): Sce
     const mime = (record.mime || '').trim() || 'image/png'
     const alt = record.alt ?? altByKey.get(key) ?? key
     const brief = record.brief ?? briefByKey.get(key)
+    const label = labelByKey.get(key)
     visuals.push({
       asset: key,
       alt,
       file: `assets/${file}`,
       mime,
       ...(brief !== undefined ? { brief } : {}),
+      ...(label !== undefined ? { label } : {}),
     })
     imageEntries.push({ path: `assets/${file}`, bytes: record.bytes })
   }
