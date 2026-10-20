@@ -93,45 +93,69 @@ export function AiScenarioHistory({ projectId, conversationId }: AiScenarioHisto
       {ordered.length === 0 ? (
         <div data-testid="ai-scenario-history-none">No versions yet — chat to iterate.</div>
       ) : (
-        <ol>
+        <ol className="scenario-version-list">
           {ordered.map((version, index) => {
             const previous = index > 0 ? ordered[index - 1]!.content : ''
             const diff = diffScenarioLines(previous, version.content)
             const isAccepted = version.id === acceptedId
             const isActive = version.id === activeId
             return (
-              <li key={version.id} data-testid={`ai-scenario-version-${version.id}`}>
-                <div data-testid={`ai-scenario-version-summary-${version.id}`}>
-                  {version.summary} — steps {version.touchedSteps.join(', ') || '—'} —{' '}
-                  {version.timestamp}
-                  {isActive ? ' — active' : ''}
-                  {isAccepted ? ' — accepted (downstream snapshot)' : ''}
+              <li
+                key={version.id}
+                data-testid={`ai-scenario-version-${version.id}`}
+                className="scenario-version"
+              >
+                <div
+                  data-testid={`ai-scenario-version-summary-${version.id}`}
+                  className="scenario-version-summary"
+                >
+                  <span>
+                    {version.summary} — steps {version.touchedSteps.join(', ') || '—'} —{' '}
+                    {version.timestamp}
+                  </span>
+                  {isActive ? (
+                    <span className="scenario-badge scenario-badge-active">active</span>
+                  ) : null}
+                  {isAccepted ? (
+                    <span className="scenario-badge scenario-badge-accepted">
+                      accepted · downstream snapshot
+                    </span>
+                  ) : null}
                 </div>
-                <div data-testid={`ai-scenario-version-diff-${version.id}`}>
+                <div
+                  data-testid={`ai-scenario-version-diff-${version.id}`}
+                  className="scenario-diff"
+                >
                   {diff.map((row, i) => (
                     <div
                       key={i}
                       data-testid={`ai-scenario-version-diff-${version.id}-${row.type}-${i}`}
                       data-type={row.type}
+                      className={`scenario-diff-row scenario-diff-${row.type}`}
                     >
-                      {row.type === 'add' ? '+' : row.type === 'del' ? '-' : ' '} {row.line}
+                      <span className="scenario-diff-sign" aria-hidden="true">
+                        {row.type === 'add' ? '+' : row.type === 'del' ? '-' : ' '}
+                      </span>{' '}
+                      <span className="scenario-diff-line">{row.line}</span>
                     </div>
                   ))}
                 </div>
-                <button
-                  data-testid={`ai-scenario-restore-${version.id}`}
-                  disabled={busy}
-                  onClick={() => handleRestore(version.id)}
-                >
-                  Restore as new version
-                </button>
-                <button
-                  data-testid={`ai-scenario-accept-${version.id}`}
-                  disabled={busy || isAccepted}
-                  onClick={() => handleAccept(version.id)}
-                >
-                  {isAccepted ? 'Accepted' : 'Accept as downstream snapshot'}
-                </button>
+                <div className="scenario-version-actions">
+                  <button
+                    data-testid={`ai-scenario-restore-${version.id}`}
+                    disabled={busy}
+                    onClick={() => handleRestore(version.id)}
+                  >
+                    Restore as new version
+                  </button>
+                  <button
+                    data-testid={`ai-scenario-accept-${version.id}`}
+                    disabled={busy || isAccepted}
+                    onClick={() => handleAccept(version.id)}
+                  >
+                    {isAccepted ? 'Accepted' : 'Accept as downstream snapshot'}
+                  </button>
+                </div>
               </li>
             )
           })}

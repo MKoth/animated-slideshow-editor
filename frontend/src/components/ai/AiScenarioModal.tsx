@@ -26,6 +26,7 @@ import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { AiScenarioChecklist } from './AiScenarioChecklist'
 import { AiScenarioHistory } from './AiScenarioHistory'
+import { ScenarioDocMarkdown } from '../../ai/markdown'
 import type { AiScenario, AiScenarioStep, ScenarioMarkdownVersion } from '../../api/aiApi'
 
 const EMPTY_MARKDOWN_VERSIONS: ScenarioMarkdownVersion[] = []
@@ -423,9 +424,9 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
             style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginTop: 8 }}
           >
             <div>
-              <div data-testid="ai-scenario-modal-doc">
+              <div data-testid="ai-scenario-modal-doc" className="ai-scenario-modal-doc">
                 {markdown ? (
-                  <pre style={{ whiteSpace: 'pre-wrap' }}>{markdown}</pre>
+                  <ScenarioDocMarkdown content={markdown} />
                 ) : (
                   <div data-testid="ai-scenario-modal-empty">
                     No scenario markdown yet — chat to iterate or edit the doc.

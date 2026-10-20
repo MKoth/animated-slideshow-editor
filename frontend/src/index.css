@@ -4451,6 +4451,292 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+/* Scenario MD doc — distinct reading card inside the modal. Vars only so
+   light/dark both work: --color-bg differs from the modal --color-bg-panel. */
+.ai-scenario-modal-doc {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  max-height: 55vh;
+  overflow: auto;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.ai-scenario-modal-doc .ai-markdown {
+  font-family: Charter, Georgia, 'Times New Roman', Times, serif;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--color-text);
+}
+
+.ai-scenario-modal-doc .ai-markdown h1,
+.ai-scenario-modal-doc .ai-markdown h2,
+.ai-scenario-modal-doc .ai-markdown h3,
+.ai-scenario-modal-doc .ai-markdown h4 {
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.3;
+  margin: 16px 0 8px;
+}
+
+.ai-scenario-modal-doc .ai-markdown h1:first-child,
+.ai-scenario-modal-doc .ai-markdown h2:first-child {
+  margin-top: 0;
+}
+
+.ai-scenario-modal-doc .ai-markdown h2 {
+  font-size: 17px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--color-accent);
+}
+
+.ai-scenario-modal-doc .ai-markdown h2.scenario-step {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ai-scenario-modal-doc .scenario-step-badge {
+  flex: none;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-accent-text);
+  background: var(--color-accent);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.ai-scenario-modal-doc .scenario-step-title {
+  font-weight: 700;
+}
+
+/* Spoken voiceover — accent label, tinted card. */
+.ai-scenario-modal-doc .ai-markdown p.scenario-narrator {
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-bg-elevated);
+  border-radius: 0 8px 8px 0;
+  padding: 8px 12px;
+  margin: 0 0 10px;
+}
+
+.ai-scenario-modal-doc .scenario-narrator strong {
+  color: var(--color-accent);
+}
+
+/* Director note — muted body, green label. */
+.ai-scenario-modal-doc .ai-markdown blockquote.scenario-brief {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: 1px dashed var(--color-border);
+  border-left: 3px solid var(--color-success);
+  border-radius: 0 8px 8px 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  font-style: italic;
+}
+
+.ai-scenario-modal-doc .scenario-brief-label {
+  color: var(--color-success);
+  font-style: normal;
+  font-weight: 700;
+}
+
+/* Reuse pointer — subtle, muted throughout. */
+.ai-scenario-modal-doc .ai-markdown blockquote.scenario-reuse {
+  margin: 0 0 10px;
+  padding: 6px 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+}
+
+.ai-scenario-modal-doc .scenario-reuse-label {
+  font-weight: 700;
+}
+
+/* Visual reference chip — replaces the raw ![alt](asset:slug) line. */
+.ai-scenario-modal-doc .ai-markdown p.scenario-visual-line {
+  margin: 0 0 6px;
+}
+
+.ai-scenario-modal-doc .scenario-visual {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-bg-elevated);
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12.5px;
+}
+
+.ai-scenario-modal-doc .scenario-visual-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.ai-scenario-modal-doc .scenario-visual-alt {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* History tab — version cards with their own diff scroller. Vars plus a
+   small per-theme tint so add/del rows read in both modes. */
+.scenario-version-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.scenario-version {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--color-bg);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.scenario-version-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.scenario-badge {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.scenario-badge-active {
+  color: var(--color-accent-text);
+  background: var(--color-accent);
+}
+
+.scenario-badge-accepted {
+  color: var(--color-success);
+  border: 1px solid var(--color-success);
+}
+
+.scenario-diff {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 6px 0;
+  background: var(--color-bg-panel);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.scenario-diff-row {
+  display: flex;
+  gap: 8px;
+  padding: 1px 10px;
+  min-height: 1.5em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.scenario-diff-sign {
+  flex: none;
+  width: 1ch;
+  text-align: center;
+  font-weight: 700;
+  user-select: none;
+}
+
+.scenario-diff-same {
+  color: var(--color-text-muted);
+}
+
+.scenario-diff-add {
+  color: var(--color-success);
+  background: rgba(22, 163, 74, 0.08);
+}
+
+.scenario-diff-del {
+  color: var(--color-danger);
+  background: rgba(220, 38, 38, 0.08);
+}
+
+[data-theme='dark'] .scenario-diff-add {
+  background: rgba(34, 197, 94, 0.14);
+}
+
+[data-theme='dark'] .scenario-diff-del {
+  background: rgba(239, 68, 68, 0.14);
+}
+
+.scenario-version-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.ai-scenario-modal-doc .ai-markdown table {
+  display: table;
+  width: 100%;
+  overflow: auto;
+  border-collapse: collapse;
+  margin: 0 0 12px;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+}
+
+.ai-scenario-modal-doc .ai-markdown th,
+.ai-scenario-modal-doc .ai-markdown td {
+  border: 1px solid var(--color-border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.ai-scenario-modal-doc .ai-markdown th {
+  background: var(--color-bg-elevated);
+  font-weight: 600;
+}
+
+.ai-scenario-modal-doc .ai-markdown blockquote {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-bg-elevated);
+  border-radius: 0 6px 6px 0;
+}
+
+.ai-scenario-modal-doc .ai-markdown hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 16px 0;
+}
+
 .ai-panel__input {
   position: sticky;
   bottom: -18px;
