@@ -304,177 +304,217 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     }
   }
 
+  const handleClose = () => store.setScenarioModalOpen(false)
+
   return (
-    <div data-testid="ai-scenario-modal" role="dialog" aria-label="Scenario">
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-        <strong>Scenario</strong>
-        <button
-          data-testid="ai-scenario-generate"
-          disabled={generateBlocked}
-          title={generateBlocked ? `Blocked — ${unboundCount} unbound` : 'Generate HTML'}
-          onClick={handleGenerate}
-        >
-          {generateBlocked ? `Generate HTML (blocked — ${unboundCount} unbound)` : 'Generate HTML'}
-        </button>
-        <button
-          data-testid="ai-scenario-view"
-          disabled={htmlState === 'empty'}
-          title={htmlState === 'empty' ? 'No HTML yet — generate first' : 'View stored HTML'}
-          onClick={() => {
-            if (htmlState !== 'empty') setPreviewOpen(true)
-          }}
-        >
-          View HTML
-        </button>
-        <button
-          data-testid="ai-scenario-download"
-          disabled={downloadBlocked || downloading}
-          title={
-            downloadBlocked
-              ? generateBlocked
-                ? `Blocked — ${unboundCount} unbound`
-                : 'No HTML yet — generate first'
-              : 'Download zip'
-          }
-          onClick={() => void handleDownload()}
-        >
-          {downloading ? 'Preparing zip…' : 'Download .zip'}
-        </button>
-        <button
-          data-testid="ai-scenario-modal-close"
-          onClick={() => store.setScenarioModalOpen(false)}
-        >
-          Close
-        </button>
-      </div>
-
-      <div data-testid="ai-scenario-unbound-count">
-        {generateBlocked ? `${unboundCount} unbound` : 'All visuals bound'}
-      </div>
-      <div data-testid="ai-scenario-html-state">html: {htmlState}</div>
-      {downloadError && <div data-testid="ai-scenario-download-error">{downloadError}</div>}
-      {htmlState === 'empty' && (
-        <div data-testid="ai-scenario-view-empty-hint">No HTML yet — generate first.</div>
-      )}
-      {htmlState === 'stale' && (
-        <div data-testid="ai-scenario-stale-hint">
-          Stale — doc edited after generation, View shows the old render.
+    <div
+      data-testid="ai-scenario-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Scenario"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+      onClick={handleClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') handleClose()
+        }}
+        style={{
+          background: 'var(--color-bg-panel)',
+          color: 'var(--color-text)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 12,
+          maxWidth: 960,
+          width: 'calc(100% - 48px)',
+          maxHeight: 'calc(100% - 48px)',
+          overflow: 'auto',
+          padding: 16,
+        }}
+      >
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+          <strong>Scenario</strong>
+          <button
+            data-testid="ai-scenario-generate"
+            disabled={generateBlocked}
+            title={generateBlocked ? `Blocked — ${unboundCount} unbound` : 'Generate HTML'}
+            onClick={handleGenerate}
+          >
+            {generateBlocked
+              ? `Generate HTML (blocked — ${unboundCount} unbound)`
+              : 'Generate HTML'}
+          </button>
+          <button
+            data-testid="ai-scenario-view"
+            disabled={htmlState === 'empty'}
+            title={htmlState === 'empty' ? 'No HTML yet — generate first' : 'View stored HTML'}
+            onClick={() => {
+              if (htmlState !== 'empty') setPreviewOpen(true)
+            }}
+          >
+            View HTML
+          </button>
+          <button
+            data-testid="ai-scenario-download"
+            disabled={downloadBlocked || downloading}
+            title={
+              downloadBlocked
+                ? generateBlocked
+                  ? `Blocked — ${unboundCount} unbound`
+                  : 'No HTML yet — generate first'
+                : 'Download zip'
+            }
+            onClick={() => void handleDownload()}
+          >
+            {downloading ? 'Preparing zip…' : 'Download .zip'}
+          </button>
+          <button
+            data-testid="ai-scenario-modal-close"
+            onClick={() => store.setScenarioModalOpen(false)}
+          >
+            Close
+          </button>
         </div>
-      )}
 
-      <div data-testid="ai-scenario-modal-tabs">
-        <button
-          data-testid="ai-scenario-modal-tab-doc"
-          disabled={scenarioTab === 'doc'}
-          onClick={() => store.setScenarioTab('doc')}
-        >
-          Doc
-        </button>
-        <button
-          data-testid="ai-scenario-modal-tab-history"
-          disabled={scenarioTab === 'history'}
-          onClick={() => store.setScenarioTab('history')}
-        >
-          History
-        </button>
-      </div>
+        <div data-testid="ai-scenario-unbound-count">
+          {generateBlocked ? `${unboundCount} unbound` : 'All visuals bound'}
+        </div>
+        <div data-testid="ai-scenario-html-state">html: {htmlState}</div>
+        {downloadError && <div data-testid="ai-scenario-download-error">{downloadError}</div>}
+        {htmlState === 'empty' && (
+          <div data-testid="ai-scenario-view-empty-hint">No HTML yet — generate first.</div>
+        )}
+        {htmlState === 'stale' && (
+          <div data-testid="ai-scenario-stale-hint">
+            Stale — doc edited after generation, View shows the old render.
+          </div>
+        )}
 
-      {scenarioTab === 'history' ? (
-        <AiScenarioHistory projectId={projectId} conversationId={conversationId} />
-      ) : (
-        <div
-          data-testid="ai-scenario-modal-body"
-          style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginTop: 8 }}
-        >
-          <div>
-            <div data-testid="ai-scenario-modal-doc">
-              {markdown ? (
-                <pre style={{ whiteSpace: 'pre-wrap' }}>{markdown}</pre>
-              ) : (
-                <div data-testid="ai-scenario-modal-empty">
-                  No scenario markdown yet — chat to iterate or edit the doc.
+        <div data-testid="ai-scenario-modal-tabs">
+          <button
+            data-testid="ai-scenario-modal-tab-doc"
+            disabled={scenarioTab === 'doc'}
+            onClick={() => store.setScenarioTab('doc')}
+          >
+            Doc
+          </button>
+          <button
+            data-testid="ai-scenario-modal-tab-history"
+            disabled={scenarioTab === 'history'}
+            onClick={() => store.setScenarioTab('history')}
+          >
+            History
+          </button>
+        </div>
+
+        {scenarioTab === 'history' ? (
+          <AiScenarioHistory projectId={projectId} conversationId={conversationId} />
+        ) : (
+          <div
+            data-testid="ai-scenario-modal-body"
+            style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginTop: 8 }}
+          >
+            <div>
+              <div data-testid="ai-scenario-modal-doc">
+                {markdown ? (
+                  <pre style={{ whiteSpace: 'pre-wrap' }}>{markdown}</pre>
+                ) : (
+                  <div data-testid="ai-scenario-modal-empty">
+                    No scenario markdown yet — chat to iterate or edit the doc.
+                  </div>
+                )}
+              </div>
+              {previewOpen && htmlState !== 'empty' && lastHtml && (
+                <div data-testid="ai-scenario-html-preview">
+                  <div>Preview (stored HTML{htmlState === 'stale' ? ' — stale' : ''})</div>
+                  <iframe
+                    data-testid="ai-scenario-html-frame"
+                    title="Scenario HTML preview"
+                    srcDoc={lastHtml}
+                  />
+                  <button
+                    data-testid="ai-scenario-html-preview-close"
+                    onClick={() => setPreviewOpen(false)}
+                  >
+                    Close preview
+                  </button>
                 </div>
               )}
             </div>
-            {previewOpen && htmlState !== 'empty' && lastHtml && (
-              <div data-testid="ai-scenario-html-preview">
-                <div>Preview (stored HTML{htmlState === 'stale' ? ' — stale' : ''})</div>
-                <iframe
-                  data-testid="ai-scenario-html-frame"
-                  title="Scenario HTML preview"
-                  srcDoc={lastHtml}
-                />
-                <button
-                  data-testid="ai-scenario-html-preview-close"
-                  onClick={() => setPreviewOpen(false)}
-                >
-                  Close preview
-                </button>
-              </div>
+            <AiScenarioChecklist
+              projectId={projectId}
+              onMutated={() => setScenarioRev((n) => n + 1)}
+            />
+          </div>
+        )}
+
+        <div data-testid="ai-scenario-legacy">
+          <h4>Action Scenario (legacy)</h4>
+          <div className="ai-scenario__request">
+            <input
+              data-testid="ai-scenario-request"
+              placeholder="Describe the lesson to scenario…"
+              value={scenarioRequest}
+              onChange={(e) => store.setScenarioRequest(e.target.value)}
+            />
+            <button
+              data-testid="ai-scenario-propose"
+              disabled={!conversationId || !scenarioRequest.trim() || scenarioGenerating}
+              onClick={handlePropose}
+            >
+              Draft scenario
+            </button>
+            <button
+              data-testid="ai-scenario-revise"
+              disabled={
+                !conversationId ||
+                !scenarioRequest.trim() ||
+                !activeScenarioId ||
+                scenarioGenerating
+              }
+              onClick={handleRevise}
+            >
+              Revise scenario
+            </button>
+            {scenarioGenerating && (
+              <span data-testid="ai-scenario-generating">Drafting scenario…</span>
             )}
+            {scenarioError && <span data-testid="ai-scenario-error">{scenarioError.message}</span>}
           </div>
-          <AiScenarioChecklist
-            projectId={projectId}
-            onMutated={() => setScenarioRev((n) => n + 1)}
-          />
-        </div>
-      )}
 
-      <div data-testid="ai-scenario-legacy">
-        <h4>Action Scenario (legacy)</h4>
-        <div className="ai-scenario__request">
-          <input
-            data-testid="ai-scenario-request"
-            placeholder="Describe the lesson to scenario…"
-            value={scenarioRequest}
-            onChange={(e) => store.setScenarioRequest(e.target.value)}
-          />
-          <button
-            data-testid="ai-scenario-propose"
-            disabled={!conversationId || !scenarioRequest.trim() || scenarioGenerating}
-            onClick={handlePropose}
-          >
-            Draft scenario
-          </button>
-          <button
-            data-testid="ai-scenario-revise"
-            disabled={
-              !conversationId || !scenarioRequest.trim() || !activeScenarioId || scenarioGenerating
-            }
-            onClick={handleRevise}
-          >
-            Revise scenario
-          </button>
-          {scenarioGenerating && (
-            <span data-testid="ai-scenario-generating">Drafting scenario…</span>
+          {scenarios.length > 0 && (
+            <select
+              data-testid="ai-scenario-select"
+              value={activeScenarioId ?? ''}
+              onChange={(e) => store.setActiveScenario(e.target.value || null)}
+            >
+              {scenarios.map((scenario) => (
+                <option key={scenario.id} value={scenario.id}>
+                  {scenario.title} ({scenario.status})
+                </option>
+              ))}
+            </select>
           )}
-          {scenarioError && <span data-testid="ai-scenario-error">{scenarioError.message}</span>}
+
+          {activeScenario ? (
+            <AiScenarioEditor
+              key={`${activeScenario.id}-${activeScenario.modified}`}
+              scenario={activeScenario}
+            />
+          ) : (
+            <div data-testid="ai-scenario-empty">
+              No action scenario yet — describe the lesson above.
+            </div>
+          )}
         </div>
-
-        {scenarios.length > 0 && (
-          <select
-            data-testid="ai-scenario-select"
-            value={activeScenarioId ?? ''}
-            onChange={(e) => store.setActiveScenario(e.target.value || null)}
-          >
-            {scenarios.map((scenario) => (
-              <option key={scenario.id} value={scenario.id}>
-                {scenario.title} ({scenario.status})
-              </option>
-            ))}
-          </select>
-        )}
-
-        {activeScenario ? (
-          <AiScenarioEditor
-            key={`${activeScenario.id}-${activeScenario.modified}`}
-            scenario={activeScenario}
-          />
-        ) : (
-          <div data-testid="ai-scenario-empty">
-            No action scenario yet — describe the lesson above.
-          </div>
-        )}
       </div>
     </div>
   )

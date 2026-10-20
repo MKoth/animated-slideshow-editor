@@ -68,55 +68,88 @@ export function AiReconciliationView({
         </button>
       </div>
       {reconciliationModalOpen && (
-        <div data-testid="ai-reconciliation-modal" role="dialog" aria-label="Reconciliation">
-          <button
-            data-testid="ai-reconciliation-modal-close"
-            onClick={() => setReconciliationModalOpen(false)}
+        <div
+          data-testid="ai-reconciliation-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Reconciliation"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setReconciliationModalOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setReconciliationModalOpen(false)
+            }}
+            style={{
+              background: 'var(--color-bg-panel)',
+              color: 'var(--color-text)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 12,
+              maxWidth: 720,
+              width: 'calc(100% - 48px)',
+              maxHeight: 'calc(100% - 48px)',
+              overflow: 'auto',
+              padding: 16,
+            }}
           >
-            Close
-          </button>
-          <div className="ai-reconciliation__request">
             <button
-              data-testid="ai-reconciliation-run"
-              disabled={!canRun}
-              onClick={handleRun}
-              title={
-                !scenarioId
-                  ? 'Accept an Action Scenario first — Stage B reads only the accepted version'
-                  : undefined
-              }
+              data-testid="ai-reconciliation-modal-close"
+              onClick={() => setReconciliationModalOpen(false)}
             >
-              Reconcile middle steps
+              Close
             </button>
-            {reconciliationBusy && (
-              <span data-testid="ai-reconciliation-generating">Reconciling…</span>
+            <div className="ai-reconciliation__request">
+              <button
+                data-testid="ai-reconciliation-run"
+                disabled={!canRun}
+                onClick={handleRun}
+                title={
+                  !scenarioId
+                    ? 'Accept an Action Scenario first — Stage B reads only the accepted version'
+                    : undefined
+                }
+              >
+                Reconcile middle steps
+              </button>
+              {reconciliationBusy && (
+                <span data-testid="ai-reconciliation-generating">Reconciling…</span>
+              )}
+              {reconciliationError && (
+                <span data-testid="ai-reconciliation-error">{reconciliationError.message}</span>
+              )}
+            </div>
+
+            {reconciliations.length > 0 && (
+              <select
+                data-testid="ai-reconciliation-select"
+                value={activeReconciliationId ?? ''}
+                onChange={(e) => store.setActiveReconciliation(e.target.value || null)}
+              >
+                {reconciliations.map((rec) => (
+                  <option key={rec.id} value={rec.id}>
+                    {rec.title} ({rec.status})
+                  </option>
+                ))}
+              </select>
             )}
-            {reconciliationError && (
-              <span data-testid="ai-reconciliation-error">{reconciliationError.message}</span>
+
+            {active ? (
+              <AiReconciliationDetail reconciliation={active} />
+            ) : (
+              <div data-testid="ai-reconciliation-empty">
+                No reconciliation yet — accept a scenario, then reconcile its middle steps.
+              </div>
             )}
           </div>
-
-          {reconciliations.length > 0 && (
-            <select
-              data-testid="ai-reconciliation-select"
-              value={activeReconciliationId ?? ''}
-              onChange={(e) => store.setActiveReconciliation(e.target.value || null)}
-            >
-              {reconciliations.map((rec) => (
-                <option key={rec.id} value={rec.id}>
-                  {rec.title} ({rec.status})
-                </option>
-              ))}
-            </select>
-          )}
-
-          {active ? (
-            <AiReconciliationDetail reconciliation={active} />
-          ) : (
-            <div data-testid="ai-reconciliation-empty">
-              No reconciliation yet — accept a scenario, then reconcile its middle steps.
-            </div>
-          )}
         </div>
       )}
       <div data-testid="ai-reconciliation-status-line">
