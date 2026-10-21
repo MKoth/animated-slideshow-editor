@@ -900,24 +900,67 @@ def _chat_once_non_streaming(
 
 
 def _inference_response_text(data: dict[str, Any]) -> str:
-    if "output" in data:
-        return "".join(
-            part.get("text", "")
-            for item in data.get("output", [])
-            if item.get("type") == "message"
-            for part in item.get("content", [])
-        )
+    # Keep byte-identical with app.api.scenario_routes._inference_response_text.
+    # Responses-family non-streaming bodies carry a top-level `output_text`
+    # convenience string; structured and chat families nest text under
+    # `output` / `content` / `candidates` / `choices`. Cover all of them so
+    # a new envelope never silently reads as empty content.
+    output_text = data.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+    if isinstance(data.get("output"), list):
+        parts: list[str] = []
+        for item in data.get("output", []):
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "output_text" and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+                continue
+            content = item.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    text = part.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+                    elif isinstance(text, dict) and isinstance(text.get("value"), str):
+                        parts.append(text["value"])
+            elif isinstance(content, str):
+                parts.append(content)
+        if parts:
+            return "".join(parts)
     if isinstance(data.get("content"), list):
-        return "".join(part.get("text", "") for part in data["content"])
+        return "".join(part.get("text", "") for part in data["content"] if isinstance(part, dict))
     if data.get("candidates"):
-        return "".join(
-            part.get("text", "")
-            for part in data["candidates"][0].get("content", {}).get("parts", [])
-        )
+        try:
+            return "".join(
+                part.get("text", "")
+                for part in data["candidates"][0].get("content", {}).get("parts", [])
+                if isinstance(part, dict)
+            )
+        except (AttributeError, IndexError, TypeError):
+            pass
     choices = data.get("choices", [])
     if choices:
-        content = choices[0].get("message", {}).get("content", "")
-        return content if isinstance(content, str) else ""
+        try:
+            content = choices[0].get("message", {}).get("content", "")
+        except AttributeError:
+            content = ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        return ""
+    if isinstance(data.get("message"), dict):
+        message = data["message"]
+        if isinstance(message, dict):
+            message_content = message.get("content", "")
+            if isinstance(message_content, str):
+                return message_content
+    text = data.get("text")
+    if isinstance(text, str):
+        return text
     return ""
 
 

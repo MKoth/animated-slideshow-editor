@@ -136,6 +136,12 @@ class AiScenarioMarkdownApply(BaseModel):
     assistantText: str = Field(min_length=1)
 
 
+class AiScenarioForeignWords(BaseModel):
+    projectId: str = Field(min_length=1)
+    conversationId: str | None = None
+    text: str = Field(min_length=1, max_length=12000)
+
+
 class AiScenarioMarkdownRestore(BaseModel):
     projectId: str = Field(min_length=1)
     conversationId: str = Field(min_length=1)

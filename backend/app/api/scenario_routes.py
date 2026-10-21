@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -18,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 from app.ai.library import AiLibrary
 from app.ai.zen import (
     ZenFetchError,
+    friendly_error_for_status,
     inference_endpoint,
     inference_request,
     model_api_family,
@@ -37,24 +39,67 @@ def _iso(value: datetime) -> str:
 def _inference_response_text(data: dict[str, Any]) -> str:
     # Verbatim copy of app.api.ai._inference_response_text (seam owner is
     # independent of the god owner; byte-identical by construction).
-    if "output" in data:
-        return "".join(
-            part.get("text", "")
-            for item in data.get("output", [])
-            if item.get("type") == "message"
-            for part in item.get("content", [])
-        )
+    # Responses-family non-streaming bodies carry a top-level `output_text`
+    # convenience string; structured and chat families nest text under
+    # `output` / `content` / `candidates` / `choices`. Cover all of them so
+    # a new envelope never silently reads as "no highlights".
+    output_text = data.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+    if isinstance(data.get("output"), list):
+        parts: list[str] = []
+        for item in data.get("output", []):
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "output_text" and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+                continue
+            content = item.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    text = part.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+                    elif isinstance(text, dict) and isinstance(text.get("value"), str):
+                        parts.append(text["value"])
+            elif isinstance(content, str):
+                parts.append(content)
+        if parts:
+            return "".join(parts)
     if isinstance(data.get("content"), list):
-        return "".join(part.get("text", "") for part in data["content"])
+        return "".join(part.get("text", "") for part in data["content"] if isinstance(part, dict))
     if data.get("candidates"):
-        return "".join(
-            part.get("text", "")
-            for part in data["candidates"][0].get("content", {}).get("parts", [])
-        )
+        try:
+            return "".join(
+                part.get("text", "")
+                for part in data["candidates"][0].get("content", {}).get("parts", [])
+                if isinstance(part, dict)
+            )
+        except (AttributeError, IndexError, TypeError):
+            pass
     choices = data.get("choices", [])
     if choices:
-        content = choices[0].get("message", {}).get("content", "")
-        return content if isinstance(content, str) else ""
+        try:
+            content = choices[0].get("message", {}).get("content", "")
+        except AttributeError:
+            content = ""
+        if isinstance(content, str):
+            return content
+        # Some gateways return message content as parts.
+        if isinstance(content, list):
+            return "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        return ""
+    if isinstance(data.get("message"), dict):
+        message = data["message"]
+        if isinstance(message, dict):
+            message_content = message.get("content", "")
+            if isinstance(message_content, str):
+                return message_content
+    text = data.get("text")
+    if isinstance(text, str):
+        return text
     return ""
 
 
@@ -539,3 +584,386 @@ def list_scenario_markdown_audits(request: Request, projectId: str = "") -> list
         raise HTTPException(status_code=422, detail="projectId is required")
     library = _library(request)
     return [versions.audit_to_out(row) for row in library.list_markdown_audits(projectId)]
+
+
+FOREIGN_WORDS_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {"words": {"type": "array", "items": {"type": "string"}}},
+    "required": ["words"],
+    "additionalProperties": False,
+}
+
+FOREIGN_WORDS_SYSTEM = (
+    "You extract foreign-language words for a language lesson. "
+    "The lesson's base language is English; the taught language varies. "
+    "The user text is English narration with foreign words and short phrases "
+    "embedded inside it — extract those embedded substrings. "
+    'Return ONLY a JSON object shaped like {"words": [...]} where each entry '
+    "is a single foreign word or short foreign phrase (at most 4 words) "
+    "copied verbatim from the user text. Copy spelling, diacritics, and "
+    "casing exactly; never invent words, never translate, never explain, "
+    "never add prose outside the JSON object. "
+    'When the text holds no foreign words, return exactly {"words": []}.'
+)
+
+FOREIGN_WORDS_USER_TEMPLATE = (
+    "The text below is English narration with embedded foreign-language "
+    "words or short phrases. List every word or short phrase (at most 4 "
+    "words) that is NOT English — diacritics, non-Latin scripts, and taught "
+    "vocabulary all count, even inside an otherwise English sentence. "
+    'Return ONLY {{"words": [...]}} with each entry copied verbatim from '
+    "the text. No bullets, no numbering, no explanations, no prose.\n"
+    'Example: Text: "In Spanish arbol means tree; it is duradero y solido." '
+    '-> {{"words": ["arbol", "duradero y solido"]}}\n\n'
+    "Text:\n{text}"
+)
+
+MAX_FOREIGN_WORDS = 200
+MAX_FOREIGN_WORD_CHARS = 120
+
+
+def build_foreign_words_messages(text: str) -> list[dict[str, str]]:
+    """Prompt messages for the foreign-word detector (pure; tested directly)."""
+    return [
+        {"role": "system", "content": FOREIGN_WORDS_SYSTEM},
+        {
+            "role": "user",
+            "content": FOREIGN_WORDS_USER_TEMPLATE.format(text=text.strip()[:8000]),
+        },
+    ]
+
+
+def _clean_foreign_entry(raw: str) -> str | None:
+    """Normalize one candidate word/phrase; None when it cannot be a highlight entry."""
+    text = " ".join(raw.split())
+    # Strip list bullets/numbering once, then peel quotes/bold/punctuation
+    # until stable ("**soy**", -> soy).
+    text = re.sub(r"^\s*(?:[-*•>]\s+|\d+[.)]\s*)", "", text)
+    # Fenced code residue never carries vocabulary.
+    text = text.strip("`").strip()
+    previous = None
+    while previous != text:
+        previous = text
+        text = text.strip("*").strip("\"'“”‘’[]`").strip(" \t\r\n.,;:!?")
+    # Trailing explanations are not vocabulary ("soy (I am)" -> soy,
+    # "soy — I am" -> soy). Only split on spaced separators so hyphenated
+    # words (arc-en-ciel) survive.
+    for sep in (" — ", " – ", " —", " | ", " / ", " = ", " - ", " : "):
+        if sep in text:
+            text = text.split(sep, 1)[0].strip()
+    # Trailing parenthetical gloss ("soy (I am)" -> soy).
+    text = re.sub(r"\s*\([^()]{0,60}\)\s*$", "", text).strip()
+    # Re-peel quotes/punctuation the split may have exposed.
+    previous = None
+    while previous != text:
+        previous = text
+        text = text.strip("*").strip("\"'“”‘’[]`").strip(" \t\r\n.,;:!?")
+    if not text or len(text) > MAX_FOREIGN_WORD_CHARS:
+        return None
+    # At least one Unicode letter (stdlib re: [^\W\d_] == letters only).
+    if not re.search(r"[^\W\d_]", text):
+        return None
+    if len(text.split()) > 8:
+        return None
+    return text
+
+
+def parse_foreign_words_content(content: object) -> list[str]:
+    """Defensively extract the word list from model output (pure; tested directly).
+
+    Accepts a JSON object with a `words` array, or a bare JSON array, and
+    falls back to scanning for the first `[...]` span. As a last resort the
+    output is read as a bare word list (one entry per line, commas also
+    split) so a model that ignores the JSON instruction and answers with
+    plain `ser, estar, ...` lines still yields highlights. Anything
+    unusable yields an empty list — highlighting is best-effort, never fatal.
+    """
+    raw = content if isinstance(content, str) else ""
+    # Strip fenced code blocks so ```json {"words": [...]} ``` parses.
+    fence = re.search(r"```(?:json)?\s*(.*?)```", raw, re.DOTALL | re.IGNORECASE)
+    fence_text = fence.group(1).strip() if fence else ""
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _take(entry: object) -> None:
+        if len(out) >= MAX_FOREIGN_WORDS:
+            return
+        # Object entries ({"word": "soy"}) salvage their text field.
+        if isinstance(entry, dict):
+            for key in ("word", "text", "term", "phrase", "value"):
+                value = entry.get(key)
+                if isinstance(value, str) and value.strip():
+                    _take(value)
+                    return
+            return
+        if not isinstance(entry, str):
+            return
+        cleaned = _clean_foreign_entry(entry)
+        if cleaned is None:
+            return
+        key = cleaned.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(cleaned)
+
+    def _words_from_dict(data: dict[str, object]) -> object:
+        for key in ("words", "foreign_words", "foreignWords", "phrases", "terms"):
+            if key in data:
+                return data[key]
+        return None
+
+    candidates: list[str] = [raw]
+    if fence_text:
+        candidates.append(fence_text)
+    start = raw.find("[")
+    end = raw.rfind("]")
+    if 0 <= start < end:
+        candidates.append(raw[start : end + 1])
+    for candidate in candidates:
+        try:
+            parsed: object = _json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(parsed, dict):
+            parsed = _words_from_dict(parsed)
+        if isinstance(parsed, str):
+            # {"words": "soy, hola"} — treat the string as a bare list.
+            for chunk in re.split(r"[\n,;]+", parsed):
+                _take(chunk)
+            if out:
+                return out
+            continue
+        if isinstance(parsed, list):
+            for entry in parsed:
+                _take(entry)
+            if out:
+                return out
+    # Bare word list fallback: bullets/numbers, one entry per line, commas split.
+    # Chunks with braces are JSON residue, colon-terminated lines are
+    # headers ("Here are the words:") — neither is vocabulary. Parts holding
+    # `":` are protocol residue from a full API body (`"status":"incomplete"`)
+    # and must never become highlights.
+    for line in raw.splitlines():
+        chunk = line.strip().strip("`")
+        if not chunk or chunk.startswith("```"):
+            continue
+        if chunk.rstrip().endswith(":"):
+            continue
+        parts = re.split(r"[,;]+", chunk) if re.search(r"[,;]", chunk) else [chunk]
+        for part in parts:
+            if "{" in part or "}" in part or '":' in part:
+                continue
+            _take(part)
+    return out
+
+
+def _post_foreign_words_once(
+    *,
+    endpoint: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+    session_id: str,
+    structured: bool,
+) -> str:
+    """One non-streaming inference call; returns the raw content text. Mock seam for tests."""
+    if structured:
+        path, payload = _structured_inference_payload(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            name="foreign_words",
+            schema=FOREIGN_WORDS_SCHEMA,
+        )
+    else:
+        path, payload = inference_request(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=False,
+        )
+    try:
+        response = httpx.post(
+            f"{inference_endpoint(endpoint)}{path}",
+            headers=opencode_headers(api_key, session_id),
+            json=payload,
+            # Reasoning models can think for minutes before the first byte;
+            # chat streaming allows 300s, so don't fail fast here either.
+            timeout=180.0,
+        )
+    except httpx.HTTPError as exc:
+        raise ZenFetchError(0, str(exc)) from exc
+    if response.status_code != 200:
+        raise ZenFetchError(response.status_code, response.text)
+    # A 200 that carries no usable content means "no highlights", not a
+    # failure — parse what we can (the parser salvages [...] spans from raw
+    # text) instead of turning it into a 502.
+    try:
+        data = response.json()
+        content = _inference_response_text(data)
+    except (ValueError, TypeError, AttributeError):
+        data = None
+        content = response.text
+    if isinstance(data, dict) and data.get("status") == "incomplete":
+        # Reasoning models burn output tokens thinking; when the cap hits
+        # before any message is emitted there is nothing to parse — retrying
+        # at the same cap would fail the same way, so say so loudly.
+        details = data.get("incomplete_details")
+        reason = details.get("reason") if isinstance(details, dict) else None
+        usage = data.get("usage")
+        usage_txt = usage if isinstance(usage, dict) else data.get("output_tokens")
+        logger.warning(
+            "ai foreign-words response incomplete (model=%s, reason=%s, usage=%s); "
+            "output cap starved the reasoning — raise the cap",
+            model,
+            reason,
+            usage_txt,
+        )
+        return ""
+    if not isinstance(content, str) or not content.strip():
+        # Extractor missed the envelope but the raw body may still carry the
+        # words array (e.g. an unfamiliar Responses shape) — let the parser
+        # scan it for [...] spans instead of throwing the body away.
+        try:
+            body_text = response.text
+        except (ValueError, UnicodeError, RuntimeError, AttributeError):
+            body_text = ""
+        if isinstance(body_text, str) and body_text.strip():
+            return body_text
+        logger.info("ai foreign-words returned empty content; continuing without highlights")
+        return ""
+    return content
+
+
+def detect_scenario_foreign_words(
+    *,
+    endpoint: str,
+    api_key: str,
+    model: str,
+    text: str,
+    session_id: str,
+    temperature: float,
+    max_tokens: int,
+) -> list[str]:
+    """Call Zen non-streaming for the foreign-word JSON list. Mock seam for tests.
+
+    Tries the JSON-schema structured call first; when the provider rejects
+    the format itself (HTTP 400 — some models/gateways don't accept
+    `response_format`), retries once as a plain completion since the prompt
+    already demands ONLY JSON and parsing is defensive. A structured 200
+    that parses to no words is also retried once as plain: some models
+    silently ignore an unfamiliar schema envelope and answer conservatively
+    (e.g. `{"words": []}`) while the same prompt unconstrained returns the
+    embedded vocabulary.
+    """
+    messages = build_foreign_words_messages(text)
+    common: dict[str, Any] = {
+        "endpoint": endpoint,
+        "api_key": api_key,
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "session_id": session_id,
+    }
+    raw_content = ""
+    try:
+        raw_content = _post_foreign_words_once(**common, structured=True)
+        words = parse_foreign_words_content(raw_content)
+    except ZenFetchError as exc:
+        if exc.status != 400:
+            raise
+        logger.warning(
+            "ai foreign-words structured call rejected (status 400); retrying plain completion"
+        )
+        raw_content = _post_foreign_words_once(**common, structured=False)
+        words = parse_foreign_words_content(raw_content)
+    if not words and raw_content.strip():
+        # Structured envelope may have constrained the answer into an empty
+        # list; one plain retry gives the same prompt a second chance before
+        # accepting "no highlights". Plain 200s that also parse empty are
+        # accepted as-is (genuinely English text costs one extra small call).
+        logger.info("ai foreign-words structured parse empty; retrying plain completion once")
+        raw_content = _post_foreign_words_once(**common, structured=False)
+        words = parse_foreign_words_content(raw_content)
+    if not words:
+        # Suspicious case (the text clearly holds foreign words): keep the raw
+        # model output in the log so the next retry comes with evidence.
+        logger.warning(
+            "ai foreign-words parsed 0 words from %d chars of input (model=%s); "
+            "input head: %s; raw model reply: %s",
+            len(text),
+            model,
+            text[:200],
+            raw_content[:1000],
+        )
+    else:
+        logger.info("ai foreign-words detected %d words", len(words))
+    return words
+
+
+@router.post("/ai/scenarios/markdown/foreign-words", status_code=200)
+def post_scenario_foreign_words(request: Request, body: dict[str, Any]) -> dict[str, object]:
+    """Detect foreign words/phrases in narrator text for HTML highlighting.
+
+    Body: `{projectId, conversationId?, text}` where `text` is the narrator
+    sentences glued together. Returns `{words: [...]}` copied verbatim from
+    the input — the frontend only ever highlights substrings actually present
+    in the sentences, so invented entries are harmless. A background utility:
+    writes nothing to the conversation and creates no versions. Missing key
+    reads 409, provider failures read 502 with the provider status and body
+    snippet in the message; the frontend surfaces that message and renders
+    without highlights instead of failing Generate.
+    """
+    from app.ai.schemas import AiScenarioForeignWords
+
+    try:
+        parsed = AiScenarioForeignWords.model_validate(body)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    library = _library(request)
+    if parsed.conversationId:
+        _require_conversation_in_project(library, parsed.conversationId, parsed.projectId)
+    row, key = library.get_settings_raw()
+    if not key:
+        raise HTTPException(
+            status_code=409, detail={"code": "missing_key", "message": "AI key is not set."}
+        )
+    try:
+        words = detect_scenario_foreign_words(
+            endpoint=row.endpoint,
+            api_key=key,
+            model=row.model,
+            text=parsed.text,
+            session_id=parsed.conversationId or parsed.projectId,
+            # Same temperature the working chat calls use (row setting) —
+            # a hardcoded 0 is rejected by some models. Reasoning models burn
+            # output tokens thinking before emitting the list, so guarantee a
+            # thinking budget: floor 2000, ceiling 4000 (the list itself is
+            # tiny). An 800 cap truncates reasoning models into `incomplete`
+            # responses with no words at all.
+            temperature=row.temperature,
+            max_tokens=max(2000, min(row.max_tokens, 4000)),
+        )
+    except ZenFetchError as exc:
+        code, friendly = friendly_error_for_status(exc.status, exc.body)
+        logger.warning("ai foreign-words failed for model %s: %s", row.model, exc.body[:500])
+        # Surface the provider's own status/body snippet: chat works in this
+        # setup, so a failure here is provider-specific and the raw reason
+        # is what unblocks debugging.
+        message = friendly
+        if exc.status >= 400:
+            snippet = " ".join(str(exc.body or "").split())[:200]
+            message = f"{friendly} (provider status {exc.status})"
+            if snippet:
+                message = f"{message}: {snippet}"
+        raise HTTPException(
+            status_code=409 if code != "provider_error" else 502,
+            detail={"code": code, "message": message},
+        ) from exc
+    return {"words": words}
