@@ -72,6 +72,13 @@ export type ScenarioBlock =
   | { readonly kind: 'visual'; readonly visual: ScenarioVisual }
   | { readonly kind: 'table'; readonly table: string }
   | { readonly kind: 'text'; readonly text: string }
+  /**
+   * Orphan `> Label:` content (no open visual: flushed by text/actions, or
+   * a duplicate). Kept as reader text like `text` (still counted in the
+   * grouped `text` view), but flagged so renderers style it as a label —
+   * centered, enlarged, accent-colored — instead of body copy.
+   */
+  | { readonly kind: 'label'; readonly text: string }
 
 export interface ScenarioWarning {
   readonly code:
@@ -358,13 +365,14 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
       }
       if (labelMatch) {
         // Orphan label (no open visual, or a duplicate): keep the content
-        // as reader text but drop the `Label:` marker word.
+        // as reader text but drop the `Label:` marker word. Flagged as a
+        // `label` block (not `text`) so the reader styles it as a label.
         flushPendingVisual()
         flushTableBufferAsText()
         const content = (labelMatch[1] ?? '').trim()
         if (content !== '') {
           textParts.push(content)
-          blocks.push({ kind: 'text', text: content })
+          blocks.push({ kind: 'label', text: content })
         }
         idx += 1
         continue

@@ -16,6 +16,7 @@ import {
   withoutScenarioHtml,
 } from '../../engine/scenarioSection'
 import { buildScenarioImageFiles, renderScenarioChalkHtml } from '../../engine/scenarioChalkRender'
+import { getScenarioTheme } from '../../engine/scenarioTheme'
 import {
   buildScenarioPortablePack,
   encodeScenarioPortableZip,
@@ -331,12 +332,23 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         embeddedById,
         libraryById,
       )
+      // Theme binaries (Crayon Libre + board tile) ship inside the zip.
+      // Best-effort like the foreign-word list: on failure the pack falls
+      // back to placeholder stubs rather than aborting the download.
+      let themeFiles: Record<string, Uint8Array> | undefined
+      try {
+        themeFiles = (await getScenarioTheme()).files
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Theme assets failed to load.'
+        useNotificationStore.getState().notify(`Theme assets skipped: ${message}`)
+      }
       const pack = buildScenarioPortablePack({
         markdown: currentMarkdown,
         imageFiles,
         imageBytes,
         title: engineValue.project.name,
         foreignWords: current.foreignWords ?? [],
+        themeFiles,
       })
       if (pack.sizeStatus === 'warn' && pack.sizeWarning) {
         useNotificationStore.getState().notify(pack.sizeWarning)
@@ -423,6 +435,14 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         const file = imageFiles[key]
         const record = resolved[key]
         if (file && record) dataUris[file] = imageBytesToDataUrl(record.bytes, record.mime)
+      }
+      // Theme data URIs ride the same resolver (fonts + board tile embed as
+      // `data:` so the srcDoc preview looks like the zip). Best-effort:
+      // images still render when the theme fails to load.
+      try {
+        Object.assign(dataUris, (await getScenarioTheme()).dataUris)
+      } catch {
+        // Fall back to relative theme paths (solid board + system cursive).
       }
       setPreviewHtml(
         renderScenarioChalkHtml(previewMarkdown, {

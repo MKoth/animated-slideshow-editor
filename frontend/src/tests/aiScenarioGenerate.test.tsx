@@ -188,7 +188,8 @@ describe('AiScenarioModal Generate lifecycle (issue #464)', () => {
     expect(stored).not.toContain('Classroom Chairs')
     // Mandatory theme tokens, no scripts or remote fetches.
     expect(stored).toContain('--board: #20302A')
-    expect(stored).toContain('Cabin Sketch')
+    expect(stored).toContain('Crayon Libre')
+    expect(stored).toContain('assets/board-tile.png')
     expect(stored.toLowerCase()).not.toContain('<script')
     expect(stored).not.toContain('https://')
 

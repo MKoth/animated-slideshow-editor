@@ -205,9 +205,10 @@ describe('AiScenarioModal Download zip (issue #465)', () => {
     expect(names).toContain('index.html')
     expect(names).toContain('assets/young-doctor-smiling.png')
     expect(names).toContain('assets/empty-classroom-chairs.png')
-    // Embedded fonts plus license text.
-    expect(names.some((n) => n === 'assets/fonts/OFL-LICENSE.txt')).toBe(true)
-    expect(names.filter((n) => n.endsWith('.woff2')).length).toBeGreaterThanOrEqual(3)
+    // Embedded Crayon Libre plus license text, plus the board tile.
+    expect(names.some((n) => n === 'assets/board-tile.png')).toBe(true)
+    expect(names.some((n) => n === 'assets/fonts/FONT-LICENSE.txt')).toBe(true)
+    expect(names.filter((n) => n.endsWith('.woff2')).length).toBeGreaterThanOrEqual(2)
     // Manifest port contract.
     expect(names).toContain('manifest.json')
     const manifest = JSON.parse(new TextDecoder().decode(out['manifest.json']!))

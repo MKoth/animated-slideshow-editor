@@ -5,21 +5,25 @@
  * backend model call, no engine access — tested at the pure seam.
  *
  * Contract (from #459 generation decision):
- * - One mandatory chalk theme (sketch headings, handwritten body, fixed
- *   chalk tokens on dark board, grain + wobble borders, offline embedded
- *   fonts, print fallback) with no picker or variant.
+ * - One mandatory chalk theme (Crayon Libre headings + body, fixed
+ *   chalk tokens on a repeating tilable board tile, grain + wobble borders,
+ *   offline embedded fonts, print fallback) with no picker or variant.
  * - Static single scrolling page: one `<section>` per `## Step N` heading in
- *   markdown order, blocks narrator → visuals → table → text, skipped
- *   sections for missing optional blocks, never erroring on sparse steps.
+ *   markdown order, blocks narrator → visuals → table → text (+ standalone
+ *   `label` blocks for orphan `> Label:` lines), skipped sections for
+ *   missing optional blocks, never erroring on sparse steps.
  * - Standalone reading document, not video cues: the `**Narrator:**` role
  *   prefix renders as a plain paragraph without the marker word, and each
  *   `> Label:` board text renders as the caption directly beneath its own
- *   image (no "Label:" marker word), never piled far from its figure.
+ *   image (no "Label:" marker word) — centered, enlarged, and cycling the
+ *   chalk accent palette by figure order — never piled far from its figure.
  *   Content blocks keep document order — visuals, text, and tables
  *   interleaved as authored. Briefs stay in markdown (plus manifest
  *   metadata) and reuse names stay internal and unrendered.
  * - Lively but deterministic color: step headings cycle the chalk accent
- *   palette by step index, and `**bold**` author-marked foreign words render
+ *   palette by step index; figure labels, standalone labels, and body copy
+ *   share one page-wide cycle in document order. `**bold**` author-marked
+ *   foreign words render
  *   as `<strong class="foreign">` highlights (plus the Spanish column of
  *   Spanish|English tables). Narrator sentences additionally highlight an
  *   LLM-provided foreign word/phrase list (`foreignWords` option), matched
@@ -48,11 +52,13 @@ export interface ScenarioChalkRenderOptions {
    */
   readonly foreignWords?: readonly string[]
   /**
-   * Rewrite for one image file reference. Defaults to the portable
-   * `assets/<file>` relative path (zip context). The modal preview passes a
-   * resolver returning `data:` URIs instead: `srcDoc` iframes inherit the
-   * app origin as their base URL, so relative `assets/` paths 404 there and
-   * every image renders broken even with all bytes bound.
+   * Rewrite for one `assets/`-relative reference: bound image filenames
+   * (`young-doctor.png`) plus theme keys (`fonts/….woff2`, `board-tile.png`).
+   * Defaults to the portable `assets/<file>` relative path (zip context).
+   * The modal preview passes a resolver returning `data:` URIs instead:
+   * `srcDoc` iframes inherit the app origin as their base URL, so relative
+   * `assets/` paths 404 there and every image — plus fonts and the board
+   * tile — renders broken even with all bytes bound.
    */
   readonly resolveAssetUrl?: (file: string) => string
 }
@@ -324,51 +330,94 @@ function renderParagraphs(text: string): string {
     .join('\n')
 }
 
-const CHALK_CSS = [
-  ':root {',
-  '  color-scheme: dark;',
-  '  --board: #20302A;',
-  '  --chalk: #F4F1E8;',
-  '  --chalk-dim: #C9CFC4;',
-  '  --chalk-yellow: #F2D98C;',
-  '  --chalk-pink: #F2A9C4;',
-  '  --chalk-blue: #A9CDF2;',
-  '  --chalk-green: #A8D5A2;',
-  '  --chalk-orange: #F2B880;',
-  '  --board-line: rgba(244,241,232,.55);',
-  '  --board-erase: rgba(244,241,232,.08);',
-  "  --font-head: 'Cabin Sketch', 'Kalam', cursive;",
-  "  --font-body: 'Kalam', 'Shadows Into Light', cursive, system-ui;",
-  '}',
-  "@font-face { font-family: 'Cabin Sketch'; font-style: normal; font-weight: 700; font-display: swap; src: url('assets/fonts/cabin-sketch-700.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0100-024F; }",
-  "@font-face { font-family: 'Kalam'; font-style: normal; font-weight: 400; font-display: swap; src: url('assets/fonts/kalam-400.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0100-024F; }",
-  "@font-face { font-family: 'Kalam'; font-style: normal; font-weight: 700; font-display: swap; src: url('assets/fonts/kalam-700.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0100-024F; }",
-  'html { background: var(--board); }',
-  'body { background: var(--board); color: var(--chalk); font-family: var(--font-body); line-height: 1.5; margin: 0; padding: 32px 16px 64px; }',
-  '.grain { position: fixed; inset: 0; pointer-events: none; opacity: 1; background-image: url("data:image/svg+xml,%3Csvg xmlns=%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27 width=%27120%27 height=%27120%27%3E%3Cfilter id=%27n%27%3E%3CfeTurbulence type=%27fractalNoise%27 baseFrequency=%270.9%27 numOctaves=%272%27/%3E%3C/filter%3E%3Crect width=%27120%27 height=%27120%27 filter=%27url(%23n)%27 opacity=%270.05%27/%3E%3C/svg%3E"), radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,.28) 100%); }',
-  'main { max-width: 70ch; margin: 0 auto; }',
-  'h1 { font-family: var(--font-head); font-weight: 700; line-height: 1.2; letter-spacing: .01em; text-shadow: 0 0 1px currentColor; }',
-  'section.step { border: 2px solid var(--board-line); border-radius: 255px 15px 225px 15px/15px 225px 15px 255px; padding: 20px 22px; margin: 0 0 28px; background: var(--board-erase); }',
-  'section.step h2 { font-family: var(--font-head); font-weight: 700; line-height: 1.2; margin: 0 0 12px; }',
-  '.accent-yellow { color: var(--chalk-yellow); }',
-  '.accent-pink { color: var(--chalk-pink); }',
-  '.accent-blue { color: var(--chalk-blue); }',
-  '.accent-green { color: var(--chalk-green); }',
-  '.accent-orange { color: var(--chalk-orange); }',
-  'p.narrator { color: var(--chalk); font-size: 1.08em; }',
-  'strong.foreign { color: var(--chalk-pink); }',
-  'figure.visual { margin: 16px 0; border: 2px solid var(--board-line); border-radius: 255px 15px 225px 15px/15px 225px 15px 255px; padding: 10px; }',
-  'figure.visual img { display: block; max-width: 100%; height: auto; border-radius: 12px; }',
-  'figure.visual figcaption { color: var(--chalk-dim); font-size: .9em; margin-top: 6px; }',
-  '.table-wrap { overflow-x: auto; margin: 16px 0; }',
-  'table { border-collapse: collapse; width: 100%; }',
-  'th, td { border: 1px solid var(--board-line); padding: 8px 10px; text-align: left; }',
-  'th { font-family: var(--font-head); color: var(--chalk-yellow); }',
-  'td { color: var(--chalk); }',
-  'a { color: var(--chalk-blue); }',
-  '@media print { body { background: #fff; color: #000; } .grain { display: none; } section.step, figure.visual { border-color: #000; background: none; } th, td { border-color: #000; } th { color: #000; } p.narrator { color: #000; } strong.foreign { color: #000; } section.step h2 { color: #000; } }',
-  '@media (prefers-reduced-motion: reduce) { * { animation: none; transition: none; } }',
-].join('\n')
+/**
+ * Chalk theme assets: Crayon Libre (Public Domain, Regular + Italic) for
+ * headings and body, plus a tilable dark-board PNG repeating behind the
+ * page. Zip paths are the portable contract (`assets/`-relative); the
+ * preview rewriter maps the same assets-relative keys to `data:` URIs
+ * because a `srcDoc` iframe inherits the app origin, where relative
+ * `assets/` URLs 404 — exactly like the bound image bytes.
+ */
+export const SCENARIO_THEME_FONT_FAMILY = 'Crayon Libre'
+export const SCENARIO_THEME_FONT_FILES = {
+  regular: 'crayon-libre-regular.woff2',
+  italic: 'crayon-libre-italic.woff2',
+} as const
+/** Zip paths of the embedded woff2 binaries. */
+export const SCENARIO_THEME_FONT_ZIP_PATHS = [
+  `assets/fonts/${SCENARIO_THEME_FONT_FILES.regular}`,
+  `assets/fonts/${SCENARIO_THEME_FONT_FILES.italic}`,
+] as const
+/** Zip path of the repeating board background tile. */
+export const SCENARIO_THEME_BOARD_TILE_ZIP_PATH = 'assets/board-tile.png'
+
+/** Assets-relative key (`assets/` prefix stripped) for the preview rewriter. */
+export function scenarioThemeAssetKey(zipPath: string): string {
+  return zipPath.replace(/^assets\//, '')
+}
+
+function themeUrl(assetsRelative: string, resolveAssetUrl?: (file: string) => string): string {
+  return resolveAssetUrl ? resolveAssetUrl(assetsRelative) : `assets/${assetsRelative}`
+}
+
+/**
+ * Chalk theme stylesheet. Without a resolver every `url()` is a portable
+ * relative `assets/` path (zip context); the modal preview passes the same
+ * resolver it uses for bound images so fonts and the board tile embed as
+ * `data:` URIs instead of 404ing.
+ */
+export function buildScenarioChalkCss(resolveAssetUrl?: (file: string) => string): string {
+  const fontRegular = themeUrl(`fonts/${SCENARIO_THEME_FONT_FILES.regular}`, resolveAssetUrl)
+  const fontItalic = themeUrl(`fonts/${SCENARIO_THEME_FONT_FILES.italic}`, resolveAssetUrl)
+  const boardTile = themeUrl('board-tile.png', resolveAssetUrl)
+  return [
+    ':root {',
+    '  color-scheme: dark;',
+    '  --board: #20302A;',
+    '  --chalk: #F4F1E8;',
+    '  --chalk-dim: #C9CFC4;',
+    '  --chalk-yellow: #F2D98C;',
+    '  --chalk-pink: #F2A9C4;',
+    '  --chalk-blue: #A9CDF2;',
+    '  --chalk-green: #A8D5A2;',
+    '  --chalk-orange: #F2B880;',
+    '  --board-line: rgba(244,241,232,.55);',
+    `  --font-head: '${SCENARIO_THEME_FONT_FAMILY}', cursive;`,
+    `  --font-body: '${SCENARIO_THEME_FONT_FAMILY}', cursive, system-ui;`,
+    '}',
+    `@font-face { font-family: '${SCENARIO_THEME_FONT_FAMILY}'; font-style: normal; font-weight: 400; font-display: swap; src: url('${fontRegular}') format('woff2'); unicode-range: U+0000-00FF, U+0100-024F; }`,
+    `@font-face { font-family: '${SCENARIO_THEME_FONT_FAMILY}'; font-style: italic; font-weight: 400; font-display: swap; src: url('${fontItalic}') format('woff2'); unicode-range: U+0000-00FF, U+0100-024F; }`,
+    'html { background: var(--board); }',
+    `body { background-color: var(--board); background-image: url('${boardTile}'); background-repeat: repeat; color: var(--chalk); font-family: var(--font-body); line-height: 1.5; margin: 0; padding: 32px 16px 64px; }`,
+    '.grain { position: fixed; inset: 0; pointer-events: none; opacity: 1; background-image: url("data:image/svg+xml,%3Csvg xmlns=%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27 width=%27120%27 height=%27120%27%3E%3Cfilter id=%27n%27%3E%3CfeTurbulence type=%27fractalNoise%27 baseFrequency=%270.9%27 numOctaves=%272%27/%3E%3C/filter%3E%3Crect width=%27120%27 height=%27120%27 filter=%27url(%23n)%27 opacity=%270.05%27/%3E%3C/svg%3E"), radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,.28) 100%); }',
+    'main { max-width: 70ch; margin: 0 auto; }',
+    'h1 { font-family: var(--font-head); font-weight: 700; line-height: 1.2; letter-spacing: .01em; text-shadow: 0 0 1px currentColor; }',
+    'section.step { border: 2px solid var(--board-line); border-radius: 255px 15px 225px 15px/15px 225px 15px 255px; padding: 20px 22px; margin: 0 0 28px; }',
+    'section.step h2 { font-family: var(--font-head); font-weight: 700; line-height: 1.2; margin: 0 0 12px; }',
+    '.accent-yellow { color: var(--chalk-yellow); }',
+    '.accent-pink { color: var(--chalk-pink); }',
+    '.accent-blue { color: var(--chalk-blue); }',
+    '.accent-green { color: var(--chalk-green); }',
+    '.accent-orange { color: var(--chalk-orange); }',
+    'p.narrator { color: var(--chalk); font-size: 1.08em; }',
+    'p.chalk-text { font-size: 1.3em; text-align: right; }',
+    'strong.foreign { color: var(--chalk-pink); }',
+    'figure.visual { margin: 16px 0; border: 2px solid var(--board-line); border-radius: 255px 15px 225px 15px/15px 225px 15px 255px; padding: 10px; }',
+    'figure.visual img { display: block; max-width: 100%; height: auto; border-radius: 12px; }',
+    'figure.visual figcaption { font-size: 1.15em; margin-top: 6px; text-align: center; }',
+    'p.board-label { font-size: 1.15em; margin: 16px 0; text-align: center; }',
+    '.table-wrap { overflow-x: auto; margin: 16px 0; }',
+    'table { border-collapse: collapse; width: 100%; }',
+    'th, td { border: 1px solid var(--board-line); padding: 8px 10px; text-align: left; }',
+    'th { font-family: var(--font-head); color: var(--chalk-yellow); }',
+    'td { color: var(--chalk); }',
+    'a { color: var(--chalk-blue); }',
+    '@media print { body { background: #fff; background-image: none; color: #000; } .grain { display: none; } section.step, figure.visual { border-color: #000; } th, td { border-color: #000; } th { color: #000; } p.narrator { color: #000; } strong.foreign { color: #000; } section.step h2 { color: #000; } figure.visual figcaption { color: #000; } p.board-label { color: #000; } }',
+    '@media (prefers-reduced-motion: reduce) { * { animation: none; transition: none; } }',
+  ].join('\n')
+}
+
+const CHALK_CSS = buildScenarioChalkCss()
 
 function pageTitle(markdown: string, override?: string): string {
   if (override && override.trim() !== '') return override.trim()
@@ -403,19 +452,23 @@ function stepAccentClass(index: number): string {
 /**
  * One figure with its label captioned directly beneath it, so the
  * image↔label connection is obvious. No "Label:" marker word — the label
- * content alone is the caption. Figures without a label render bare.
+ * content alone is the caption, centered and enlarged. Each label cycles
+ * the chalk accent palette by a page-wide ordinal shared with standalone
+ * labels (deterministic: identical inputs yield byte-identical HTML).
+ * Figures without a label render bare.
  */
 function renderFigure(
   visual: ScenarioVisual,
   imageFiles: Readonly<Record<string, string>>,
-  resolveAssetUrl?: (file: string) => string,
+  resolveAssetUrl: ((file: string) => string) | undefined,
+  accentOrdinal: number,
 ): string {
   const file = imageFiles[visual.key] ?? `${slugFilenameForAssetKey(visual.key)}.png`
   const src = resolveAssetUrl ? resolveAssetUrl(file) : `assets/${file.replace(/^assets\//, '')}`
   const alt = escapeHtml(visual.alt)
   const caption =
     visual.label !== undefined && visual.label.trim() !== ''
-      ? `<figcaption>${renderInline(visual.label)}</figcaption>`
+      ? `<figcaption class="${stepAccentClass(accentOrdinal)}">${renderInline(visual.label)}</figcaption>`
       : ''
   return `<figure class="visual"><img src="${escapeHtml(src)}" alt="${alt}" loading="lazy">${caption}</figure>`
 }
@@ -440,6 +493,14 @@ export function renderScenarioChalkHtml(
   const title = pageTitle(source, options.title)
   const foreignWords = options.foreignWords ?? []
 
+  // Page-wide accent ordinal in document order. Figures and standalone
+  // (orphan) labels share one cycle so neighbouring labels always differ.
+  let accentOrdinal = 0
+  const renderNextFigure = (visual: ScenarioVisual): string => {
+    accentOrdinal += 1
+    return renderFigure(visual, imageFiles, options.resolveAssetUrl, accentOrdinal)
+  }
+
   const sections = steps.map((step) => {
     const parts: string[] = []
     parts.push(
@@ -454,17 +515,28 @@ export function renderScenarioChalkHtml(
     if (step.blocks.length > 0) {
       for (const block of step.blocks) {
         if (block.kind === 'visual') {
-          parts.push(renderFigure(block.visual, imageFiles, options.resolveAssetUrl))
+          parts.push(renderNextFigure(block.visual))
         } else if (block.kind === 'table') {
           parts.push(renderTable(block.table))
+        } else if (block.kind === 'label') {
+          // Standalone (orphan) label: no figure to caption, so it renders
+          // as its own centered paragraph with the same label styling.
+          accentOrdinal += 1
+          parts.push(
+            `<p class="board-label ${stepAccentClass(accentOrdinal)}">${renderInline(block.text)}</p>`,
+          )
         } else {
-          parts.push(`<p class="chalk-text">${renderInline(block.text)}</p>`)
+          // Body copy shares the page-wide accent cycle with labels.
+          accentOrdinal += 1
+          parts.push(
+            `<p class="chalk-text ${stepAccentClass(accentOrdinal)}">${renderInline(block.text)}</p>`,
+          )
         }
       }
     } else {
       // Defensive fallback for steps built without blocks: legacy grouping.
       for (const visual of step.visuals) {
-        parts.push(renderFigure(visual, imageFiles, options.resolveAssetUrl))
+        parts.push(renderNextFigure(visual))
       }
       if (step.table !== undefined) {
         parts.push(renderTable(step.table))
@@ -484,7 +556,7 @@ export function renderScenarioChalkHtml(
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<title>${escapeHtml(title)}</title>`,
     '<style>',
-    CHALK_CSS,
+    options.resolveAssetUrl ? buildScenarioChalkCss(options.resolveAssetUrl) : CHALK_CSS,
     '</style>',
     '</head>',
     '<body>',

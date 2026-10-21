@@ -10,10 +10,12 @@
  * Port contract:
  * - `index.html` — static chalk page from `renderScenarioChalkHtml`.
  * - `assets/<stem>.<ext>` — one file per normalized asset key.
- * - `assets/fonts/*.woff2` — embedded font binaries (deterministic stubs
- *   matching the `@font-face` URLs in the chalk theme; swappable for OFL
- *   binaries without changing the contract).
- * - `assets/fonts/OFL-LICENSE.txt` — font license attribution.
+ * - `assets/board-tile.png` — repeating board background referenced by the
+ *   chalk theme CSS.
+ * - `assets/fonts/*.woff2` — Crayon Libre binaries matching the
+ *   `@font-face` URLs in the chalk theme (real bytes passed in via
+ *   `themeFiles`; deterministic placeholder stubs when omitted, e.g. tests).
+ * - `assets/fonts/FONT-LICENSE.txt` — theme license attribution.
  * - `manifest.json` — `{ format, generator, page, visuals[], fonts[] }`
  *   where each visual carries the authoritative normalized `asset` key plus
  *   `file` and `mime` (and `alt`/`brief`/`label` metadata; reuse names stay internal
@@ -27,14 +29,18 @@
  * - The page passes a relative-path-only scan rejecting remote URL patterns
  *   before zipping; file-protocol open with network disabled shows zero
  *   failed requests (every `src`/`url()` resolves inside the zip).
- * - Already-compressed images (png/jpg/webp/gif/avif) store without
- *   recompression while the page and manifest deflate; sizes warn around
+ * - Already-compressed images (png/jpg/webp/gif/avif), woff2 fonts, and the
+ *   board tile store without recompression while the page and manifest
+ *   deflate; sizes warn around
  *   100MB and block around 500MB, and large packs yield to the event loop
  *   while resolving bytes so failure is graceful, never silent corruption.
  */
 
 import { zipSync, strToU8 } from 'fflate'
 import {
+  SCENARIO_THEME_BOARD_TILE_ZIP_PATH,
+  SCENARIO_THEME_FONT_FAMILY,
+  SCENARIO_THEME_FONT_ZIP_PATHS,
   buildScenarioImageFiles,
   extensionFromMimeOrFilename,
   renderScenarioChalkHtml,
@@ -52,27 +58,25 @@ export const SCENARIO_ZIP_BLOCK_BYTES = 500 * 1024 * 1024
 /** Fixed mtime so identical inputs yield byte-identical zips. */
 const SCENARIO_ZIP_MTIME = new Date('1980-01-01T00:00:00Z')
 
-const SCENARIO_ZIP_FONT_FILES = [
-  'assets/fonts/cabin-sketch-700.woff2',
-  'assets/fonts/kalam-400.woff2',
-  'assets/fonts/kalam-700.woff2',
-] as const
+const SCENARIO_ZIP_FONT_FILES = SCENARIO_THEME_FONT_ZIP_PATHS
 
-const SCENARIO_ZIP_LICENSE_FILE = 'assets/fonts/OFL-LICENSE.txt'
+const SCENARIO_ZIP_BOARD_TILE_FILE = SCENARIO_THEME_BOARD_TILE_ZIP_PATH
+
+const SCENARIO_ZIP_LICENSE_FILE = 'assets/fonts/FONT-LICENSE.txt'
 
 const SCENARIO_ZIP_LICENSE_TEXT = [
-  'Scenario blackboard pack — embedded font licenses',
+  'Scenario blackboard pack — embedded theme licenses',
   '',
-  'The chalk theme renders headings in "Cabin Sketch" and body in "Kalam".',
-  'Both typefaces are licensed under the SIL Open Font License 1.1:',
+  `Chalk typeface: "${SCENARIO_THEME_FONT_FAMILY}" (Regular + Italic) by GGBotNet,`,
+  'released as Public Domain (source:',
+  'https://www.fontspace.com/crayon-libre-font-f105058). Embedded under',
+  'assets/fonts/ as WOFF2 for the portable page @font-face rules.',
   '',
-  '- Cabin Sketch — Copyright (c) Impallari Type. SIL OFL 1.1.',
-  '- Kalam — Copyright (c) Indian Type Foundry. SIL OFL 1.1.',
+  'Background tile: assets/board-tile.png repeats behind the page',
+  '(background-color #20302A fallback).',
   '',
-  'License text: https://openfontlicense.org (full OFL 1.1 ships with the',
-  'upstream font releases; this pack attributes the families and carries',
-  'their binaries under assets/fonts/). Reuse names from the scenario doc',
-  'stay internal to the editor and are never shipped in this pack.',
+  'Reuse names from the scenario doc stay internal to the editor and are',
+  'never shipped in this pack.',
   '',
 ].join('\n')
 
@@ -108,6 +112,13 @@ export interface ScenarioPortablePackInput {
   readonly generator?: string
   /** LLM-detected foreign words/phrases for narrator highlights (stored at Generate). */
   readonly foreignWords?: readonly string[]
+  /**
+   * Real theme bytes keyed by zip path (`assets/fonts/….woff2`,
+   * `assets/board-tile.png`). The modal resolves these from the served
+   * `scenario-theme/` files at download time; when omitted (e.g. unit
+   * tests) deterministic placeholder stubs keep the pack shape stable.
+   */
+  readonly themeFiles?: Readonly<Record<string, Uint8Array>>
   /** Test-only total-byte override to exercise warn/block gates without 500MB fixtures. */
   readonly sizeOverrideForTest?: number
 }
@@ -248,8 +259,8 @@ function validateImageFilename(filename: string): void {
   if (filename.trim() === '') throw new Error('Scenario pack image file must be non-empty')
 }
 
-function fontPlaceholderBytes(name: string): Uint8Array {
-  return strToU8(`scenario-blackboard-pack font placeholder for ${name}\n`)
+function themePlaceholderBytes(name: string): Uint8Array {
+  return strToU8(`scenario-blackboard-pack theme placeholder for ${name}\n`)
 }
 
 /**
@@ -370,9 +381,13 @@ export function buildScenarioPortablePack(input: ScenarioPortablePackInput): Sce
   files[SCENARIO_ZIP_LICENSE_FILE] = strToU8(SCENARIO_ZIP_LICENSE_TEXT)
   compression[SCENARIO_ZIP_LICENSE_FILE] = 'deflate'
   for (const font of SCENARIO_ZIP_FONT_FILES) {
-    files[font] = fontPlaceholderBytes(font)
+    files[font] = input.themeFiles?.[font] ?? themePlaceholderBytes(font)
     compression[font] = 'store'
   }
+  files[SCENARIO_ZIP_BOARD_TILE_FILE] =
+    input.themeFiles?.[SCENARIO_ZIP_BOARD_TILE_FILE] ??
+    themePlaceholderBytes(SCENARIO_ZIP_BOARD_TILE_FILE)
+  compression[SCENARIO_ZIP_BOARD_TILE_FILE] = 'store'
   for (const entry of imageEntries) {
     files[entry.path] = entry.bytes
     compression[entry.path] = 'store'

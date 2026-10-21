@@ -1,0 +1,12 @@
+Scenario blackboard pack — embedded theme licenses
+
+Chalk typeface: "Crayon Libre" (Regular + Italic) by GGBotNet, released as
+Public Domain (source: https://www.fontspace.com/crayon-libre-font-f105058).
+Embedded under assets/fonts/ as WOFF2 for the portable page's @font-face
+rules. No SIL OFL obligations apply; attribution is kept here as a courtesy.
+
+Background tile: assets/board-tile.png repeats behind the page
+(background-color #20302A fallback). Shipped beside the visuals.
+
+Reuse names from the scenario doc stay internal to the editor and are never
+shipped in this pack.

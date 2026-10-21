@@ -69,10 +69,15 @@ describe('scenarioPortableZip pure seam (issue #465)', () => {
     // One file per visual inside assets/.
     expect(built.files['assets/young-doctor-smiling.png']).toBeDefined()
     expect(built.files['assets/empty-classroom-chairs.png']).toBeDefined()
-    // Embedded fonts plus license text.
+    // Embedded Crayon Libre plus license text, plus the board tile.
+    expect(built.files['assets/board-tile.png']).toBeDefined()
+    expect(built.compression['assets/board-tile.png']).toBe('store')
     const fontEntries = Object.keys(built.files).filter((p) => p.startsWith('assets/fonts/'))
-    expect(fontEntries.length).toBeGreaterThanOrEqual(4)
+    expect(fontEntries).toHaveLength(3)
     expect(fontEntries.some((p) => p.endsWith('.woff2'))).toBe(true)
+    expect(built.files['assets/fonts/crayon-libre-regular.woff2']).toBeDefined()
+    expect(built.files['assets/fonts/crayon-libre-italic.woff2']).toBeDefined()
+    expect(built.files['assets/fonts/FONT-LICENSE.txt']).toBeDefined()
     expect(fontEntries.some((p) => p.toLowerCase().includes('license'))).toBe(true)
     // Manifest port contract.
     const manifestRaw = built.files[SCENARIO_ZIP_MANIFEST_NAME]
@@ -89,6 +94,30 @@ describe('scenarioPortableZip pure seam (issue #465)', () => {
       expect(typeof entry.file).toBe('string')
       expect(typeof entry.mime).toBe('string')
     }
+  })
+
+  it('packs caller-supplied theme bytes instead of placeholders', () => {
+    const themeFiles = {
+      'assets/fonts/crayon-libre-regular.woff2': new Uint8Array([7, 7]),
+      'assets/fonts/crayon-libre-italic.woff2': new Uint8Array([8, 8]),
+      'assets/board-tile.png': new Uint8Array([9, 9, 9]),
+    }
+    const built = buildScenarioPortablePack({
+      markdown: MD,
+      imageFiles: {
+        'young-doctor-smiling': 'young-doctor-smiling.png',
+        'empty-classroom-chairs': 'empty-classroom-chairs.png',
+      },
+      imageBytes: {
+        'young-doctor-smiling': { bytes: new Uint8Array([1]), mime: 'image/png' },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        'empty-classroom-chairs': { bytes: new Uint8Array([2]), mime: 'image/png' } as any,
+      },
+      themeFiles,
+    })
+    expect([...built.files['assets/board-tile.png']!]).toEqual([9, 9, 9])
+    expect([...built.files['assets/fonts/crayon-libre-regular.woff2']!]).toEqual([7, 7])
+    expect([...built.files['assets/fonts/crayon-libre-italic.woff2']!]).toEqual([8, 8])
   })
 
   it('filenames derive from the normalized-key transform with numeric suffixes and traversal sanitization', () => {

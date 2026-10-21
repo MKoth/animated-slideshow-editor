@@ -48,7 +48,7 @@ describe('scenarioChalkRender pure seam (issue #464)', () => {
     const s1 = html.split('data-step="1"')[1]!.split('data-step="2"')[0]!
     expect(s1.indexOf('class="narrator"')).toBeLessThan(s1.indexOf('<figure'))
     expect(s1.indexOf('<figure')).toBeLessThan(s1.indexOf('<table'))
-    expect(s1.indexOf('<table')).toBeLessThan(s1.indexOf('class="chalk-text"'))
+    expect(s1.indexOf('<table')).toBeLessThan(s1.indexOf('chalk-text'))
     // Bare step never errors and still renders its heading.
     expect(html).toContain('Bare')
   })
@@ -88,7 +88,7 @@ describe('scenarioChalkRender pure seam (issue #464)', () => {
     // Label content (no "Label:" marker word) sits inside its own figure,
     // right under the image it belongs to.
     expect(html).toContain(
-      '<figure class="visual"><img src="assets/green-tree.png" alt="Green tree" loading="lazy"><figcaption>El árbol ES verde</figcaption></figure>',
+      '<figure class="visual"><img src="assets/green-tree.png" alt="Green tree" loading="lazy"><figcaption class="accent-yellow">El árbol ES verde</figcaption></figure>',
     )
     expect(html).not.toContain('Label:')
     expect(html).toContain('alt="Green tree"')
@@ -136,7 +136,7 @@ describe('scenarioChalkRender pure seam (issue #464)', () => {
     const firstFig = html.indexOf('alt="First"')
     const firstText = html.indexOf('Text after first.')
     const secondFig = html.indexOf('alt="Second"')
-    const secondCaption = html.indexOf('<figcaption>Second label</figcaption>')
+    const secondCaption = html.indexOf('<figcaption class="accent-blue">Second label</figcaption>')
     const secondText = html.indexOf('Text after second.')
     expect(firstFig).toBeGreaterThan(-1)
     expect(firstText).toBeGreaterThan(firstFig)
@@ -322,19 +322,122 @@ describe('scenarioChalkRender pure seam (issue #464)', () => {
     const html = renderScenarioChalkHtml(MD, {
       imageFiles: { 'young-doctor-smiling': 'young-doctor-smiling.png' },
     })
-    // Fixed tokens on dark board.
+    // Fixed tokens on a repeating tilable board.
     expect(html).toContain('--board: #20302A')
     expect(html).toContain('--chalk: #F4F1E8')
     expect(html).toContain('--chalk-dim: #C9CFC4')
     expect(html).toContain('#F2D98C')
-    // Sketch headings + handwritten body stacks.
-    expect(html).toContain('Cabin Sketch')
-    expect(html).toContain('Kalam')
+    expect(html).toContain("url('assets/board-tile.png')")
+    expect(html).toContain('background-repeat: repeat')
+    // Crayon Libre headings + body, embedded offline.
+    expect(html).toContain('Crayon Libre')
+    expect(html).toContain('crayon-libre-regular.woff2')
+    expect(html).toContain('crayon-libre-italic.woff2')
+    expect(html).toContain("format('woff2')")
+    expect(html).not.toContain('Cabin Sketch')
+    expect(html).not.toContain('Kalam')
     // Grain + wobble borders, offline fonts, print fallback.
     expect(html).toContain('feTurbulence')
     expect(html).toContain('255px 15px 225px 15px')
     expect(html).toContain('assets/fonts/')
     expect(html).toContain('@media print')
+  })
+
+  it('centers and enlarges each label while cycling accent colors by figure order', () => {
+    const md = [
+      '## Step 1 — Mixed',
+      '',
+      '![First](asset:first)',
+      '',
+      '> Brief: First brief.',
+      '',
+      '> Label: First label',
+      '',
+      '![Second](asset:second)',
+      '',
+      '> Brief: Second brief.',
+      '',
+      '> Label: Second label',
+      '',
+    ].join('\n')
+    const html = renderScenarioChalkHtml(md, {
+      imageFiles: { first: 'first.png', second: 'second.png' },
+    })
+    // First label takes the first accent, the next figure the next one —
+    // deterministic per figure order, so identical inputs stay byte-identical.
+    expect(html).toContain('<figcaption class="accent-yellow">First label</figcaption>')
+    expect(html).toContain('<figcaption class="accent-pink">Second label</figcaption>')
+    expect(html).toContain('figure.visual figcaption { font-size: 1.15em;')
+    expect(html).toContain('text-align: center')
+  })
+
+  it('renders body copy bigger than labels and right-aligned', () => {
+    const md = [
+      '## Step 1 — Reading',
+      '',
+      '**Narrator:** The teacher reads.',
+      '',
+      'Some body copy between narrations.',
+      '',
+      "**Narrator:** Don't stop the music.",
+      '',
+      'More body copy here.',
+      '',
+    ].join('\n')
+    const html = renderScenarioChalkHtml(md, { imageFiles: {} })
+    expect(html).toContain(
+      '<p class="chalk-text accent-yellow">Some body copy between narrations.</p>',
+    )
+    expect(html).toContain('<p class="chalk-text accent-pink">More body copy here.</p>')
+    expect(html).toContain('p.chalk-text { font-size: 1.3em; text-align: right; }')
+  })
+
+  it('renders standalone labels as centered paragraphs sharing the accent cycle', () => {
+    const md = [
+      '## Step 1 — Mixed',
+      '',
+      '![First](asset:first)',
+      '',
+      '> Brief: First brief.',
+      '',
+      '> Label: Attached label',
+      '',
+      'Some text in between.',
+      '',
+      '> Label: Stray label without an open visual',
+      '',
+    ].join('\n')
+    const html = renderScenarioChalkHtml(md, { imageFiles: { first: 'first.png' } })
+    // Attached label captions its figure…
+    expect(html).toContain('<figcaption class="accent-yellow">Attached label</figcaption>')
+    // …while the orphan label renders as its own centered paragraph, next
+    // accent in the shared page-wide cycle (the body copy between them took
+    // the second slot) — never plain body copy.
+    expect(html).toContain(
+      '<p class="board-label accent-blue">Stray label without an open visual</p>',
+    )
+    expect(html).not.toContain('<p class="chalk-text">Stray label')
+    expect(html).toContain('p.board-label { font-size: 1.15em;')
+    expect(html).toContain('text-align: center')
+  })
+
+  it('renders steps with no fill so the board tile shows through', () => {
+    const html = renderScenarioChalkHtml(MD, {
+      imageFiles: { 'young-doctor-smiling': 'young-doctor-smiling.png' },
+    })
+    expect(html).not.toContain('--board-erase')
+    expect(html).not.toContain('background: var(--board-erase)')
+  })
+
+  it('embeds theme assets as data URIs for the srcDoc preview', () => {
+    const html = renderScenarioChalkHtml(MD, {
+      imageFiles: { 'young-doctor-smiling': 'young-doctor-smiling.png' },
+      resolveAssetUrl: (file) => `data:mock/${file}`,
+    })
+    expect(html).toContain("url('data:mock/fonts/crayon-libre-regular.woff2')")
+    expect(html).toContain("url('data:mock/fonts/crayon-libre-italic.woff2')")
+    expect(html).toContain("url('data:mock/board-tile.png')")
+    expect(html).not.toContain("url('assets/")
   })
 
   it('emits a static page with no scripts, no playback, and no runtime fetches', () => {

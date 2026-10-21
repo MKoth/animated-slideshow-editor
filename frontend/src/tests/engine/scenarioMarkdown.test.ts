@@ -313,7 +313,11 @@ describe('parseScenarioMarkdown', () => {
     // Orphan briefs stay in markdown only and never leak into text.
     expect(parsed.steps[0]?.text).not.toContain('Brief:')
     expect(parsed.steps[0]?.text).not.toContain('Stray brief')
-    expect(parsed.steps[0]?.blocks.map((b) => b.kind)).toEqual(['visual', 'text', 'text'])
+    expect(parsed.steps[0]?.blocks.map((b) => b.kind)).toEqual(['visual', 'text', 'label'])
+    expect(parsed.steps[0]?.blocks[2]).toMatchObject({
+      kind: 'label',
+      text: 'Stray caption without an open visual',
+    })
   })
 
   it('attaches chalk labels to visuals without leaking into text', () => {
