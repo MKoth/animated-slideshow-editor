@@ -627,6 +627,22 @@ export class AiApi {
     return this.client.post<AiScenario>(`/api/ai/scenarios/${encodeURIComponent(id)}/reject`, '')
   }
 
+  async detectForeignWords(input: {
+    projectId: string
+    conversationId?: string
+    text: string
+  }): Promise<{ words: string[] }> {
+    const result = await this.client.post<{ words?: unknown }>(
+      '/api/ai/scenarios/markdown/foreign-words',
+      JSON.stringify(input),
+    )
+    const words = (result as { words?: unknown }).words
+    if (!Array.isArray(words)) return { words: [] }
+    return {
+      words: words.filter((w): w is string => typeof w === 'string' && w.trim() !== ''),
+    }
+  }
+
   async applyScenarioChat(input: {
     projectId: string
     conversationId: string

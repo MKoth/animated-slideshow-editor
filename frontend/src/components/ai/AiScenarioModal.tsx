@@ -9,9 +9,11 @@ import {
 } from '../../engine/scenarioChecklist'
 import {
   appendScenarioVersion,
+  clearScenarioDocKeepHtml,
   createEmptyScenarioSection,
   createScenarioVersion,
   withScenarioHtml,
+  withoutScenarioHtml,
 } from '../../engine/scenarioSection'
 import { buildScenarioImageFiles, renderScenarioChalkHtml } from '../../engine/scenarioChalkRender'
 import {
@@ -28,6 +30,7 @@ import { useNotificationStore } from '../../stores/notificationStore'
 import { AiScenarioChecklist } from './AiScenarioChecklist'
 import { AiScenarioHistory } from './AiScenarioHistory'
 import type { AiScenario, AiScenarioStep, ScenarioMarkdownVersion } from '../../api/aiApi'
+import { ApiError } from '../../api/apiClient'
 import type { AssetDefinition } from '../../api'
 
 const EMPTY_MARKDOWN_VERSIONS: ScenarioMarkdownVersion[] = []
@@ -78,13 +81,16 @@ interface AiScenarioModalProps {
 /**
  * Doc-first scenario modal (issue #463, adopted Variant A).
  * Full doc center plus right-rail blocking checklist, top-bar Generate /
- * View / Download actions, Doc versus History tabs. Generate hard-blocked
- * while any live-scanned row is unbound; View explains itself before the
- * first render; View plus zip enable once HTML is ready with re-generation
- * allowed and a stale hint after doc edits. Deterministic chalk render
- * (#464) wires into Generate — pure client-side, no backend model call.
- * Portable zip with manifest (#465) shares the same bytes-required gate
- * and resolves the same embedded/library bytes through its own builder.
+ * View / Download actions, Doc versus History versus Preview tabs.
+ * Generate hard-blocked while any live-scanned row is unbound; View
+ * explains itself before the first render; View plus zip enable once HTML
+ * is ready with re-generation allowed and a stale hint after doc edits.
+ * Deterministic chalk render (#464) wires into Generate — pure
+ * client-side, no backend model call. Portable zip with manifest (#465)
+ * shares the same bytes-required gate and resolves the same
+ * embedded/library bytes through its own builder. Deletes are granular:
+ * Delete doc clears doc + history and keeps HTML, Delete HTML drops only
+ * the stored render and keeps the doc.
  */
 export function AiScenarioModal({ projectId, conversationId, context }: AiScenarioModalProps) {
   const engine = useContext(EngineContext)?.engine
@@ -110,7 +116,11 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const [scenarioRev, setScenarioRev] = useState(0)
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
-  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  // Generate is async now: the narrator foreign-word list comes from the
+  // same LLM backend, so the button shows a loader until it resolves.
+  const [generatingHtml, setGeneratingHtml] = useState(false)
+  const [confirmingDeleteDoc, setConfirmingDeleteDoc] = useState(false)
+  const [confirmingDeleteHtml, setConfirmingDeleteHtml] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [copyMdState, setCopyMdState] = useState<'copied' | 'failed' | null>(null)
   // Inline doc comments live in the modal (survive Doc/History tab switches)
@@ -208,50 +218,86 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   })
 
   const downloadBlocked = generateBlocked || htmlState === 'empty'
+  const hasDoc = markdown !== '' || markdownVersions.length > 0
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     const engineValue = engine
-    if (!engineValue?.project || generateBlocked) return
-    const current = engineValue.project.scenario ?? createEmptyScenarioSection(markdown)
-    const currentMarkdown = current.currentMarkdown ?? markdown
+    if (!engineValue?.project || generateBlocked || generatingHtml) return
+    setGeneratingHtml(true)
+    try {
+      const current = engineValue.project.scenario ?? createEmptyScenarioSection(markdown)
+      const currentMarkdown = current.currentMarkdown ?? markdown
 
-    // Resolve each bound key to a filename hint (mime + original name) so
-    // render and the later zip builder share the slug mapping.
-    const { byMeta } = collectScenarioAssetMaps(
-      engineValue.embeddedAssets ?? [],
-      allDefinitions,
-      definitions,
-    )
-    const keys = rows.map((row) => row.key)
-    const imageFiles = buildScenarioImageFiles(keys, (key) => {
-      const binding = current.bindings[key]
-      if (!binding) return undefined
-      return byMeta.get(binding)
-    })
-    const html = renderScenarioChalkHtml(currentMarkdown, { imageFiles })
+      // Resolve each bound key to a filename hint (mime + original name) so
+      // render and the later zip builder share the slug mapping.
+      const { byMeta } = collectScenarioAssetMaps(
+        engineValue.embeddedAssets ?? [],
+        allDefinitions,
+        definitions,
+      )
+      const keys = rows.map((row) => row.key)
+      const imageFiles = buildScenarioImageFiles(keys, (key) => {
+        const binding = current.bindings[key]
+        if (!binding) return undefined
+        return byMeta.get(binding)
+      })
 
-    // Pointer must match content for ready: reuse the version whose content
-    // equals the render source, else snapshot the current doc as a new
-    // portable version so the fresh render reads ready.
-    const match = [...markdownVersions, ...(current.versions ?? [])].find(
-      (v) => v.content === currentMarkdown,
-    )
-    let next = current
-    let pointer: string | null = match?.id ?? null
-    if (!match) {
-      let touched: number[] = []
+      // Glue the narrator sentences into one text and ask the LLM (same
+      // backend as every other assistant request) for the foreign
+      // words/phrases in it. Best-effort: on any failure Generate still
+      // completes, just without LLM highlights.
+      let foreignWords: string[] = []
       try {
-        touched = parseScenarioMarkdown(currentMarkdown).steps.map((s) => s.index)
-      } catch {
-        touched = []
+        const narrators = parseScenarioMarkdown(currentMarkdown)
+          .steps.map((step) => step.narrator?.trim() ?? '')
+          .filter((line) => line !== '')
+        if (narrators.length > 0) {
+          const detected = await store.api.detectForeignWords({
+            projectId,
+            ...(conversationId ? { conversationId } : {}),
+            text: narrators.join('\n'),
+          })
+          foreignWords = detected.words ?? []
+        }
+      } catch (error) {
+        // Best-effort: render without LLM highlights rather than failing Generate.
+        // Prefer the backend's own reason (provider status/body) over the generic HTTP error.
+        const message =
+          error instanceof ApiError && error.detail
+            ? error.detail
+            : error instanceof Error
+              ? error.message
+              : 'Foreign-word detection failed.'
+        useNotificationStore.getState().notify(`HTML highlights skipped: ${message}`)
       }
-      const snapshot = createScenarioVersion(currentMarkdown, 'Generate HTML snapshot', touched)
-      next = appendScenarioVersion(next, snapshot)
-      pointer = snapshot.id
+
+      const html = renderScenarioChalkHtml(currentMarkdown, { imageFiles, foreignWords })
+
+      // Pointer must match content for ready: reuse the version whose content
+      // equals the render source, else snapshot the current doc as a new
+      // portable version so the fresh render reads ready.
+      const match = [...markdownVersions, ...(current.versions ?? [])].find(
+        (v) => v.content === currentMarkdown,
+      )
+      let next = current
+      let pointer: string | null = match?.id ?? null
+      if (!match) {
+        let touched: number[] = []
+        try {
+          touched = parseScenarioMarkdown(currentMarkdown).steps.map((s) => s.index)
+        } catch {
+          touched = []
+        }
+        const snapshot = createScenarioVersion(currentMarkdown, 'Generate HTML snapshot', touched)
+        next = appendScenarioVersion(next, snapshot)
+        pointer = snapshot.id
+      }
+      engineValue.project.setScenario(withScenarioHtml(next, html, pointer, foreignWords))
+      setScenarioRev((n) => n + 1)
+      persistScenario()
+    } finally {
+      setGeneratingHtml(false)
     }
-    engineValue.project.setScenario(withScenarioHtml(next, html, pointer))
-    setScenarioRev((n) => n + 1)
-    persistScenario()
   }
 
   // Portable zip with manifest (issue #465). Separate builder from lesson
@@ -290,6 +336,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         imageFiles,
         imageBytes,
         title: engineValue.project.name,
+        foreignWords: current.foreignWords ?? [],
       })
       if (pack.sizeStatus === 'warn' && pack.sizeWarning) {
         useNotificationStore.getState().notify(pack.sizeWarning)
@@ -331,6 +378,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const handleView = async () => {
     const engineValue = engine
     if (!engineValue?.project || htmlState === 'empty') return
+    useAiStore.getState().setScenarioTab('preview')
     setPreviewOpen(true)
     setPreviewLoading(true)
     setPreviewError(null)
@@ -379,6 +427,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
       setPreviewHtml(
         renderScenarioChalkHtml(previewMarkdown, {
           imageFiles,
+          foreignWords: current.foreignWords ?? [],
           resolveAssetUrl: (file) => dataUris[file] ?? `assets/${file}`,
         }),
       )
@@ -391,35 +440,78 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     }
   }
 
+  // Auto-load the preview when the Preview tab is active with stored HTML
+  // but nothing loaded yet. Preview state is in-memory only, so after a
+  // reload the tab would otherwise sit on "No preview loaded yet" until the
+  // user clicks View HTML. The manual Load button stays as fallback/retry.
+  useEffect(() => {
+    if (scenarioTab !== 'preview') return
+    if (htmlState === 'empty') return
+    if (previewOpen || previewLoading || previewHtml || previewError) return
+    // Intentionally state-driven (not event-driven): opening the tab IS the load trigger.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void handleView()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenarioTab, htmlState, previewOpen, previewLoading, previewHtml, previewError])
+
   const handleClose = () => {
-    setConfirmingDelete(false)
+    setConfirmingDeleteDoc(false)
+    setConfirmingDeleteHtml(false)
     setDeleteError(null)
     setCopyMdState(null)
     store.setScenarioModalOpen(false)
   }
 
-  // Clean slate: first click arms, second click deletes server versions plus
-  // the portable doc copy (markdown, versions, bindings, stored HTML).
+  // Granular deletes (two-step arm + confirm each):
+  // - Delete doc clears server versions plus the portable doc copy
+  //   (markdown, versions, bindings) while keeping the stored HTML, so the
+  //   orphaned Preview still renders the old content as stale.
+  // - Delete HTML drops only the stored render + pointer (client-only, no
+  //   server call) while keeping doc/history.
   // Plain project.setScenario — never through the engine Undo Stack.
-  const handleDelete = () => {
+  const handleDeleteDoc = () => {
     const engineValue = engine
     if (!engineValue?.project || markdownBusy) return
-    if (!confirmingDelete) {
-      setConfirmingDelete(true)
+    if (!confirmingDeleteDoc) {
+      setConfirmingDeleteDoc(true)
+      setConfirmingDeleteHtml(false)
       setDeleteError(null)
       return
     }
-    setConfirmingDelete(false)
+    setConfirmingDeleteDoc(false)
     setDeleteError(null)
+    const current = engineValue.project.scenario ?? createEmptyScenarioSection(markdown)
+    const pointer = current.generatedFromVersionId ?? null
     void store.clearMarkdownVersions(projectId).then((ok) => {
       if (!ok || !engineValue.project) {
         setDeleteError(useAiStore.getState().markdownError?.message ?? 'Clear failed — retry.')
         return
       }
-      engineValue.project.setScenario(createEmptyScenarioSection(''))
+      engineValue.project.setScenario(clearScenarioDocKeepHtml(current, versionsForState, pointer))
+      setDocComments([])
       setScenarioRev((n) => n + 1)
       persistScenario()
     })
+  }
+
+  const handleDeleteHtml = () => {
+    const engineValue = engine
+    if (!engineValue?.project || htmlState === 'empty') return
+    if (!confirmingDeleteHtml) {
+      setConfirmingDeleteHtml(true)
+      setConfirmingDeleteDoc(false)
+      setDeleteError(null)
+      return
+    }
+    setConfirmingDeleteHtml(false)
+    setDeleteError(null)
+    const current = engineValue.project.scenario ?? createEmptyScenarioSection(markdown)
+    engineValue.project.setScenario(withoutScenarioHtml(current))
+    setPreviewOpen(false)
+    setPreviewHtml(null)
+    setPreviewError(null)
+    setScenarioRev((n) => n + 1)
+    persistScenario()
   }
 
   const handleCopyMd = () => {
@@ -497,13 +589,21 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
           <strong>Scenario</strong>
           <button
             data-testid="ai-scenario-generate"
-            disabled={generateBlocked}
-            title={generateBlocked ? `Blocked — ${unboundCount} unbound` : 'Generate HTML'}
-            onClick={handleGenerate}
+            disabled={generateBlocked || generatingHtml}
+            title={
+              generatingHtml
+                ? 'Detecting foreign words and rendering HTML…'
+                : generateBlocked
+                  ? `Blocked — ${unboundCount} unbound`
+                  : 'Generate HTML'
+            }
+            onClick={() => void handleGenerate()}
           >
-            {generateBlocked
-              ? `Generate HTML (blocked — ${unboundCount} unbound)`
-              : 'Generate HTML'}
+            {generatingHtml
+              ? 'Generating HTML…'
+              : generateBlocked
+                ? `Generate HTML (blocked — ${unboundCount} unbound)`
+                : 'Generate HTML'}
           </button>
           <button
             data-testid="ai-scenario-view"
@@ -530,16 +630,28 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
             {downloading ? 'Preparing zip…' : 'Download .zip'}
           </button>
           <button
-            data-testid="ai-scenario-delete"
-            disabled={markdownBusy}
+            data-testid="ai-scenario-delete-doc"
+            disabled={markdownBusy || !hasDoc}
             title={
-              confirmingDelete
-                ? 'Click again to permanently delete the doc, history, and HTML'
-                : 'Delete doc and HTML'
+              confirmingDeleteDoc
+                ? 'Click again to permanently delete the doc and history (HTML preview is kept)'
+                : 'Delete doc and history (keeps HTML)'
             }
-            onClick={handleDelete}
+            onClick={handleDeleteDoc}
           >
-            {confirmingDelete ? 'Confirm delete doc + HTML?' : 'Delete'}
+            {confirmingDeleteDoc ? 'Confirm delete doc?' : 'Delete doc'}
+          </button>
+          <button
+            data-testid="ai-scenario-delete-html"
+            disabled={htmlState === 'empty'}
+            title={
+              confirmingDeleteHtml
+                ? 'Click again to permanently delete the stored HTML (doc is kept)'
+                : 'Delete stored HTML (keeps doc)'
+            }
+            onClick={handleDeleteHtml}
+          >
+            {confirmingDeleteHtml ? 'Confirm delete HTML?' : 'Delete HTML'}
           </button>
           <button
             data-testid="ai-scenario-copy-md"
@@ -601,10 +713,68 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
           >
             History
           </button>
+          <button
+            data-testid="ai-scenario-modal-tab-preview"
+            disabled={scenarioTab === 'preview'}
+            onClick={() => store.setScenarioTab('preview')}
+          >
+            Preview
+          </button>
         </div>
 
         {scenarioTab === 'history' ? (
           <AiScenarioHistory projectId={projectId} conversationId={conversationId} />
+        ) : scenarioTab === 'preview' ? (
+          <div data-testid="ai-scenario-modal-preview-body" style={{ marginTop: 8 }}>
+            {htmlState === 'empty' ? (
+              <div data-testid="ai-scenario-preview-empty">No HTML yet — generate first.</div>
+            ) : !previewOpen && !previewLoading && !previewHtml && !previewError ? (
+              <div data-testid="ai-scenario-html-preview">
+                <div>No preview loaded yet.</div>
+                <button
+                  data-testid="ai-scenario-html-preview-load"
+                  onClick={() => {
+                    void handleView()
+                  }}
+                >
+                  Load preview
+                </button>
+              </div>
+            ) : (
+              <div data-testid="ai-scenario-html-preview">
+                <div>Preview (stored HTML{htmlState === 'stale' ? ' — stale' : ''})</div>
+                {previewLoading && (
+                  <div data-testid="ai-scenario-html-preview-loading">Resolving images…</div>
+                )}
+                {previewError && (
+                  <div data-testid="ai-scenario-html-preview-error">{previewError}</div>
+                )}
+                {previewHtml && (
+                  <iframe
+                    data-testid="ai-scenario-html-frame"
+                    title="Scenario HTML preview"
+                    srcDoc={previewHtml}
+                    style={{
+                      width: '100%',
+                      minHeight: 480,
+                      height: '60vh',
+                      border: '1px solid var(--color-border)',
+                    }}
+                  />
+                )}
+                <button
+                  data-testid="ai-scenario-html-preview-close"
+                  onClick={() => {
+                    setPreviewOpen(false)
+                    setPreviewHtml(null)
+                    setPreviewError(null)
+                  }}
+                >
+                  Close preview
+                </button>
+              </div>
+            )}
+          </div>
         ) : (
           <>
             {docWarnings.length > 0 && (
@@ -647,34 +817,6 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                   comments={docComments}
                   onCommentsChange={setDocComments}
                 />
-                {previewOpen && htmlState !== 'empty' && (
-                  <div data-testid="ai-scenario-html-preview">
-                    <div>Preview (stored HTML{htmlState === 'stale' ? ' — stale' : ''})</div>
-                    {previewLoading && (
-                      <div data-testid="ai-scenario-html-preview-loading">Resolving images…</div>
-                    )}
-                    {previewError && (
-                      <div data-testid="ai-scenario-html-preview-error">{previewError}</div>
-                    )}
-                    {previewHtml && (
-                      <iframe
-                        data-testid="ai-scenario-html-frame"
-                        title="Scenario HTML preview"
-                        srcDoc={previewHtml}
-                      />
-                    )}
-                    <button
-                      data-testid="ai-scenario-html-preview-close"
-                      onClick={() => {
-                        setPreviewOpen(false)
-                        setPreviewHtml(null)
-                        setPreviewError(null)
-                      }}
-                    >
-                      Close preview
-                    </button>
-                  </div>
-                )}
               </div>
               <AiScenarioChecklist
                 projectId={projectId}

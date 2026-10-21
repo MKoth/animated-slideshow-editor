@@ -205,6 +205,90 @@ describe('AiScenarioModal Generate lifecycle (issue #464)', () => {
     expect(frame.getAttribute('srcDoc')).toContain('alt="Young doctor smiling"')
   })
 
+  it('Generate asks the LLM for foreign words and highlights the returned list', async () => {
+    const { engine, value } = setupEngineWithEmbedded()
+    render(
+      <EngineContext.Provider value={value}>
+        <AiScenarioModal projectId="p-1" conversationId="c-1" />
+      </EngineContext.Provider>,
+    )
+    let requestBody = ''
+    vi.mocked(fetch).mockImplementation(async (url: unknown, init?: unknown) => {
+      if (String(url).includes('/foreign-words')) {
+        requestBody = String((init as { body?: unknown } | undefined)?.body ?? '')
+        return new Response(JSON.stringify({ words: ['Ser', 'doctora'] }), { status: 200 })
+      }
+      return new Response(JSON.stringify([]), { status: 200 })
+    })
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('ai-scenario-generate'))
+    // Narrator sentences are glued into one request text.
+    expect(requestBody).toContain('Ser is for who you are.')
+    // The stored HTML highlights the returned list…
+    const stored = engine.project!.scenario!.lastHtml ?? ''
+    expect(stored).toContain('<strong class="foreign">Ser</strong> is for who you are.')
+    // …and the list is stored beside the HTML for View/Download reuse.
+    expect(engine.project!.scenario!.foreignWords).toEqual(['Ser', 'doctora'])
+    // View reuses the stored list without another LLM call.
+    await user.click(screen.getByTestId('ai-scenario-view'))
+    const frame = await screen.findByTestId('ai-scenario-html-frame')
+    await waitFor(() => {
+      expect(frame.getAttribute('srcDoc')).toContain(
+        '<strong class="foreign">Ser</strong> is for who you are.',
+      )
+    })
+  })
+
+  it('Generate shows a loader until the LLM request resolves', async () => {
+    const { engine, value } = setupEngineWithEmbedded()
+    render(
+      <EngineContext.Provider value={value}>
+        <AiScenarioModal projectId="p-1" conversationId="c-1" />
+      </EngineContext.Provider>,
+    )
+    let resolveForeign!: (response: Response) => void
+    const gate = new Promise<Response>((resolve) => {
+      resolveForeign = resolve
+    })
+    vi.mocked(fetch).mockImplementation(async (url: unknown) => {
+      if (String(url).includes('/foreign-words')) return gate
+      return new Response(JSON.stringify([]), { status: 200 })
+    })
+    const user = userEvent.setup()
+    const pressed = user.click(await screen.findByTestId('ai-scenario-generate'))
+    await waitFor(() => {
+      expect(screen.getByTestId('ai-scenario-generate')).toHaveTextContent('Generating HTML…')
+    })
+    expect(screen.getByTestId('ai-scenario-generate')).toBeDisabled()
+    resolveForeign(new Response(JSON.stringify({ words: [] }), { status: 200 }))
+    await pressed
+    expect(await screen.findByTestId('ai-scenario-html-state')).toHaveTextContent('ready')
+    expect(engine.project!.scenario!.lastHtml ?? '').toContain('<!DOCTYPE html>')
+  })
+
+  it('Generate still renders HTML without highlights when the LLM call fails', async () => {
+    const { engine, value } = setupEngineWithEmbedded()
+    render(
+      <EngineContext.Provider value={value}>
+        <AiScenarioModal projectId="p-1" conversationId="c-1" />
+      </EngineContext.Provider>,
+    )
+    vi.mocked(fetch).mockImplementation(async (url: unknown) => {
+      if (String(url).includes('/foreign-words')) {
+        return new Response('boom', { status: 500 })
+      }
+      return new Response(JSON.stringify([]), { status: 200 })
+    })
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('ai-scenario-generate'))
+    expect(await screen.findByTestId('ai-scenario-html-state')).toHaveTextContent('ready')
+    // The narrator renders plain: no LLM list, no highlights.
+    const stored = engine.project!.scenario!.lastHtml ?? ''
+    expect(stored).toContain('Ser is for who you are.')
+    expect(stored).not.toContain('<strong class="foreign">Ser</strong>')
+    expect(engine.project!.scenario!.foreignWords).toEqual([])
+  })
+
   it('doc edits after generation mark stale while View still opens the old render', async () => {
     const { engine, value } = setupEngineWithEmbedded()
     const view = render(
@@ -235,6 +319,7 @@ describe('AiScenarioModal Generate lifecycle (issue #464)', () => {
     await user.click(viewButton)
     const frame = await screen.findByTestId('ai-scenario-html-frame')
     await waitFor(() => {
+      // The old render opens unchanged (stubbed LLM returns no words).
       expect(frame.getAttribute('srcDoc')).toContain('Ser is for who you are.')
     })
     expect(frame.getAttribute('srcDoc')).not.toContain('Edited narrator line.')

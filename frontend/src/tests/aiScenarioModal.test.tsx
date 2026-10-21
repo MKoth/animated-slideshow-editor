@@ -157,7 +157,7 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
     expect(screen.getByTestId('ai-scenario-modal-empty')).toBeInTheDocument()
   })
 
-  it('modal shows doc center, right-rail checklist, top-bar actions, and Doc vs History tabs', async () => {
+  it('modal shows doc center, right-rail checklist, top-bar actions, and Doc vs History vs Preview tabs', async () => {
     const { value } = setupEngine(MD)
     useAiStore.setState({ scenarioModalOpen: true })
     renderModal(value)
@@ -169,6 +169,7 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
     expect(screen.getByTestId('ai-scenario-download')).toBeInTheDocument()
     expect(screen.getByTestId('ai-scenario-modal-tab-doc')).toBeInTheDocument()
     expect(screen.getByTestId('ai-scenario-modal-tab-history')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-modal-tab-preview')).toBeInTheDocument()
     // Checklist rows keyed by normalized asset key from the live scan.
     expect(screen.getByTestId('ai-scenario-checklist-row-young-doctor-smiling')).toBeInTheDocument()
     expect(
@@ -214,10 +215,13 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
     const download = screen.getByTestId('ai-scenario-download')
     expect(download).not.toBeDisabled()
 
-    // View opens the stored HTML preview.
+    // View opens the stored HTML preview in the Preview tab.
     const user = userEvent.setup()
     await user.click(view)
     expect(await screen.findByTestId('ai-scenario-html-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-modal-tab-preview')).toBeDisabled()
+    // Back to Doc to edit via the checklist.
+    await user.click(screen.getByTestId('ai-scenario-modal-tab-doc'))
 
     // Doc edit after generation marks stale but View still opens the old render.
     // Edit via the checklist brief input so the modal's live scan bumps and
@@ -438,18 +442,72 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
     expect(await screen.findByTestId('ai-scenario-modal-doc')).toBeInTheDocument()
   })
 
-  it('Delete arms on first click and clears doc, history, and HTML on confirm', async () => {
+  it('Delete HTML arms on first click and clears only the stored render', async () => {
     const { value, engine } = setupEngine(MD, {})
+    const section = engine.project!.scenario!
+    const versionId = section.versions[0]!.id
+    engine.project!.setScenario({
+      ...section,
+      lastHtml: '<html>render</html>',
+      generatedFromVersionId: versionId,
+    })
     useAiStore.setState({ scenarioModalOpen: true })
     renderModal(value)
     expect(await screen.findByTestId('ai-scenario-modal-doc')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('ai-scenario-delete'))
+    expect(screen.getByTestId('ai-scenario-html-state')).toHaveTextContent('ready')
+
+    const deleteHtml = screen.getByTestId('ai-scenario-delete-html')
+    expect(deleteHtml).not.toBeDisabled()
+    await userEvent.click(deleteHtml)
     // Armed only — nothing deleted yet.
-    expect(screen.getByTestId('ai-scenario-delete')).toHaveTextContent('Confirm')
+    expect(screen.getByTestId('ai-scenario-delete-html')).toHaveTextContent('Confirm')
+    expect(engine.project?.scenario?.lastHtml).toBe('<html>render</html>')
+    await userEvent.click(screen.getByTestId('ai-scenario-delete-html'))
+    expect(engine.project?.scenario?.lastHtml).toBeUndefined()
+    expect(engine.project?.scenario?.generatedFromVersionId).toBeNull()
+    expect(await screen.findByTestId('ai-scenario-html-state')).toHaveTextContent('empty')
+    // Doc survives the HTML delete.
     expect(engine.project?.scenario?.currentMarkdown).toContain('Step 1')
-    await userEvent.click(screen.getByTestId('ai-scenario-delete'))
-    expect(await screen.findByTestId('ai-scenario-modal-empty')).toBeInTheDocument()
-    expect(screen.getByTestId('ai-scenario-checklist-empty')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-modal-doc')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-delete-html')).toBeDisabled()
+  })
+
+  it('Delete doc arms on first click and clears doc/history while keeping HTML', async () => {
+    const { value, engine } = setupEngine(MD, {})
+    const section = engine.project!.scenario!
+    const versionId = section.versions[0]!.id
+    engine.project!.setScenario({
+      ...section,
+      lastHtml: '<html>render</html>',
+      generatedFromVersionId: versionId,
+    })
+    useAiStore.setState({
+      scenarioModalOpen: true,
+      markdownVersionsByProject: {
+        'p-1': [
+          {
+            id: versionId,
+            projectId: 'p-1',
+            conversationId: 'c-1',
+            messageId: 'm-1',
+            summary: 'Initial',
+            touchedSteps: [1, 2],
+            timestamp: new Date().toISOString(),
+            content: MD,
+            baseVersionId: null,
+          },
+        ],
+      },
+    })
+    renderModal(value)
+    expect(await screen.findByTestId('ai-scenario-modal-doc')).toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('ai-scenario-delete-doc'))
+    // Armed only — nothing deleted yet.
+    expect(screen.getByTestId('ai-scenario-delete-doc')).toHaveTextContent('Confirm')
+    expect(engine.project?.scenario?.currentMarkdown).toContain('Step 1')
+    await user.click(screen.getByTestId('ai-scenario-delete-doc'))
     const cleared = vi
       .mocked(fetch)
       .mock.calls.find(
@@ -459,8 +517,15 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
       )
     expect(cleared).toBeDefined()
     expect(engine.project?.scenario?.currentMarkdown).toBe('')
-    expect(engine.project?.scenario?.versions).toEqual([])
-    expect(engine.project?.scenario?.lastHtml).toBeUndefined()
+    expect(engine.project?.scenario?.bindings).toEqual({})
+    expect(await screen.findByTestId('ai-scenario-modal-empty')).toBeInTheDocument()
+    expect(screen.getByTestId('ai-scenario-checklist-empty')).toBeInTheDocument()
+    // Stored HTML survives the doc delete (stale orphaned render).
+    expect(engine.project?.scenario?.lastHtml).toBe('<html>render</html>')
+    expect(screen.getByTestId('ai-scenario-html-state')).toHaveTextContent('stale')
+    // Preview still opens the old render from the preserved source version.
+    await user.click(screen.getByTestId('ai-scenario-view'))
+    expect(await screen.findByTestId('ai-scenario-html-preview')).toBeInTheDocument()
   })
 
   it('Copy MD copies the current markdown to the clipboard', async () => {

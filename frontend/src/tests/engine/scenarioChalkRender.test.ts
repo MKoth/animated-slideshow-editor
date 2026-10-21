@@ -63,7 +63,7 @@ describe('scenarioChalkRender pure seam (issue #464)', () => {
     expect(html).not.toContain('<table')
   })
 
-  it('captions figures with the chalk label and ignores remove/wipe markers', () => {
+  it('captions each figure with its own label directly beneath the image', () => {
     const md = [
       '# Lesson',
       '',
@@ -85,10 +85,197 @@ describe('scenarioChalkRender pure seam (issue #464)', () => {
       '',
     ].join('\n')
     const html = renderScenarioChalkHtml(md, { imageFiles: { 'green-tree': 'green-tree.png' } })
-    expect(html).toContain('<figcaption>El árbol ES verde</figcaption>')
+    // Label content (no "Label:" marker word) sits inside its own figure,
+    // right under the image it belongs to.
+    expect(html).toContain(
+      '<figure class="visual"><img src="assets/green-tree.png" alt="Green tree" loading="lazy"><figcaption>El árbol ES verde</figcaption></figure>',
+    )
+    expect(html).not.toContain('Label:')
+    expect(html).toContain('alt="Green tree"')
     expect(html).not.toContain('[wipe]')
     expect(html).not.toContain('[remove:')
     expect(html).not.toContain('Brief:')
+  })
+
+  it('renders figures without a caption when the visual has no label', () => {
+    const md = [
+      '## Step 1 — One',
+      '',
+      '![Green tree](asset:green-tree)',
+      '',
+      '> Brief: A tree.',
+      '',
+    ].join('\n')
+    const html = renderScenarioChalkHtml(md, { imageFiles: { 'green-tree': 'green-tree.png' } })
+    expect(html).not.toContain('<figcaption')
+    expect(html).toContain('alt="Green tree"')
+  })
+
+  it('respects document order instead of piling all images before all text', () => {
+    const md = [
+      '## Step 1 — Mixed',
+      '',
+      '![First](asset:first)',
+      '',
+      '> Brief: First brief.',
+      '',
+      'Text after first.',
+      '',
+      '![Second](asset:second)',
+      '',
+      '> Brief: Second brief.',
+      '',
+      '> Label: Second label',
+      '',
+      'Text after second.',
+      '',
+    ].join('\n')
+    const html = renderScenarioChalkHtml(md, {
+      imageFiles: { first: 'first.png', second: 'second.png' },
+    })
+    const firstFig = html.indexOf('alt="First"')
+    const firstText = html.indexOf('Text after first.')
+    const secondFig = html.indexOf('alt="Second"')
+    const secondCaption = html.indexOf('<figcaption>Second label</figcaption>')
+    const secondText = html.indexOf('Text after second.')
+    expect(firstFig).toBeGreaterThan(-1)
+    expect(firstText).toBeGreaterThan(firstFig)
+    expect(secondFig).toBeGreaterThan(firstText)
+    // The label sits inside its own figure, directly after its image.
+    expect(secondCaption).toBeGreaterThan(secondFig)
+    expect(secondCaption).toBeLessThan(secondText)
+    expect(secondText).toBeGreaterThan(secondFig)
+  })
+
+  it('renders narrator as a plain paragraph without the Narrator role marker', () => {
+    const html = renderScenarioChalkHtml(MD, {
+      imageFiles: {
+        'young-doctor-smiling': 'young-doctor-smiling.png',
+        'empty-classroom-chairs': 'empty-classroom-chairs.png',
+      },
+    })
+    expect(html).toContain('<p class="narrator">Ser is for who you are.</p>')
+    expect(html).not.toContain('>Narrator')
+    expect(html).not.toContain('<span class="role">')
+    expect(html).not.toContain('class="role"')
+  })
+
+  it('cycles step headings through the chalk accent palette deterministically', () => {
+    const md = [
+      '## Step 1 — One',
+      '',
+      'Text one.',
+      '',
+      '## Step 2 — Two',
+      '',
+      'Text two.',
+      '',
+      '## Step 3 — Three',
+      '',
+      'Text three.',
+      '',
+    ].join('\n')
+    const html = renderScenarioChalkHtml(md, { imageFiles: {} })
+    expect(html).toContain('<h2 class="accent-yellow">Step 1 — One</h2>')
+    expect(html).toContain('<h2 class="accent-pink">Step 2 — Two</h2>')
+    expect(html).toContain('<h2 class="accent-blue">Step 3 — Three</h2>')
+  })
+
+  it('highlights author-marked foreign words inside English text', () => {
+    const html = renderScenarioChalkHtml(MD, {
+      imageFiles: {
+        'young-doctor-smiling': 'young-doctor-smiling.png',
+        'empty-classroom-chairs': 'empty-classroom-chairs.png',
+      },
+    })
+    // Bold-marked foreign words become colored highlights, never literals.
+    expect(html).toContain('<strong class="foreign">soy</strong>')
+    expect(html).not.toContain('**soy**')
+    // Spanish column of a Spanish|English vocabulary table is highlighted.
+    expect(html).toContain('<td><strong class="foreign">Soy doctora</strong></td>')
+    expect(html).toContain('<td>I am a doctor</td>')
+    expect(html).toContain('strong.foreign')
+  })
+
+  it('highlights the LLM foreign-word list in narrator sentences', () => {
+    const md = [
+      '## Step 1 — Oak',
+      '',
+      '**Narrator:** In Spanish you call it árbol de roble, duradero y sólido.',
+      '',
+    ].join('\n')
+    const foreignWords = ['árbol', 'de roble', 'duradero', 'y', 'sólido', 'roble']
+    const html = renderScenarioChalkHtml(md, { imageFiles: {}, foreignWords })
+    // Longest match wins: "de roble" highlights as one phrase, not "de" + "roble".
+    expect(html).toContain('<strong class="foreign">árbol</strong>')
+    expect(html).toContain('<strong class="foreign">de roble</strong>')
+    expect(html).not.toContain('<strong class="foreign">de</strong>')
+    expect(html).not.toContain('<strong class="foreign">roble</strong>')
+    expect(html).toContain('<strong class="foreign">duradero</strong>')
+    expect(html).toContain('<strong class="foreign">y</strong>')
+    expect(html).toContain('<strong class="foreign">sólido</strong>')
+    // Base-language words stay plain.
+    expect(html).toContain('In Spanish you call it ')
+    expect(html).not.toContain('<strong class="foreign">Spanish</strong>')
+    expect(html).not.toContain('<strong class="foreign">call</strong>')
+  })
+
+  it('matches the LLM list case-insensitively on whole words only', () => {
+    const md = [
+      '## Step 1 — Mixed',
+      '',
+      '**Narrator:** Ser observers watch SER and serious ser.',
+      '',
+    ].join('\n')
+    const html = renderScenarioChalkHtml(md, { imageFiles: {}, foreignWords: ['ser'] })
+    // All case variants of the whole word highlight…
+    expect(html).toContain('<strong class="foreign">Ser</strong> observers watch')
+    expect(html).toContain('<strong class="foreign">SER</strong>')
+    expect(html).toContain('<strong class="foreign">ser</strong>.')
+    // …but "ser" inside "observers"/"serious" never does.
+    expect(html).not.toContain('ob<strong class="foreign">')
+    expect(html).not.toContain('<strong class="foreign">ser</strong>ious')
+  })
+
+  it('ignores invented list entries and never nests author marks', () => {
+    const md = [
+      '## Step 1 — Marked',
+      '',
+      '**Narrator:** Say **soy** now, amigo, and adios.',
+      '',
+    ].join('\n')
+    const html = renderScenarioChalkHtml(md, {
+      imageFiles: {},
+      foreignWords: ['soy', 'amigo', 'not in the text', 'say **bold**'],
+    })
+    // Author marks render once, never nested inside LLM spans.
+    expect(html).toContain('<strong class="foreign">soy</strong>')
+    expect(html).not.toContain('<strong class="foreign"><strong')
+    // Listed words found in the sentence highlight…
+    expect(html).toContain('now, <strong class="foreign">amigo</strong>,')
+    // …invented entries and entries with markup never leak into the output.
+    expect(html).not.toContain('not in the text')
+    expect(html).not.toContain('<strong class="foreign">Say</strong>')
+    expect(html).toContain('Say <strong class="foreign">soy</strong> now,')
+  })
+
+  it('renders plain narrator text when no foreign-word list is given', () => {
+    const md = [
+      '## Step 1 — Reading',
+      '',
+      '**Narrator:** The teacher reads the lesson to the class today.',
+      '',
+      '## Step 2 — Listening',
+      '',
+      "**Narrator:** Don't stop the music and listen.",
+      '',
+    ].join('\n')
+    const html = renderScenarioChalkHtml(md, { imageFiles: {} })
+    expect(html).toContain(
+      '<p class="narrator">The teacher reads the lesson to the class today.</p>',
+    )
+    expect(html).toContain('<p class="narrator">Don&#39;t stop the music and listen.</p>')
+    expect(html).not.toContain('<strong')
   })
 
   it('maps images to the assets folder by slug filename with free-text alt preserved', () => {

@@ -106,6 +106,8 @@ export interface ScenarioPortablePackInput {
   readonly imageBytes: Readonly<Record<string, ScenarioZipImageBytes>>
   readonly title?: string
   readonly generator?: string
+  /** LLM-detected foreign words/phrases for narrator highlights (stored at Generate). */
+  readonly foreignWords?: readonly string[]
   /** Test-only total-byte override to exercise warn/block gates without 500MB fixtures. */
   readonly sizeOverrideForTest?: number
 }
@@ -322,6 +324,7 @@ export function buildScenarioPortablePack(input: ScenarioPortablePackInput): Sce
   const pageHtml = renderScenarioChalkHtml(input.markdown || '', {
     imageFiles: input.imageFiles,
     title: input.title,
+    foreignWords: input.foreignWords ?? [],
   })
   assertScenarioHtmlPortable(pageHtml)
 

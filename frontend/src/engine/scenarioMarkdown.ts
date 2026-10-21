@@ -46,6 +46,13 @@ export interface ScenarioStep {
   readonly visuals: readonly ScenarioVisual[]
   readonly table?: string
   readonly text?: string
+  /**
+   * Content blocks in document order (visuals, tables, and text paragraphs
+   * interleaved as authored). `visuals`/`table`/`text` above stay as the
+   * grouped views; renderers that must keep image↔text association walk
+   * `blocks` instead of the grouped fields.
+   */
+  readonly blocks: readonly ScenarioBlock[]
   /** Slugs explicitly placed on the board via `[place: slug]`. */
   readonly placed: readonly string[]
   /** Board ids revealed via `[reveal: id]` (`text1`/`table1`-style). */
@@ -59,6 +66,12 @@ export interface ScenarioStep {
   readonly rawHeading: string
   readonly bare: boolean
 }
+
+/** One content block in document order within a step. */
+export type ScenarioBlock =
+  | { readonly kind: 'visual'; readonly visual: ScenarioVisual }
+  | { readonly kind: 'table'; readonly table: string }
+  | { readonly kind: 'text'; readonly text: string }
 
 export interface ScenarioWarning {
   readonly code:
@@ -199,11 +212,15 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
     const visuals: ScenarioVisual[] = []
     let table: string | undefined
     const textParts: string[] = []
+    const blocks: ScenarioBlock[] = []
 
     const tableBuffer: { text: string; line: number }[] = []
     const flushTableBufferAsText = () => {
       for (const entry of tableBuffer) {
-        if (entry.text.trim() !== '') textParts.push(entry.text.trim())
+        if (entry.text.trim() !== '') {
+          textParts.push(entry.text.trim())
+          blocks.push({ kind: 'text', text: entry.text.trim() })
+        }
       }
       tableBuffer.length = 0
     }
@@ -276,6 +293,7 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
         })
       }
       visuals.push(visual)
+      blocks.push({ kind: 'visual', visual })
       pendingVisual = null
       pendingBrief = undefined
       pendingLabel = undefined
@@ -323,10 +341,31 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
         idx += 1
         continue
       }
+      if (briefMatch) {
+        // Orphan brief (no open visual, or a duplicate): briefs stay in
+        // markdown only and never leak into reader text with their marker.
+        flushPendingVisual()
+        flushTableBufferAsText()
+        idx += 1
+        continue
+      }
 
       const labelMatch = LABEL_RE.exec(entry.text)
       if (labelMatch && pendingVisual && pendingLabel === undefined) {
         pendingLabel = (labelMatch[1] ?? '').trim()
+        idx += 1
+        continue
+      }
+      if (labelMatch) {
+        // Orphan label (no open visual, or a duplicate): keep the content
+        // as reader text but drop the `Label:` marker word.
+        flushPendingVisual()
+        flushTableBufferAsText()
+        const content = (labelMatch[1] ?? '').trim()
+        if (content !== '') {
+          textParts.push(content)
+          blocks.push({ kind: 'text', text: content })
+        }
         idx += 1
         continue
       }
@@ -414,11 +453,15 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
             })
             flushTableBufferAsText()
           } else if (table === undefined) {
-            table = tableBuffer.map((e) => e.text.trim()).join('\n')
+            const chunk = tableBuffer.map((e) => e.text.trim()).join('\n')
+            table = chunk
+            blocks.push({ kind: 'table', table: chunk })
             tableBuffer.length = 0
           } else {
             // Multiple table blocks: concatenate so no content silently demotes to text.
-            table += `\n\n${tableBuffer.map((e) => e.text.trim()).join('\n')}`
+            const chunk = tableBuffer.map((e) => e.text.trim()).join('\n')
+            table += `\n\n${chunk}`
+            blocks.push({ kind: 'table', table: chunk })
             tableBuffer.length = 0
           }
         } else {
@@ -438,6 +481,7 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
       }
       if (tableBuffer.length > 0) flushTableBufferAsText()
       textParts.push(trimmed)
+      blocks.push({ kind: 'text', text: trimmed })
       idx += 1
     }
     flushPendingVisual()
@@ -474,6 +518,7 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
       visuals,
       ...(table !== undefined ? { table } : {}),
       ...(text !== undefined ? { text } : {}),
+      blocks: [...blocks],
     })
   }
 

@@ -13,9 +13,10 @@ import { parseScenarioMarkdown } from './scenarioMarkdown'
  *
  * Shape (per #458 decision, #461 implements doc + versions + bindings;
  * `lastHtml` / `generatedFromVersionId` are optional forward-compatible
- * slots owned by #464):
+ * slots owned by #464; `foreignWords` rides with them as the LLM-detected
+ * narrator vocabulary backing HTML highlights):
  * `{ currentMarkdown, versions[] {id, summary, touchedSteps, timestamp, content},
- *    bindings {slug -> assetId}, lastHtml?, generatedFromVersionId? }`
+ *    bindings {slug -> assetId}, lastHtml?, generatedFromVersionId?, foreignWords? }`
  * Unknown keys are preserved for forward reads.
  */
 
@@ -36,6 +37,12 @@ export interface ScenarioSectionJSON {
   readonly bindings: Readonly<Record<string, string>>
   readonly lastHtml?: string
   readonly generatedFromVersionId?: string | null
+  /**
+   * LLM-detected foreign words/phrases backing narrator `<strong>` highlights.
+   * Stored beside the render so View/Download reuse the same list without
+   * another model call; dropped together with the HTML.
+   */
+  readonly foreignWords?: string[]
   /** Accepted downstream snapshot (issue #466): explicit accept only, never auto-moved by drafts. */
   readonly acceptedVersionId?: string | null
   readonly [key: string]: unknown
@@ -133,6 +140,14 @@ export function validateScenarioSection(json: unknown, errors: string[]): void {
     typeof raw.generatedFromVersionId !== 'string'
   ) {
     errors.push('Lesson scenario generatedFromVersionId must be a string or null when present')
+  }
+  if (raw.foreignWords !== undefined) {
+    if (
+      !Array.isArray(raw.foreignWords) ||
+      !raw.foreignWords.every((entry) => typeof entry === 'string')
+    ) {
+      errors.push('Lesson scenario foreignWords must be a string array when present')
+    }
   }
   if (
     raw.acceptedVersionId !== undefined &&
@@ -237,18 +252,91 @@ export function withScenarioBindings(
  * Store the last deterministic chalk render plus its generating-version
  * pointer (issue #464). Manual Generate only; doc edits after generation
  * mark the stored HTML stale via `getScenarioHtmlState` while View still
- * opens the old render. No backend model call — pure client persistence
- * into the portable section.
+ * opens the old render. `foreignWords` carries the LLM-detected narrator
+ * vocabulary backing the highlight spans; omit it (or pass []) and the
+ * render highlights author `**marks**` only.
  */
 export function withScenarioHtml(
   section: ScenarioSectionJSON,
   html: string,
   generatedFromVersionId: string | null,
+  foreignWords?: readonly string[],
 ): ScenarioSectionJSON {
-  return {
+  const next: Record<string, unknown> = {
     ...deepClone(section),
     lastHtml: html,
     generatedFromVersionId,
+  }
+  if (foreignWords !== undefined) next.foreignWords = [...foreignWords]
+  return next as unknown as ScenarioSectionJSON
+}
+
+/**
+ * Granular delete: drop the stored HTML render plus its generating-version
+ * pointer while preserving the doc, portable versions, and bindings.
+ * The modal keeps this client-only (no server call) — HTML lives purely
+ * in the portable section, so doc/history survive untouched.
+ */
+export function withoutScenarioHtml(section: ScenarioSectionJSON): ScenarioSectionJSON {
+  const clone = deepClone(section) as unknown as Record<string, unknown>
+  delete clone.lastHtml
+  delete clone.foreignWords
+  return {
+    ...(clone as unknown as ScenarioSectionJSON),
+    generatedFromVersionId: null,
+  } as ScenarioSectionJSON
+}
+
+/**
+ * Granular delete: clear the working doc, portable versions, and accepted
+ * snapshot while preserving the stored HTML render. The generating version
+ * is retained (converted from the server copy when needed) plus the
+ * bindings, so the orphaned Preview still re-renders the old content with
+ * its images instead of an empty doc — View reads the generating version,
+ * never `lastHtml` directly. Extra bindings for absent keys are ignored by
+ * the live checklist scan and simply re-apply if a future doc reuses the
+ * same key. Pass the pre-clear combined server + portable versions plus the
+ * pointer; unknown keys survive verbatim.
+ */
+export function clearScenarioDocKeepHtml(
+  section: ScenarioSectionJSON,
+  versions: readonly {
+    id: string
+    summary?: string
+    touchedSteps?: readonly number[]
+    timestamp?: string
+    content: string
+  }[],
+  generatedFromVersionId: string | null,
+): ScenarioSectionJSON {
+  const clone = deepClone(section) as unknown as Record<string, unknown>
+  const preserved = generatedFromVersionId
+    ? (versions.find((v) => v.id === generatedFromVersionId) ?? null)
+    : null
+  const keptVersions =
+    preserved && preserved.content !== ''
+      ? [
+          {
+            id: preserved.id,
+            summary:
+              typeof preserved.summary === 'string' && preserved.summary !== ''
+                ? preserved.summary
+                : 'Preserved HTML source',
+            touchedSteps: Array.isArray(preserved.touchedSteps) ? [...preserved.touchedSteps] : [],
+            timestamp:
+              typeof preserved.timestamp === 'string' && preserved.timestamp !== ''
+                ? preserved.timestamp
+                : new Date().toISOString(),
+            content: preserved.content,
+          },
+        ]
+      : []
+  return {
+    ...(clone as unknown as ScenarioSectionJSON),
+    currentMarkdown: '',
+    versions: keptVersions,
+    acceptedVersionId: null,
+    generatedFromVersionId: preserved && preserved.content !== '' ? preserved.id : null,
   } as ScenarioSectionJSON
 }
 

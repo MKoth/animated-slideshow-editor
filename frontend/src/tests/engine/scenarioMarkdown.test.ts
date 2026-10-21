@@ -253,6 +253,69 @@ describe('parseScenarioMarkdown', () => {
     expect(withoutTitle.warnings.some((w) => w.code === 'missing-title')).toBe(true)
   })
 
+  it('tracks content blocks in document order for ordered rendering', () => {
+    const md = [
+      '# Lesson',
+      '',
+      '## Step 1 — Mixed',
+      '',
+      '![First](asset:first)',
+      '',
+      '> Brief: First brief.',
+      '',
+      'Text after first.',
+      '',
+      '| Spanish | English |',
+      '| --- | --- |',
+      '| Hola | Hello |',
+      '',
+      '![Second](asset:second)',
+      '',
+      '> Brief: Second brief.',
+      '',
+      'Text after second.',
+      '',
+    ].join('\n')
+    const parsed = parseScenarioMarkdown(md)
+    const kinds = parsed.steps[0]?.blocks.map((b) => b.kind)
+    expect(kinds).toEqual(['visual', 'text', 'table', 'visual', 'text'])
+    // Grouped views stay intact for checklist/zip consumers.
+    expect(parsed.steps[0]?.visuals).toHaveLength(2)
+    expect(parsed.steps[0]?.table).toContain('Hola')
+    expect(parsed.steps[0]?.text).toContain('Text after first.')
+  })
+
+  it('keeps orphan label content as text without the marker and drops orphan briefs', () => {
+    const md = [
+      '# Lesson',
+      '',
+      '## Step 1 — One',
+      '',
+      '![Green tree](asset:green-tree)',
+      '',
+      '> Brief: A tree.',
+      '',
+      'Some text.',
+      '',
+      '> Label: Stray caption without an open visual',
+      '',
+      '> Brief: Stray brief that must never render',
+      '',
+    ].join('\n')
+    const parsed = parseScenarioMarkdown(md)
+    // The visual keeps only its attached brief; the orphan lines never
+    // attach anywhere.
+    expect(parsed.steps[0]?.visuals[0]).toMatchObject({ brief: 'A tree.' })
+    expect(parsed.steps[0]?.text).toContain('Some text.')
+    // Orphan label content survives as reader text, marker word gone.
+    expect(parsed.steps[0]?.text).toContain('Stray caption without an open visual')
+    expect(parsed.steps[0]?.text).not.toContain('Label:')
+    // Orphan briefs stay in markdown only and never leak into text.
+    expect(parsed.steps[0]?.text).not.toContain('Brief:')
+    expect(parsed.steps[0]?.text).not.toContain('Stray brief')
+    expect(parsed.steps[0]?.blocks.map((b) => b.kind)).toEqual(['visual', 'text', 'text'])
+  })
+
   it('attaches chalk labels to visuals without leaking into text', () => {
     const md = [
       '# Lesson',

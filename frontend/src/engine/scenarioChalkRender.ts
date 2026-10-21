@@ -11,20 +11,42 @@
  * - Static single scrolling page: one `<section>` per `## Step N` heading in
  *   markdown order, blocks narrator → visuals → table → text, skipped
  *   sections for missing optional blocks, never erroring on sparse steps.
+ * - Standalone reading document, not video cues: the `**Narrator:**` role
+ *   prefix renders as a plain paragraph without the marker word, and each
+ *   `> Label:` board text renders as the caption directly beneath its own
+ *   image (no "Label:" marker word), never piled far from its figure.
+ *   Content blocks keep document order — visuals, text, and tables
+ *   interleaved as authored. Briefs stay in markdown (plus manifest
+ *   metadata) and reuse names stay internal and unrendered.
+ * - Lively but deterministic color: step headings cycle the chalk accent
+ *   palette by step index, and `**bold**` author-marked foreign words render
+ *   as `<strong class="foreign">` highlights (plus the Spanish column of
+ *   Spanish|English tables). Narrator sentences additionally highlight an
+ *   LLM-provided foreign word/phrase list (`foreignWords` option), matched
+ *   verbatim and case-insensitively against each sentence — the model
+ *   detects, the render only spans. Identical inputs yield byte-identical
+ *   HTML.
  * - No scripts, no timeline playback, no runtime fetches, relative
  *   `assets/` paths only, file-protocol safe.
  * - Page images reference the assets folder by slug filename with free-text
- *   alt preserved; briefs stay in markdown (plus manifest metadata) and
- *   reuse names stay internal and unrendered.
+ *   alt preserved.
  */
 
 import { normalizeAssetKey, parseScenarioMarkdown } from './scenarioMarkdown'
+import type { ScenarioVisual } from './scenarioMarkdown'
 
 export interface ScenarioChalkRenderOptions {
   /** Normalized asset key → filename inside `assets/` (e.g. `cat.png`). */
   readonly imageFiles: Readonly<Record<string, string>>
   /** Page `<title>` override; defaults to the first H1 or `Scenario`. */
   readonly title?: string
+  /**
+   * LLM-detected foreign words/phrases to highlight in narrator sentences.
+   * Matched verbatim (case-insensitive, whole words/phrases) — entries never
+   * leak into the output, only `<strong class="foreign">` spans around
+   * existing text. Omit for marks-only rendering.
+   */
+  readonly foreignWords?: readonly string[]
   /**
    * Rewrite for one image file reference. Defaults to the portable
    * `assets/<file>` relative path (zip context). The modal preview passes a
@@ -156,19 +178,139 @@ function splitTableCells(line: string): string[] {
   return inner.split('|').map((c) => c.trim())
 }
 
+/**
+ * Inline text: HTML-escaped, with `**word**` (author-marked foreign words
+ * inside base-language text) rendered as colored `<strong class="foreign">`
+ * highlights. Unmatched asterisks pass through literally.
+ */
+const MARKED_SPAN_RE = /\*\*(.+?)\*\*/g
+function renderInline(text: string): string {
+  return escapeHtml(text).replace(MARKED_SPAN_RE, (_match, inner: string) => {
+    return `<strong class="foreign">${inner}</strong>`
+  })
+}
+
+/** Escape a literal for embedding in a RegExp alternation. */
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+const MAX_FOREIGN_WORDS = 200
+const MAX_FOREIGN_WORD_CHARS = 120
+
+/**
+ * Normalize an LLM-returned foreign word/phrase list for matching: trim,
+ * drop empties and overlong entries, dedupe case-insensitively (first
+ * casing wins), longest-first so phrases beat their subwords. Pure;
+ * tested directly.
+ */
+export function normalizeForeignWords(words: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of words) {
+    if (typeof raw !== 'string') continue
+    const cleaned = raw.replace(/\s+/g, ' ').trim()
+    if (cleaned === '' || cleaned.length > MAX_FOREIGN_WORD_CHARS) continue
+    const key = cleaned.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(cleaned)
+  }
+  out.sort((a, b) => b.length - a.length)
+  return out.slice(0, MAX_FOREIGN_WORDS)
+}
+
+/**
+ * Non-overlapping match ranges of the foreign list inside raw text.
+ * Case-insensitive, whole-word/phrase boundaries on both ends (single
+ * letters included — the list is authoritative), longest-first so
+ * `de roble` wins over `roble`. Pure; tested directly.
+ */
+export function findForeignSpans(
+  text: string,
+  words: readonly string[],
+): Array<{ start: number; end: number }> {
+  const normalized = normalizeForeignWords(words)
+  if (normalized.length === 0 || text === '') return []
+  const pattern = normalized.map(escapeRegExp).join('|')
+  let matcher: RegExp
+  try {
+    matcher = new RegExp(`(?<![\\p{L}\\p{M}])(?:${pattern})(?![\\p{L}\\p{M}])`, 'giu')
+  } catch {
+    return []
+  }
+  const spans: Array<{ start: number; end: number }> = []
+  let match: RegExpExecArray | null
+  matcher.lastIndex = 0
+  while ((match = matcher.exec(text)) !== null) {
+    if (match[0] === '') break
+    spans.push({ start: match.index, end: match.index + match[0].length })
+  }
+  return spans
+}
+
+/** Wrap foreign spans in highlight tags; everything else HTML-escaped. */
+function applyForeignSpans(text: string, words: readonly string[]): string {
+  const spans = findForeignSpans(text, words)
+  if (spans.length === 0) return escapeHtml(text)
+  let out = ''
+  let cursor = 0
+  for (const span of spans) {
+    if (span.start < cursor) continue
+    out += escapeHtml(text.slice(cursor, span.start))
+    out += `<strong class="foreign">${escapeHtml(text.slice(span.start, span.end))}</strong>`
+    cursor = span.end
+  }
+  out += escapeHtml(text.slice(cursor))
+  return out
+}
+
+/**
+ * Narrator sentence rendering: author `**marks**` highlight as before,
+ * plus the LLM-detected foreign word/phrase list matched verbatim against
+ * each sentence (case-insensitive, whole words/phrases only — list entries
+ * never leak into the output, only spans around existing text).
+ */
+function renderNarrator(text: string, foreignWords: readonly string[]): string {
+  const segments = text.split(/(\*\*.+?\*\*)/g)
+  return segments
+    .map((segment) => {
+      const markedMatch = /^\*\*(.+)\*\*$/s.exec(segment)
+      if (markedMatch) {
+        return `<strong class="foreign">${escapeHtml(markedMatch[1])}</strong>`
+      }
+      return applyForeignSpans(segment, foreignWords)
+    })
+    .join('')
+}
+
 function renderTable(tableMarkdown: string): string {
   const lines = tableMarkdown
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l !== '')
   if (lines.length < 2) {
-    return `<p class="chalk-text">${escapeHtml(tableMarkdown)}</p>`
+    return `<p class="chalk-text">${renderInline(tableMarkdown)}</p>`
   }
   const header = splitTableCells(lines[0]!)
   const bodyRows = lines.slice(2).map(splitTableCells)
-  const head = header.map((cell) => `<th>${escapeHtml(cell)}</th>`).join('')
+  // A Spanish|English vocabulary table: highlight the Spanish body column.
+  const spanishFirstCol = header.length > 1 && header[0]!.trim().toLowerCase() === 'spanish'
+  const head = header.map((cell) => `<th>${renderInline(cell)}</th>`).join('')
   const body = bodyRows
-    .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`)
+    .map(
+      (row) =>
+        `<tr>${row
+          .map((cell, index) => {
+            const inner = renderInline(cell)
+            const highlighted =
+              spanishFirstCol && index === 0 && cell.trim() !== '' && !/\*\*/.test(cell)
+                ? `<strong class="foreign">${inner}</strong>`
+                : inner
+            return `<td>${highlighted}</td>`
+          })
+          .join('')}</tr>`,
+    )
     .join('')
   return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`
 }
@@ -178,7 +320,7 @@ function renderParagraphs(text: string): string {
     .split(/\n\n+/)
     .map((p) => p.trim())
     .filter((p) => p !== '')
-    .map((p) => `<p class="chalk-text">${escapeHtml(p)}</p>`)
+    .map((p) => `<p class="chalk-text">${renderInline(p)}</p>`)
     .join('\n')
 }
 
@@ -207,9 +349,14 @@ const CHALK_CSS = [
   'main { max-width: 70ch; margin: 0 auto; }',
   'h1 { font-family: var(--font-head); font-weight: 700; line-height: 1.2; letter-spacing: .01em; text-shadow: 0 0 1px currentColor; }',
   'section.step { border: 2px solid var(--board-line); border-radius: 255px 15px 225px 15px/15px 225px 15px 255px; padding: 20px 22px; margin: 0 0 28px; background: var(--board-erase); }',
-  'section.step h2 { font-family: var(--font-head); font-weight: 700; line-height: 1.2; margin: 0 0 12px; color: var(--chalk); }',
-  'p.narrator { color: var(--chalk-dim); }',
-  'p.narrator .role { color: var(--chalk-yellow); font-weight: 700; margin-right: 8px; }',
+  'section.step h2 { font-family: var(--font-head); font-weight: 700; line-height: 1.2; margin: 0 0 12px; }',
+  '.accent-yellow { color: var(--chalk-yellow); }',
+  '.accent-pink { color: var(--chalk-pink); }',
+  '.accent-blue { color: var(--chalk-blue); }',
+  '.accent-green { color: var(--chalk-green); }',
+  '.accent-orange { color: var(--chalk-orange); }',
+  'p.narrator { color: var(--chalk); font-size: 1.08em; }',
+  'strong.foreign { color: var(--chalk-pink); }',
   'figure.visual { margin: 16px 0; border: 2px solid var(--board-line); border-radius: 255px 15px 225px 15px/15px 225px 15px 255px; padding: 10px; }',
   'figure.visual img { display: block; max-width: 100%; height: auto; border-radius: 12px; }',
   'figure.visual figcaption { color: var(--chalk-dim); font-size: .9em; margin-top: 6px; }',
@@ -219,10 +366,7 @@ const CHALK_CSS = [
   'th { font-family: var(--font-head); color: var(--chalk-yellow); }',
   'td { color: var(--chalk); }',
   'a { color: var(--chalk-blue); }',
-  '.accent-pink { color: var(--chalk-pink); }',
-  '.accent-green { color: var(--chalk-green); }',
-  '.accent-orange { color: var(--chalk-orange); }',
-  '@media print { body { background: #fff; color: #000; } .grain { display: none; } section.step, figure.visual { border-color: #000; background: none; } th, td { border-color: #000; } th { color: #000; } p.narrator { color: #333; } }',
+  '@media print { body { background: #fff; color: #000; } .grain { display: none; } section.step, figure.visual { border-color: #000; background: none; } th, td { border-color: #000; } th { color: #000; } p.narrator { color: #000; } strong.foreign { color: #000; } section.step h2 { color: #000; } }',
   '@media (prefers-reduced-motion: reduce) { * { animation: none; transition: none; } }',
 ].join('\n')
 
@@ -237,6 +381,43 @@ function pageTitle(markdown: string, override?: string): string {
     if (text !== '') return text
   }
   return 'Scenario'
+}
+
+/**
+ * Step-heading accent, cycling the chalk palette by step index so the page
+ * reads lively but stays byte-deterministic for identical inputs.
+ */
+const STEP_ACCENTS = [
+  'accent-yellow',
+  'accent-pink',
+  'accent-blue',
+  'accent-green',
+  'accent-orange',
+] as const
+
+function stepAccentClass(index: number): string {
+  const at = (((index - 1) % STEP_ACCENTS.length) + STEP_ACCENTS.length) % STEP_ACCENTS.length
+  return STEP_ACCENTS[at]!
+}
+
+/**
+ * One figure with its label captioned directly beneath it, so the
+ * image↔label connection is obvious. No "Label:" marker word — the label
+ * content alone is the caption. Figures without a label render bare.
+ */
+function renderFigure(
+  visual: ScenarioVisual,
+  imageFiles: Readonly<Record<string, string>>,
+  resolveAssetUrl?: (file: string) => string,
+): string {
+  const file = imageFiles[visual.key] ?? `${slugFilenameForAssetKey(visual.key)}.png`
+  const src = resolveAssetUrl ? resolveAssetUrl(file) : `assets/${file.replace(/^assets\//, '')}`
+  const alt = escapeHtml(visual.alt)
+  const caption =
+    visual.label !== undefined && visual.label.trim() !== ''
+      ? `<figcaption>${renderInline(visual.label)}</figcaption>`
+      : ''
+  return `<figure class="visual"><img src="${escapeHtml(src)}" alt="${alt}" loading="lazy">${caption}</figure>`
 }
 
 /**
@@ -257,31 +438,40 @@ export function renderScenarioChalkHtml(
     steps = []
   }
   const title = pageTitle(source, options.title)
+  const foreignWords = options.foreignWords ?? []
 
   const sections = steps.map((step) => {
     const parts: string[] = []
-    parts.push(`<h2>Step ${step.index} — ${escapeHtml(step.title)}</h2>`)
+    parts.push(
+      `<h2 class="${stepAccentClass(step.index)}">Step ${step.index} — ${escapeHtml(step.title)}</h2>`,
+    )
     if (step.narrator !== undefined) {
-      parts.push(
-        `<p class="narrator"><span class="role">Narrator</span>${escapeHtml(step.narrator)}</p>`,
-      )
+      parts.push(`<p class="narrator">${renderNarrator(step.narrator, foreignWords)}</p>`)
     }
-    for (const visual of step.visuals) {
-      const file = imageFiles[visual.key] ?? `${slugFilenameForAssetKey(visual.key)}.png`
-      const src = options.resolveAssetUrl
-        ? options.resolveAssetUrl(file)
-        : `assets/${file.replace(/^assets\//, '')}`
-      const alt = escapeHtml(visual.alt)
-      const caption = escapeHtml(visual.label ?? visual.alt)
-      parts.push(
-        `<figure class="visual"><img src="${escapeHtml(src)}" alt="${alt}" loading="lazy"><figcaption>${caption}</figcaption></figure>`,
-      )
-    }
-    if (step.table !== undefined) {
-      parts.push(renderTable(step.table))
-    }
-    if (step.text !== undefined) {
-      parts.push(renderParagraphs(step.text))
+    // Document order: visuals, text paragraphs, and tables interleaved as
+    // authored, so each image sits directly above its own label caption
+    // instead of all images piling up first and all text after.
+    if (step.blocks.length > 0) {
+      for (const block of step.blocks) {
+        if (block.kind === 'visual') {
+          parts.push(renderFigure(block.visual, imageFiles, options.resolveAssetUrl))
+        } else if (block.kind === 'table') {
+          parts.push(renderTable(block.table))
+        } else {
+          parts.push(`<p class="chalk-text">${renderInline(block.text)}</p>`)
+        }
+      }
+    } else {
+      // Defensive fallback for steps built without blocks: legacy grouping.
+      for (const visual of step.visuals) {
+        parts.push(renderFigure(visual, imageFiles, options.resolveAssetUrl))
+      }
+      if (step.table !== undefined) {
+        parts.push(renderTable(step.table))
+      }
+      if (step.text !== undefined) {
+        parts.push(renderParagraphs(step.text))
+      }
     }
     return `<section class="step" data-step="${step.index}">\n${parts.join('\n')}\n</section>`
   })
