@@ -230,16 +230,24 @@ def test_five_step_reference_lesson_uses_default_and_stays_gap_free() -> None:
     steps = [
         {"id": "r1", "order": 0, "partTag": "middle", "spokenLine": "Ser is for who you are."},
         {"id": "r2", "order": 1, "partTag": "middle", "spokenLine": "Estar is for where you are."},
-        {"id": "r3", "order": 2, "partTag": "middle", "spokenLine": "Ser and estar change meaning."},
+        {
+            "id": "r3",
+            "order": 2,
+            "partTag": "middle",
+            "spokenLine": "Ser and estar change meaning.",
+        },
         {"id": "r4", "order": 3, "partTag": "middle", "spokenLine": "Tables show every person."},
-        {"id": "r5", "order": 4, "partTag": "middle", "spokenLine": "Goodbye friends, see you next time!"},
+        {
+            "id": "r5",
+            "order": 4,
+            "partTag": "middle",
+            "spokenLine": "Goodbye friends, see you next time!",
+        },
     ]
     parts = verbatim_parts_from_steps(steps, DEFAULT_SECONDS_PER_CHARACTER)
     assert len(parts) == 5
     for part in parts:
-        assert part["estimatedDuration"] == pytest.approx(
-            len(part["spokenLine"]) * 0.1
-        )
+        assert part["estimatedDuration"] == pytest.approx(len(part["spokenLine"]) * 0.1)
     assert parts[0]["timelineStart"] == 0.0
     for index in range(1, len(parts)):
         assert parts[index]["timelineStart"] == pytest.approx(parts[index - 1]["timelineEnd"])
