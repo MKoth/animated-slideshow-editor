@@ -22,6 +22,11 @@ import {
   encodeScenarioPortableZip,
 } from '../../engine/scenarioPortableZip'
 import { parseScenarioMarkdown } from '../../engine/scenarioMarkdown'
+import { planScenarioDraft } from '../../ai/scenarioPlanner'
+import { applyScenarioScript, snapshotScenarioScriptSlides } from '../../ai/scenarioScriptApply'
+import type { ScenarioScriptPreview } from './AiScenarioScriptPanel'
+import { AiScenarioScriptPanel } from './AiScenarioScriptPanel'
+import { getPrompterSecondsPerCharacter } from '../../engine/prompter'
 import { imageBytesToDataUrl, resolveScenarioImageBytes } from '../../engine/scenarioImageBytes'
 import { AiScenarioDocComments } from './AiScenarioDocComments'
 import type { ScenarioDocComment } from '../../engine/scenarioDocComments'
@@ -94,8 +99,12 @@ interface AiScenarioModalProps {
  * the stored render and keeps the doc.
  */
 export function AiScenarioModal({ projectId, conversationId, context }: AiScenarioModalProps) {
-  const engine = useContext(EngineContext)?.engine
-  const persistence = useContext(EngineContext)?.persistence
+  const engineContextValue = useContext(EngineContext)
+  const engine = engineContextValue?.engine
+  const dispatcher = engineContextValue?.dispatcher
+  const contextDispatch = engineContextValue?.dispatch
+  const undoStack = engineContextValue?.undoStack
+  const persistence = engineContextValue?.persistence
   const scenarioTab = useAiStore((s) => s.scenarioTab)
   const scenarios = useAiStore((s) => s.scenarios)
   const scenarioById = useAiStore((s) => s.scenarioById)
@@ -124,9 +133,19 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const [confirmingDeleteHtml, setConfirmingDeleteHtml] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [copyMdState, setCopyMdState] = useState<'copied' | 'failed' | null>(null)
+  // Accepted downstream snapshot backing Generate Script (issue #471): the
+  // draft planner reads the accepted version only, never the active draft.
+  const acceptedStoreId = useAiStore((s) => s.acceptedMarkdownVersionIdByProject[projectId] ?? null)
   // Inline doc comments live in the modal (survive Doc/History tab switches)
   // and clear once the doc itself changes to a new markdown version.
   const [docComments, setDocComments] = useState<ScenarioDocComment[]>([])
+  // Reviewable script-draft preview (issue #471): computed from the accepted
+  // snapshot on demand, never persisted — Apply writes through the command
+  // stack so the whole draft lands as one undoable Transaction.
+  const [scriptPreview, setScriptPreview] = useState<ScenarioScriptPreview | null>(null)
+  const [scriptApplying, setScriptApplying] = useState(false)
+  const [scriptApplyError, setScriptApplyError] = useState<string | null>(null)
+  const [scriptApplyDone, setScriptApplyDone] = useState<string | null>(null)
 
   // Legacy Action Scenario data stays loadable for the in-modal editor and
   // Stage B reconciliation (which still reads the accepted scenario row).
@@ -571,6 +590,67 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     )
   }
 
+  // Source gate (issue #471): the script draft reads the accepted snapshot
+  // only. Store pointer wins, portable section trails as fallback; content
+  // must resolve in the combined server + portable versions.
+  const acceptedVersionId = acceptedStoreId ?? scenario?.acceptedVersionId ?? null
+  const acceptedContent =
+    acceptedVersionId !== null
+      ? versionsForState.find((v) => v.id === acceptedVersionId)?.content
+      : undefined
+  const hasAcceptedSnapshot = acceptedVersionId !== null && acceptedContent !== undefined
+
+  const handleGenerateScript = () => {
+    const engineValue = engine
+    if (!engineValue?.project || !hasAcceptedSnapshot || acceptedContent === undefined) return
+    setScriptApplyError(null)
+    setScriptApplyDone(null)
+    const secondsPerCharacter = getPrompterSecondsPerCharacter(engineValue.project.settings)
+    const plan = planScenarioDraft(
+      acceptedContent,
+      secondsPerCharacter,
+      snapshotScenarioScriptSlides(engineValue.project.slides),
+    )
+    setScriptPreview({ acceptedVersionId: acceptedVersionId!, plan })
+  }
+
+  const handleApplyScript = () => {
+    const engineValue = engine
+    if (!engineValue?.project || !scriptPreview || scriptApplying) return
+    const applyDispatcher = dispatcher
+      ? { dispatch: dispatcher.dispatch.bind(dispatcher) }
+      : contextDispatch && undoStack
+        ? { dispatch: contextDispatch }
+        : null
+    if (!applyDispatcher || !undoStack) {
+      setScriptApplyError('Apply unavailable — no command dispatcher in this host.')
+      return
+    }
+    setScriptApplying(true)
+    setScriptApplyError(null)
+    setScriptApplyDone(null)
+    try {
+      const result = applyScenarioScript(
+        { dispatcher: applyDispatcher, undoStack },
+        {
+          plan: scriptPreview.plan,
+          existingSlides: snapshotScenarioScriptSlides(engineValue.project.slides),
+        },
+      )
+      if (!result.ok) {
+        setScriptApplyError(result.error ?? 'Apply failed.')
+        useNotificationStore.getState().notify(result.error ?? 'Apply failed.')
+        return
+      }
+      setScriptPreview(null)
+      const done = `Applied script draft: ${result.targetSlideIds.length} slide(s) — one undo step.`
+      setScriptApplyDone(done)
+      useNotificationStore.getState().notify(done)
+    } finally {
+      setScriptApplying(false)
+    }
+  }
+
   return (
     <div
       data-testid="ai-scenario-modal"
@@ -698,6 +778,18 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                 ? 'Copy failed'
                 : 'Copy MD'}
           </button>
+          <button
+            data-testid="ai-scenario-generate-script"
+            disabled={!hasAcceptedSnapshot}
+            title={
+              hasAcceptedSnapshot
+                ? 'Draft slides, prompter parts, and board scripts from the accepted snapshot'
+                : 'Accept a version in History first — Generate Script reads the accepted snapshot only'
+            }
+            onClick={handleGenerateScript}
+          >
+            Generate Script
+          </button>
           <button data-testid="ai-scenario-modal-close" onClick={handleClose}>
             Close
           </button>
@@ -716,6 +808,34 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
           <div data-testid="ai-scenario-stale-hint">
             Stale — doc edited after generation, View shows the old render.
           </div>
+        )}
+        {!hasAcceptedSnapshot && (
+          <div data-testid="ai-scenario-script-accept-hint">
+            No accepted scenario snapshot — accept a version in History first. Generate Script reads
+            the accepted snapshot only.
+            <button
+              data-testid="ai-scenario-script-open-history"
+              onClick={() => store.setScenarioTab('history')}
+            >
+              Open History
+            </button>
+          </div>
+        )}
+        {scriptApplyDone && (
+          <div data-testid="ai-scenario-script-apply-done">{scriptApplyDone}</div>
+        )}
+        {scriptPreview && (
+          <AiScenarioScriptPanel
+            preview={scriptPreview}
+            currentAcceptedVersionId={acceptedVersionId}
+            applying={scriptApplying}
+            applyError={scriptApplyError}
+            onApply={handleApplyScript}
+            onClose={() => {
+              setScriptPreview(null)
+              setScriptApplyError(null)
+            }}
+          />
         )}
 
         <div data-testid="ai-scenario-modal-tabs">

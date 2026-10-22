@@ -39,7 +39,7 @@ export class SlideManager {
     this.#scenes = scenes
   }
 
-  create(name?: string): Slide {
+  create(name?: string, id?: string): Slide {
     const project = this.#projects.current
     if (!project) {
       throw new Error('No project exists in memory')
@@ -47,9 +47,15 @@ export class SlideManager {
     if (name !== undefined) {
       requireNonEmpty(name, 'Slide name')
     }
+    if (id !== undefined) {
+      requireNonEmpty(id, 'Slide id')
+      if (project.slides.some((slide) => slide.id === id)) {
+        throw new Error(`Slide id already exists: ${id}`)
+      }
+    }
     const scene = this.#scenes.createScene('Root')
     const slide = new SlideModel(
-      newId('slide'),
+      id ?? newId('slide'),
       name ?? nextSlideName(project.slides),
       DEFAULT_SLIDE_DURATION,
       scene,

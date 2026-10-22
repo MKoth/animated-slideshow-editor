@@ -3167,7 +3167,11 @@ export function applyRedo(
     }
     case 'CreateSlide': {
       const name = params.name as string | undefined
-      engine.createSlide(name)
+      const slideId = params.slideId as string | undefined
+      // Pre-generated ids (issue #471) redo with the same id so later
+      // children of the same Transaction still address the recreated slide.
+      // Legacy entries predate slideId and keep the generated-id behavior.
+      engine.createSlide(name, slideId)
       return
     }
     case 'DeleteSlide': {

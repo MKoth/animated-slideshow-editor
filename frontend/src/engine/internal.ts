@@ -326,8 +326,8 @@ export class Engine {
     return this.#projects.create(input)
   }
 
-  createSlide(name?: string): Slide {
-    const slide = this.#slides.create(name)
+  createSlide(name?: string, id?: string): Slide {
+    const slide = this.#slides.create(name, id)
     this.setActiveSlide(slide.id)
     return slide
   }
