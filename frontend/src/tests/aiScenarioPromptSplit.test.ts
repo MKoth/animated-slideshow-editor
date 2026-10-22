@@ -4,6 +4,7 @@ import {
   resolveForeignWords,
   splitNarratorToPromptParts,
 } from '../ai/scenarioPromptSplit'
+import { parseAnimationScript } from '../engine/animationScriptParser'
 import { planScenarioDraft } from '../ai/scenarioPlanner'
 
 const SPLIT = ['.', ',', ';', ':', '!', '?', '\n', '—']
@@ -45,6 +46,15 @@ describe('scenarioPromptSplit', () => {
     expect(parts).toEqual(['The tree', 'de roble', 'stands tall'])
   })
 
+  it('drops punctuation-only gaps orphaned between foreign phrases', () => {
+    const parts = splitNarratorToPromptParts(
+      'Call it árbol de roble, duradero y sólido today.',
+      SPLIT,
+      ['árbol de roble', 'duradero y sólido'],
+    )
+    expect(parts).toEqual(['Call it', 'árbol de roble', 'duradero y sólido', 'today'])
+    expect(parts.some((part) => !/[A-Za-z0-9\u00c0-\u024f]/u.test(part))).toBe(false)
+  })
   it('combines HTML extraction with the stored fallback list', () => {
     const html = '<strong class="foreign">ser</strong>'
     expect(resolveForeignWords(html, ['estar'])).toEqual(['ser', 'estar'])
@@ -75,16 +85,16 @@ describe('planner prompt-block splitting', () => {
     const plan = planScenarioDraft(doc, 0.1, [], { splitChars: SPLIT, html })
     const slide = plan.slides[0]
     expect(slide).toBeDefined()
-    // 4 sentences, first split further by 2 foreign words → 7 blocks.
-    expect(slide?.prompterParts).toHaveLength(7)
+    // Sentence-level only: commas never split generated blocks. Sentence 1
+    // splits further by 2 foreign words → 4 blocks; sentence 2 keeps its
+    // commas → 1 block.
+    expect(slide?.prompterParts).toHaveLength(5)
     expect(slide?.prompterParts.map((p) => p.text)).toEqual([
       'In this lesson you will understand when to use',
       'ser',
       'and when to use',
       'estar',
-      'Both mean to be',
-      'but you use them for very different reasons',
-      'and I will give you a simple way to choose correctly every time you speak about yourself and others',
+      'Both mean to be, but you use them for very different reasons, and I will give you a simple way to choose correctly every time you speak about yourself and others',
     ])
     for (const [index, part] of (slide?.prompterParts ?? []).entries()) {
       expect(part.promptBlockId).toBe(`prompt-1-${index + 1}`)
@@ -99,5 +109,62 @@ describe('planner prompt-block splitting', () => {
     for (const part of slide?.prompterParts ?? []) {
       expect(slide?.source).toContain(`mark("${part.markName}")`)
     }
+  })
+
+  it('never splits generated blocks on commas', () => {
+    const doc = [
+      '# Lesson',
+      '',
+      '## Step 1 — Commas',
+      '',
+      '**Narrator:** You use ser for identity, origin, material, and lasting traits.',
+      '',
+      '[reveal: text1]',
+      '',
+      'Chalk.',
+      '',
+    ].join('\n')
+    const plan = planScenarioDraft(doc, 0.1, [], { splitChars: SPLIT })
+    const slide = plan.slides[0]
+    expect(slide?.prompterParts).toHaveLength(1)
+    expect(slide?.prompterParts[0]?.text).toBe(
+      'You use ser for identity, origin, material, and lasting traits',
+    )
+  })
+
+  it('gives each chalk paragraph its own single-line board node', () => {
+    const doc = [
+      '# Lesson',
+      '',
+      '## Step 1 — Paragraphs',
+      '',
+      '**Narrator:** Hello world.',
+      '',
+      '[reveal: text1]',
+      '',
+      'Ser = lasting identity',
+      '',
+      'Oak tree - lasting and solid',
+      '',
+      'Árbol de roble - duradero y sólido',
+      '',
+      '[wipe]',
+      '',
+    ].join('\n')
+    const plan = planScenarioDraft(doc, 0.1, [], {})
+    const slide = plan.slides[0]
+    expect(slide).toBeDefined()
+    // First paragraph keeps the reveal id, surplus paragraphs auto-reveal.
+    expect(slide?.source).toContain('create text "text1"')
+    expect(slide?.source).toContain('create text "text1-2"')
+    expect(slide?.source).toContain('create text "text1-3"')
+    // No quoted string spans a raw newline — the grammar ends strings there.
+    for (const line of (slide?.source ?? '').split('\n')) {
+      if (line.includes('content: "')) {
+        expect(line.trim().endsWith('}')).toBe(true)
+      }
+    }
+    const parsed = parseAnimationScript(slide?.source ?? '')
+    expect(parsed.diagnostics).toEqual([])
   })
 })

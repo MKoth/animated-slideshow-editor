@@ -10,8 +10,9 @@
  * name mirrors the step heading; insert/delete/rename middles, intro/outro
  * left to the caller.
  *
- * Prompter: narrator split like manual paste — sentence chunks on
- * splitChars plus isolated foreign words/phrases as their own blocks
+ * Prompter: narrator split like manual paste but sentence-level — `.`, `!`,
+ * `?`, line breaks, em dash (commas/semicolons/colons never split generated
+ * blocks) — plus isolated foreign words/phrases as their own blocks
  * (foreign list from chalk HTML `<strong class="foreign">` with stored
  * fallback); duration = sum of part lengths × secondsPerCharacter.
  *
@@ -232,7 +233,19 @@ function uniqueAlias(base: string, taken: Set<string>, fallback: string): string
 }
 
 function escapeQuoted(text: string): string {
-  return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  // Single-line string literals only: the script tokenizer ends a string at
+  // a raw newline (unterminated-string diagnostic), and `\n` escapes compile
+  // to a literal `n`, so newlines must never reach the quotes — callers pass
+  // one paragraph per node and this is the backstop.
+  return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r\n?/g, ' ').replace(/\n/g, ' ')
+}
+
+/** Chalk paragraphs (blank-line separated) as single-line board contents. */
+function splitChalkParagraphs(chalkText: string): string[] {
+  return chalkText
+    .split(/\n{2,}/)
+    .map((part) => part.replace(/\s+/g, ' ').trim())
+    .filter((part) => part !== '')
 }
 
 function detectUnknownVerbs(markdown: string): PlannerDiagnostic[] {
@@ -307,7 +320,14 @@ function planFromParsed(
   }
   for (const found of detectUnknownVerbs(rawMarkdown)) diagnostics.push(found)
 
-  const splitChars = options.splitChars ?? [...DEFAULT_PROMPTER_SPLIT_CHARS]
+  const configuredSplitChars = options.splitChars ?? [...DEFAULT_PROMPTER_SPLIT_CHARS]
+  // Prompt blocks are sentence-level (`.`, `!`, `?`, line breaks, em dash):
+  // commas/semicolons/colons fragment narration into unspeakable shards
+  // (`like identity`, `origin`) and starve the board into 10s crawls, so they
+  // stay manual-paste-only and never split generated blocks.
+  const SENTENCE_SPLIT = new Set(['.', '!', '?', '\n', '—'])
+  let splitChars = configuredSplitChars.filter((c) => SENTENCE_SPLIT.has(c))
+  if (splitChars.length === 0) splitChars = ['.', '!', '?', '\n']
   const foreignWords = resolveForeignWords(options.html, options.foreignWords)
 
   const slides: PlannerSlide[] = parsed.steps.map((step, order) => {
@@ -581,31 +601,62 @@ function buildBoardSource(input: {
 
   const chalkText = step.text?.trim() ?? ''
   const textIds = [...textRevealIds, ...surplusTableIds]
+  // One board node per chalk paragraph: quoted strings are single-line in
+  // the script grammar, so a multi-paragraph `step.text` (chalk line plus
+  // orphan `> Label:` paragraphs) must never share one `content: "..."`.
+  // The first paragraph keeps the scenario reveal id; surplus paragraphs
+  // auto-reveal like surplus table chunks.
+  function pushTextNode(name: string, content: string): void {
+    const key = normalizeAssetKey(name)
+    const mapKey = key === '' ? name : key
+    if (mapKey === '' || boardItems.has(mapKey)) return
+    const alias = uniqueAlias(mapKey, taken, `text${taken.size}`)
+    // Keep the scenario id verbatim as the quoted node name.
+    boardItems.set(mapKey, { alias, kind: 'revealed' })
+    creations.push(
+      `create text "${escapeQuoted(name)}" as ${alias} inside board { content: "${escapeQuoted(content)}", fontSize: 26, alignment: "center" }`,
+    )
+    effects.push({ kind: 'reveal', alias, name, content })
+  }
   if (textIds.length > 0) {
-    for (const id of textIds) {
-      const key = normalizeAssetKey(id)
-      const mapKey = key === '' ? id : key
-      if (mapKey === '' || boardItems.has(mapKey)) continue
-      const alias = uniqueAlias(mapKey, taken, `text${taken.size}`)
-      // Keep the scenario id verbatim as the quoted node name.
-      boardItems.set(mapKey, { alias, kind: 'revealed' })
-      const content = textIds.length === 1 && chalkText !== '' ? chalkText : id
-      creations.push(
-        `create text "${escapeQuoted(id)}" as ${alias} inside board { content: "${escapeQuoted(content)}", fontSize: 26, alignment: "center" }`,
-      )
-      effects.push({ kind: 'reveal', alias, name: id, content })
+    if (textIds.length === 1 && chalkText !== '') {
+      const paragraphs = splitChalkParagraphs(chalkText)
+      if (paragraphs.length <= 1) {
+        pushTextNode(textIds[0]!, paragraphs[0] ?? chalkText.replace(/\s+/g, ' ').trim())
+      } else {
+        pushTextNode(textIds[0]!, paragraphs[0]!)
+        paragraphs.slice(1).forEach((paragraph, index) => {
+          pushTextNode(`${textIds[0]}-${index + 2}`, paragraph)
+        })
+      }
+    } else {
+      for (const id of textIds) {
+        const key = normalizeAssetKey(id)
+        const mapKey = key === '' ? id : key
+        if (mapKey === '' || boardItems.has(mapKey)) continue
+        const alias = uniqueAlias(mapKey, taken, `text${taken.size}`)
+        // Keep the scenario id verbatim as the quoted node name.
+        boardItems.set(mapKey, { alias, kind: 'revealed' })
+        const content = id
+        creations.push(
+          `create text "${escapeQuoted(id)}" as ${alias} inside board { content: "${escapeQuoted(content)}", fontSize: 26, alignment: "center" }`,
+        )
+        effects.push({ kind: 'reveal', alias, name: id, content })
+      }
     }
   } else if (chalkText !== '' && tablePlans.length === 0) {
     // Chalk copy without an explicit reveal marker still appears once.
     // (When tables already cover the step, bare chalk stays in the prompter.)
     const name = `text${input.position}`
-    const alias = uniqueAlias(name, taken, name)
-    if (!boardItems.has(name)) {
-      boardItems.set(name, { alias, kind: 'revealed' })
-      creations.push(
-        `create text "${escapeQuoted(name)}" as ${alias} inside board { content: "${escapeQuoted(chalkText)}", fontSize: 26, alignment: "center" }`,
-      )
-      effects.push({ kind: 'reveal', alias, name, content: chalkText })
+    const paragraphs = splitChalkParagraphs(chalkText)
+    if (paragraphs.length <= 1) {
+      if (!boardItems.has(name)) {
+        pushTextNode(name, paragraphs[0] ?? chalkText.replace(/\s+/g, ' ').trim())
+      }
+    } else {
+      paragraphs.forEach((paragraph, index) => {
+        pushTextNode(index === 0 ? name : `${name}-${index + 1}`, paragraph)
+      })
     }
   }
 

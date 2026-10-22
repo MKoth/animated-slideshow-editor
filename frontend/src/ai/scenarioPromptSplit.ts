@@ -65,14 +65,18 @@ function combineForeignLists(primary: readonly string[], fallback: readonly stri
  * 2. each chunk further split to isolate foreign spans as standalone blocks.
  *
  * Delimiters are stripped (like manual import) and whitespace-only pieces
- * are dropped. Falls back to the trimmed verbatim narrator when splitting
- * yields nothing so the slide never ends up with zero parts.
+ * are dropped. Gap/tail fragments left between foreign spans must carry at
+ * least one letter or digit — otherwise a comma orphaned by two adjacent
+ * foreign phrases (`,`) would become its own unspeakable block.
+ * Falls back to the trimmed verbatim narrator when splitting yields nothing
+ * so the slide never ends up with zero parts.
  */
 export function splitNarratorToPromptParts(
   narrator: string,
   splitChars: readonly string[],
   foreignWords: readonly string[],
 ): string[] {
+  const hasSpeech = (text: string): boolean => /[\p{L}\p{N}]/u.test(text)
   const source = typeof narrator === 'string' ? narrator : ''
   if (source.trim() === '') return []
   const sentences = splitImportText(source, splitChars)
@@ -89,13 +93,13 @@ export function splitNarratorToPromptParts(
     for (const span of spans) {
       if (span.start < cursor) continue
       const gap = sentence.slice(cursor, span.start).replace(/\s+/g, ' ').trim()
-      if (gap !== '') out.push(gap)
+      if (gap !== '' && hasSpeech(gap)) out.push(gap)
       const foreign = sentence.slice(span.start, span.end).replace(/\s+/g, ' ').trim()
       if (foreign !== '') out.push(foreign)
       cursor = span.end
     }
     const tail = sentence.slice(cursor).replace(/\s+/g, ' ').trim()
-    if (tail !== '') out.push(tail)
+    if (tail !== '' && hasSpeech(tail)) out.push(tail)
   }
   if (out.length === 0) {
     const fallback = source.replace(/\s+/g, ' ').trim()
