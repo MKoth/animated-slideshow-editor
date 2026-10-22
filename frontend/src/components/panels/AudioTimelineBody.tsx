@@ -3019,7 +3019,7 @@ export function AudioTimelineBody({
             <h3 style={{ margin: '0 0 8px', fontSize: 13 }}>Import prompter</h3>
             <p style={{ fontSize: 11, color: '#888', margin: '0 0 8px' }}>
               Paste narration — auto-splits on <code>[.,;:!?{'\\n'}—]</code> (consecutive collapsed,
-              no empty parts). Duration = chars × <code>secondsPerCharacter 0.2</code>. Gap-free
+              no empty parts). Duration = chars × <code>secondsPerCharacter 0.1</code>. Gap-free
               reflow (`startTime = prefix sum durations`) — linked AudioClips/Segments move with
               their parts as one undo entry.
             </p>

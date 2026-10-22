@@ -189,12 +189,12 @@ def _make_accepted_reconciliation(
 
 
 def test_estimate_is_char_count_times_seconds_per_character() -> None:
-    assert DEFAULT_SECONDS_PER_CHARACTER == 0.2
+    assert DEFAULT_SECONDS_PER_CHARACTER == 0.1
     assert (
-        estimate_part_duration("Ser is for who you are.", 0.2)
-        == len("Ser is for who you are.") * 0.2
+        estimate_part_duration("Ser is for who you are.", 0.1)
+        == len("Ser is for who you are.") * 0.1
     )
-    assert estimate_part_duration("", 0.2) == 0.0
+    assert estimate_part_duration("", 0.1) == 0.0
     assert estimate_part_duration("Hi", 0.5) == 1.0
 
 
@@ -210,13 +210,13 @@ def test_verbatim_fill_middle_only_never_rederived() -> None:
         {"id": "s3", "order": 2, "partTag": "middle", "spokenLine": "  Estar: where, when?  "},
         {"id": "s4", "order": 3, "partTag": "outro", "spokenLine": "Goodbye!"},
     ]
-    parts = verbatim_parts_from_steps(steps, 0.2)
+    parts = verbatim_parts_from_steps(steps, 0.1)
     # Intro/outro pregenerated references are left alone — middle only.
     assert [p["stepId"] for p in parts] == ["s2", "s3"]
     # Verbatim: punctuation, casing, and inner spacing preserved exactly.
     assert parts[0]["spokenLine"] == "Ser is, for who you are; listen."
     assert parts[1]["spokenLine"] == "  Estar: where, when?  "
-    assert parts[0]["estimatedDuration"] == len("Ser is, for who you are; listen.") * 0.2
+    assert parts[0]["estimatedDuration"] == len("Ser is, for who you are; listen.") * 0.1
     assert all(p["status"] == "pending" for p in parts)
     # Gap-free pre-TTS layout from estimates.
     assert parts[0]["timelineStart"] == 0.0
@@ -226,10 +226,32 @@ def test_verbatim_fill_middle_only_never_rederived() -> None:
     )
 
 
+def test_five_step_reference_lesson_uses_default_and_stays_gap_free() -> None:
+    steps = [
+        {"id": "r1", "order": 0, "partTag": "middle", "spokenLine": "Ser is for who you are."},
+        {"id": "r2", "order": 1, "partTag": "middle", "spokenLine": "Estar is for where you are."},
+        {"id": "r3", "order": 2, "partTag": "middle", "spokenLine": "Ser and estar change meaning."},
+        {"id": "r4", "order": 3, "partTag": "middle", "spokenLine": "Tables show every person."},
+        {"id": "r5", "order": 4, "partTag": "middle", "spokenLine": "Goodbye friends, see you next time!"},
+    ]
+    parts = verbatim_parts_from_steps(steps, DEFAULT_SECONDS_PER_CHARACTER)
+    assert len(parts) == 5
+    for part in parts:
+        assert part["estimatedDuration"] == pytest.approx(
+            len(part["spokenLine"]) * 0.1
+        )
+    assert parts[0]["timelineStart"] == 0.0
+    for index in range(1, len(parts)):
+        assert parts[index]["timelineStart"] == pytest.approx(parts[index - 1]["timelineEnd"])
+    assert slide_duration_for_parts(parts) == pytest.approx(
+        sum(p["estimatedDuration"] for p in parts)
+    )
+
+
 def test_verbatim_fill_rejects_empty_middle() -> None:
     with pytest.raises(ValueError, match="no middle steps"):
         verbatim_parts_from_steps(
-            [{"id": "s1", "order": 0, "partTag": "intro", "spokenLine": "Hi"}], 0.2
+            [{"id": "s1", "order": 0, "partTag": "intro", "spokenLine": "Hi"}], 0.1
         )
 
 
@@ -239,7 +261,7 @@ def test_adopt_tts_duration_shifts_downstream_gap_free_never_stretches() -> None
             {"id": "s1", "order": 0, "partTag": "middle", "spokenLine": "AAA"},
             {"id": "s2", "order": 1, "partTag": "middle", "spokenLine": "BBBBBB"},
         ],
-        0.2,
+        0.1,
     )
     adopted = adopt_tts_durations(parts, {"s1": 2.5, "s2": 0.4})
     # Post-TTS timing always adopts the audio duration — even when shorter.
@@ -261,7 +283,7 @@ def test_wav_duration_probes_header() -> None:
 
 def test_fill_commands_carry_verbatim_text_and_estimates() -> None:
     parts = verbatim_parts_from_steps(
-        [{"id": "s1", "order": 0, "partTag": "middle", "spokenLine": "Ser is."}], 0.2
+        [{"id": "s1", "order": 0, "partTag": "middle", "spokenLine": "Ser is."}], 0.1
     )
     commands = build_fill_commands(parts, "slide-1")
     assert commands == [
@@ -269,7 +291,7 @@ def test_fill_commands_carry_verbatim_text_and_estimates() -> None:
             "type": "CreatePrompterPart",
             "slideId": "slide-1",
             "text": "Ser is.",
-            "duration": len("Ser is.") * 0.2,
+            "duration": len("Ser is.") * 0.1,
         }
     ]
     ok, errors = validate_proposal_commands(commands)
@@ -282,7 +304,7 @@ def test_commit_commands_reference_asset_ids_never_inline_base64() -> None:
             {"id": "s1", "order": 0, "partTag": "middle", "spokenLine": "Ser is."},
             {"id": "s2", "order": 1, "partTag": "middle", "spokenLine": "Estar now."},
         ],
-        0.2,
+        0.1,
     )
     adopted = adopt_tts_durations(parts, {"s1": 1.5, "s2": 2.0})
     for part, asset in zip(adopted, ["asset-1", "asset-2"], strict=True):
@@ -316,7 +338,7 @@ def test_commit_commands_reference_asset_ids_never_inline_base64() -> None:
 
 def test_commit_commands_refuse_unembedded_parts() -> None:
     parts = verbatim_parts_from_steps(
-        [{"id": "s1", "order": 0, "partTag": "middle", "spokenLine": "Ser is."}], 0.2
+        [{"id": "s1", "order": 0, "partTag": "middle", "spokenLine": "Ser is."}], 0.1
     )
     with pytest.raises(ValueError, match="embed"):
         build_commit_commands(parts, "slide-1", {"s1": "part-1"})
@@ -324,7 +346,7 @@ def test_commit_commands_refuse_unembedded_parts() -> None:
 
 def test_commit_commands_refuse_non_ready_parts() -> None:
     parts = verbatim_parts_from_steps(
-        [{"id": "s1", "order": 0, "partTag": "middle", "spokenLine": "Ser is."}], 0.2
+        [{"id": "s1", "order": 0, "partTag": "middle", "spokenLine": "Ser is."}], 0.1
     )
     staged = [dict(p, assetId="asset-1", audioDuration=1.5) for p in parts]
     with pytest.raises(ValueError, match="retry it|regenerate"):
@@ -337,7 +359,7 @@ def test_accept_blockers_require_every_part_ready() -> None:
             {"id": "s1", "order": 0, "partTag": "middle", "spokenLine": "AAA"},
             {"id": "s2", "order": 1, "partTag": "middle", "spokenLine": "BBB"},
         ],
-        0.2,
+        0.1,
     )
     blockers = narration_accept_blockers(parts)
     assert len(blockers) == 2
@@ -410,7 +432,7 @@ def test_narration_create_fills_verbatim_with_estimates(
     assert "Listen to this chime while you read." in texts
     assert "Hello friends" not in " ".join(texts)
     for part in data["parts"]:
-        assert part["estimatedDuration"] == pytest.approx(len(part["spokenLine"]) * 0.2)
+        assert part["estimatedDuration"] == pytest.approx(len(part["spokenLine"]) * 0.1)
         assert part["status"] == "pending"
     assert data["slideDuration"] == pytest.approx(
         sum(p["estimatedDuration"] for p in data["parts"])

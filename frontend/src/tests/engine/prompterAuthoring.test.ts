@@ -11,6 +11,7 @@ import { UpdatePrompterPartWithShiftCommand } from '../../engine/commands/update
 import { UpdatePrompterPartCommand } from '../../engine/commands/updatePrompterPartCommand'
 import {
   DEFAULT_PROMPTER_SECONDS_PER_CHARACTER,
+  getPrompterSecondsPerCharacter,
   splitImportText,
   reflowPrompter,
 } from '../../engine/prompter'
@@ -44,8 +45,16 @@ describe('Prompter Authoring 15.02', () => {
     slideId = slide.id
   })
 
+  it('global secondsPerCharacter default is 0.1 unless the project overrides it', () => {
+    expect(DEFAULT_PROMPTER_SECONDS_PER_CHARACTER).toBe(0.1)
+    expect(getPrompterSecondsPerCharacter({})).toBe(0.1)
+    expect(getPrompterSecondsPerCharacter(undefined)).toBe(0.1)
+    expect(getPrompterSecondsPerCharacter({ prompter: {} })).toBe(0.1)
+    expect(getPrompterSecondsPerCharacter({ prompter: { secondsPerCharacter: 0.5 } })).toBe(0.5)
+  })
+
   it('import→gap-free with charCount*SPC and splitChars consecutive collapsed no empty', () => {
-    // default SPC =0.2
+    // default SPC =0.1
     const raw = 'Hello.  World,;  test\nNext—part..  End'
     const result = dispatchOk(dispatcher, new ImportPrompterCommand({ slideId, rawText: raw }))
     expect(result.ok).toBe(true)
@@ -266,18 +275,18 @@ describe('Prompter Authoring 15.02', () => {
     engine.createAudioClip(slideId, {
       assetId: 'a1',
       trackId: 'voice',
-      timelineStart: 2.5,
+      timelineStart: 1.25,
       sourceStart: 0,
       sourceEnd: 1,
     })
     engine.createAudioClip(slideId, {
       assetId: 'a2',
       trackId: 'sfx',
-      timelineStart: 0.5,
+      timelineStart: 0.25,
       sourceStart: 0,
       sourceEnd: 1,
     })
-    const clipBefore = engine.getSlide(slideId).audio.clips.find((c) => c.timelineStart === 2.5)!
+    const clipBefore = engine.getSlide(slideId).audio.clips.find((c) => c.timelineStart === 1.25)!
     // Update first part duration with shiftDownstream true
     const oldDur = parts[0].duration
     const newDur = oldDur + 1.0
@@ -294,11 +303,11 @@ describe('Prompter Authoring 15.02', () => {
     expect(Math.abs(parts[0].duration - newDur)).toBeLessThan(1e-6)
     expect(Math.abs(parts[1].startTime - (secondStartBefore + 1.0))).toBeLessThan(1e-6)
     expect(Math.abs(parts[2].startTime - (thirdStartBefore + 1.0))).toBeLessThan(1e-6)
-    // clip at 2.5 should be shifted because its timelineStart > oldEnd (oldEnd = oldDur)
+    // clip at 1.25 should be shifted because its timelineStart > oldEnd (oldEnd = oldDur)
     const clipAfter = engine.getSlide(slideId).audio.clips.find((c) => c.id === clipBefore.id)!
-    expect(Math.abs(clipAfter.timelineStart - 3.5)).toBeLessThan(1e-6)
-    // clip at 0.5 should NOT be shifted
-    const clipEarly = engine.getSlide(slideId).audio.clips.find((c) => c.timelineStart === 0.5)
+    expect(Math.abs(clipAfter.timelineStart - 2.25)).toBeLessThan(1e-6)
+    // clip at 0.25 should NOT be shifted
+    const clipEarly = engine.getSlide(slideId).audio.clips.find((c) => c.timelineStart === 0.25)
     expect(clipEarly).toBeDefined()
     // Without shift, free placement: downstream keeps old start (gap may appear, not reflowed)
     const secondId = parts[1].id

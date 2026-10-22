@@ -294,7 +294,7 @@ class AiNarrationRow(Base):
     default_voice_prompt_id: Mapped[str | None] = mapped_column(
         String(36), nullable=True, default=None
     )
-    seconds_per_character: Mapped[float] = mapped_column(nullable=False, default=0.2)
+    seconds_per_character: Mapped[float] = mapped_column(nullable=False, default=0.1)
     parts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

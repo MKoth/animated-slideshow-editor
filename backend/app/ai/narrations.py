@@ -23,7 +23,7 @@ from typing import Any
 # Same default as frontend DEFAULT_PROMPTER_SECONDS_PER_CHARACTER
 # (frontend/src/engine/prompter.ts). The project settings value wins when the
 # caller passes it explicitly at creation time.
-DEFAULT_SECONDS_PER_CHARACTER = 0.2
+DEFAULT_SECONDS_PER_CHARACTER = 0.1
 
 _PART_STATUSES: tuple[str, ...] = ("pending", "ready", "failed")
 

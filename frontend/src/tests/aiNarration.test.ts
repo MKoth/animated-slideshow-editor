@@ -27,7 +27,7 @@ function setupWithParts() {
   const slide = system.dispatcher.dispatch(new CreateSlideCommand({ name: 'Middle' }))
   if (!slide.ok) throw new Error('no slide')
   const slideId = (slide.inverse as { slideId: string }).slideId
-  const parts = verbatimPartsFromSteps([...MIDDLE_STEPS.map((s) => ({ ...s }))], 0.2)
+  const parts = verbatimPartsFromSteps([...MIDDLE_STEPS.map((s) => ({ ...s }))], 0.1)
   const partIds: string[] = []
   for (const part of parts) {
     const created = system.dispatcher.dispatch(
@@ -62,7 +62,7 @@ describe('Stage C narration helpers (verbatim fill + estimate/adopt timing)', ()
         { id: 'm', order: 1, partTag: 'middle', spokenLine: 'Ser is, for who you are; listen.' },
         { id: 'o', order: 2, partTag: 'outro', spokenLine: 'Bye!' },
       ],
-      0.2,
+      0.1,
     )
     expect(parts.map((p) => p.stepId)).toEqual(['m'])
     expect(parts[0].spokenLine).toBe('Ser is, for who you are; listen.')
@@ -70,8 +70,8 @@ describe('Stage C narration helpers (verbatim fill + estimate/adopt timing)', ()
 
   it('estimates by char count with slide duration as the sum of parts', () => {
     expect(estimatePartDuration('Hi', 0.5)).toBe(1.0)
-    const parts = verbatimPartsFromSteps([...MIDDLE_STEPS.map((s) => ({ ...s }))], 0.2)
-    expect(parts[0].estimatedDuration).toBe('Ser is for who you are.'.length * 0.2)
+    const parts = verbatimPartsFromSteps([...MIDDLE_STEPS.map((s) => ({ ...s }))], 0.1)
+    expect(parts[0].estimatedDuration).toBe('Ser is for who you are.'.length * 0.1)
     expect(slideDurationForParts(parts)).toBeCloseTo(
       parts[0].estimatedDuration + parts[1].estimatedDuration,
     )
@@ -79,8 +79,30 @@ describe('Stage C narration helpers (verbatim fill + estimate/adopt timing)', ()
     expect(parts[1].timelineStart).toBeCloseTo(parts[0].timelineEnd)
   })
 
+  it('sizes the five-step reference lesson at the 0.1 default, gap-free', () => {
+    const five = [
+      { id: 'r1', order: 0, partTag: 'middle', spokenLine: 'Ser is for who you are.' },
+      { id: 'r2', order: 1, partTag: 'middle', spokenLine: 'Estar is for where you are.' },
+      { id: 'r3', order: 2, partTag: 'middle', spokenLine: 'Ser and estar change meaning.' },
+      { id: 'r4', order: 3, partTag: 'middle', spokenLine: 'Tables show every person.' },
+      { id: 'r5', order: 4, partTag: 'middle', spokenLine: 'Goodbye friends, see you next time!' },
+    ]
+    const parts = verbatimPartsFromSteps(five, 0.1)
+    expect(parts).toHaveLength(5)
+    for (const part of parts) {
+      expect(part.estimatedDuration).toBe(part.spokenLine.length * 0.1)
+    }
+    expect(parts[0].timelineStart).toBe(0)
+    for (let i = 1; i < parts.length; i++) {
+      expect(parts[i].timelineStart).toBeCloseTo(parts[i - 1].timelineEnd)
+    }
+    expect(slideDurationForParts(parts)).toBeCloseTo(
+      parts.reduce((sum, p) => sum + p.estimatedDuration, 0),
+    )
+  })
+
   it('adopts TTS durations and shifts downstream gap-free, never stretched', () => {
-    const parts = verbatimPartsFromSteps([...MIDDLE_STEPS.map((s) => ({ ...s }))], 0.2)
+    const parts = verbatimPartsFromSteps([...MIDDLE_STEPS.map((s) => ({ ...s }))], 0.1)
     const adopted = layoutParts(
       parts.map((p, i) => ({ ...p, audioDuration: i === 0 ? 2.5 : 0.4, status: 'ready' as const })),
     )
@@ -91,7 +113,7 @@ describe('Stage C narration helpers (verbatim fill + estimate/adopt timing)', ()
   })
 
   it('blocks the accept gate until every part is ready with an asset id', () => {
-    const parts = verbatimPartsFromSteps([...MIDDLE_STEPS.map((s) => ({ ...s }))], 0.2)
+    const parts = verbatimPartsFromSteps([...MIDDLE_STEPS.map((s) => ({ ...s }))], 0.1)
     expect(narrationAcceptBlockers(parts).length).toBe(2)
     const failed = parts.map((p) => ({ ...p, status: 'failed' as const, error: 'boom' }))
     expect(narrationAcceptBlockers(failed).some((b) => /retry/i.test(b))).toBe(true)
@@ -100,7 +122,7 @@ describe('Stage C narration helpers (verbatim fill + estimate/adopt timing)', ()
   })
 
   it('builds fill + commit proposals with asset ids, never inline base64', () => {
-    const parts = verbatimPartsFromSteps([...MIDDLE_STEPS.map((s) => ({ ...s }))], 0.2)
+    const parts = verbatimPartsFromSteps([...MIDDLE_STEPS.map((s) => ({ ...s }))], 0.1)
     const fill = buildFillCommands(parts, 'slide-1')
     expect(validateProposalSchema(fill).ok).toBe(true)
     expect(fill[0]).toMatchObject({ type: 'CreatePrompterPart', text: 'Ser is for who you are.' })
@@ -127,7 +149,7 @@ describe('Stage C narration helpers (verbatim fill + estimate/adopt timing)', ()
   })
 
   it('matches live parts by verbatim text for the commit proposal', () => {
-    const parts = verbatimPartsFromSteps([...MIDDLE_STEPS.map((s) => ({ ...s }))], 0.2)
+    const parts = verbatimPartsFromSteps([...MIDDLE_STEPS.map((s) => ({ ...s }))], 0.1)
     const { matched, unmatchedStepIds } = matchPartsByVerbatimText(
       [
         { id: 'pp-1', text: 'Ser is for who you are.' },
