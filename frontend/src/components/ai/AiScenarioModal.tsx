@@ -623,6 +623,15 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
       snapshotScenarioScriptSlides(engineValue.project.slides),
     )
     setScriptPreview({ acceptedVersionId: acceptedVersionId!, plan })
+    store.setScenarioTab('script')
+  }
+
+  const closeScriptPreview = () => {
+    setScriptPreview(null)
+    setScriptApplyError(null)
+    if (useAiStore.getState().scenarioTab === 'script') {
+      store.setScenarioTab('doc')
+    }
   }
 
   const handleApplyScript = () => {
@@ -657,6 +666,9 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
       const done = `Applied script draft: ${result.targetSlideIds.length} slide(s) — one undo step.`
       setScriptApplyDone(done)
       useNotificationStore.getState().notify(done)
+      if (useAiStore.getState().scenarioTab === 'script') {
+        store.setScenarioTab('doc')
+      }
     } finally {
       setScriptApplying(false)
     }
@@ -843,19 +855,6 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         {scriptApplyDone && (
           <div data-testid="ai-scenario-script-apply-done">{scriptApplyDone}</div>
         )}
-        {scriptPreview && (
-          <AiScenarioScriptPanel
-            preview={scriptPreview}
-            currentAcceptedVersionId={acceptedVersionId}
-            applying={scriptApplying}
-            applyError={scriptApplyError}
-            onApply={handleApplyScript}
-            onClose={() => {
-              setScriptPreview(null)
-              setScriptApplyError(null)
-            }}
-          />
-        )}
 
         <div data-testid="ai-scenario-modal-tabs">
           <button
@@ -879,10 +878,40 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
           >
             Preview
           </button>
+          <button
+            data-testid="ai-scenario-modal-tab-script"
+            disabled={scenarioTab === 'script' || !scriptPreview}
+            title={scriptPreview ? 'Review the generated script draft' : 'Generate Script first'}
+            onClick={() => {
+              if (scriptPreview) store.setScenarioTab('script')
+            }}
+          >
+            Script
+          </button>
         </div>
 
         {scenarioTab === 'history' ? (
           <AiScenarioHistory projectId={projectId} conversationId={conversationId} />
+        ) : scenarioTab === 'script' ? (
+          <div
+            data-testid="ai-scenario-modal-script-body"
+            style={{ marginTop: 8, maxHeight: '60vh', overflow: 'auto' }}
+          >
+            {scriptPreview ? (
+              <AiScenarioScriptPanel
+                preview={scriptPreview}
+                currentAcceptedVersionId={acceptedVersionId}
+                applying={scriptApplying}
+                applyError={scriptApplyError}
+                onApply={handleApplyScript}
+                onClose={closeScriptPreview}
+              />
+            ) : (
+              <div data-testid="ai-scenario-script-empty">
+                No script draft yet — click Generate Script.
+              </div>
+            )}
+          </div>
         ) : scenarioTab === 'preview' ? (
           <div data-testid="ai-scenario-modal-preview-body" style={{ marginTop: 8 }}>
             {htmlState === 'empty' ? (

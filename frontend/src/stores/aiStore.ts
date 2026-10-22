@@ -97,7 +97,7 @@ interface AiState {
   markdownAuditsByProject: Record<string, import('../api/aiApi').ScenarioMarkdownAudit[]>
   markdownBusy: boolean
   markdownError: { code: string; message: string } | null
-  scenarioTab: 'doc' | 'history' | 'preview'
+  scenarioTab: 'doc' | 'history' | 'preview' | 'script'
   scenarioModalOpen: boolean
   scenarioMissingOnly: boolean
   scenarioDocRevByProject: Record<string, number>
@@ -174,7 +174,7 @@ interface AiState {
   updateScenario: (id: string, patch: AiScenarioPatch) => Promise<void>
   acceptScenario: (id: string) => Promise<void>
   rejectScenario: (id: string) => Promise<void>
-  setScenarioTab: (tab: 'doc' | 'history' | 'preview') => void
+  setScenarioTab: (tab: 'doc' | 'history' | 'preview' | 'script') => void
   setScenarioModalOpen: (open: boolean) => void
   setScenarioMissingOnly: (missingOnly: boolean) => void
   loadMarkdownVersions: (projectId: string, conversationId?: string) => Promise<void>

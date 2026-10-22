@@ -36,8 +36,8 @@ export interface ScenarioSliceState {
   markdownAuditsByProject: Record<string, ScenarioMarkdownAudit[]>
   markdownBusy: boolean
   markdownError: { code: string; message: string } | null
-  /** Doc versus History versus Preview tab for the scenario surface. */
-  scenarioTab: 'doc' | 'history' | 'preview'
+  /** Doc versus History versus Preview versus Script tab for the scenario surface. */
+  scenarioTab: 'doc' | 'history' | 'preview' | 'script'
   /** Doc-first modal visibility (issue #463): entry button always present. */
   scenarioModalOpen: boolean
   /** Checklist missing-only filter (issue #463): one-click missing filter. */
@@ -70,7 +70,7 @@ export interface ScenarioSliceActions {
   updateScenario: (id: string, patch: AiScenarioPatch) => Promise<void>
   acceptScenario: (id: string) => Promise<void>
   rejectScenario: (id: string) => Promise<void>
-  setScenarioTab: (tab: 'doc' | 'history' | 'preview') => void
+  setScenarioTab: (tab: 'doc' | 'history' | 'preview' | 'script') => void
   loadMarkdownVersions: (projectId: string, conversationId?: string) => Promise<void>
   applyScenarioChat: (
     projectId: string,

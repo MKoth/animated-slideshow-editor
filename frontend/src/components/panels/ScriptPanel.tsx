@@ -17,6 +17,7 @@ import type {
 } from '../../engine/animationScriptCompiler'
 import { SetSlideAnimationScriptCommand } from '../../engine/commands'
 import { findScriptLibraryDrift } from '../../engine/scriptLibrary'
+import { highlightAnimationScript } from './AnimationScriptViewer'
 import { useClipLibraryStore } from '../../stores/clipLibraryStore'
 import { measuredNodeSize } from '../../pixi/renderer/nodeMeasurement'
 
@@ -366,6 +367,39 @@ export function ScriptPanel({
           }}
         />
       </div>
+      <details
+        data-testid="script-highlight"
+        open
+        style={{ borderTop: '1px solid var(--color-border)' }}
+      >
+        <summary
+          style={{
+            padding: '4px 8px',
+            fontSize: 11,
+            cursor: 'pointer',
+            color: 'var(--color-text-muted)',
+          }}
+        >
+          Highlighted preview (read-only)
+        </summary>
+        <pre
+          data-testid="script-highlight-source"
+          style={{
+            margin: 0,
+            padding: '8px',
+            overflow: 'auto',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            fontSize: 12,
+            lineHeight: '18px',
+            whiteSpace: 'pre',
+          }}
+        >
+          <code
+            className="anim-code"
+            dangerouslySetInnerHTML={{ __html: highlightAnimationScript(draft) }}
+          />
+        </pre>
+      </details>
       {visibleOutcome !== null && (
         <CompileOutcome
           kind={visibleOutcome.kind}

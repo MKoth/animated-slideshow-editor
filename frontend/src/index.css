@@ -1475,6 +1475,31 @@ button:disabled {
   color: #98c379;
 }
 
+.anim-code .anim-token.anim-keyword {
+  color: #c678dd;
+}
+
+.anim-code .anim-token.anim-function {
+  color: #61afef;
+}
+
+.anim-code .anim-token.anim-string {
+  color: #98c379;
+}
+
+.anim-code .anim-token.anim-number {
+  color: #d19a66;
+}
+
+.anim-code .anim-token.anim-property {
+  color: #e5c07b;
+}
+
+.anim-code .anim-token.anim-comment {
+  color: #7c8a9a;
+  font-style: italic;
+}
+
 .inspector-section__shader-source {
   margin-top: 10px;
   border-top: 1px solid var(--color-border);

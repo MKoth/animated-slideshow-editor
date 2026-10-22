@@ -159,6 +159,76 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
     expect(screen.getByTestId('ai-scenario-script-apply')).not.toBeDisabled()
   })
 
+  it('opens the Script tab on Generate and highlights board source; closing returns to Doc', async () => {
+    const { value } = setupEngine(TWO_STEP_DOC, true)
+    render(
+      <EngineContext.Provider value={value}>
+        <AiScenarioModal projectId="p-1" conversationId="c-1" />
+      </EngineContext.Provider>,
+    )
+    const user = userEvent.setup()
+    // Script tab idles disabled until a draft exists.
+    expect(await screen.findByTestId('ai-scenario-modal-tab-script')).toBeDisabled()
+    expect(screen.queryByTestId('ai-scenario-script-preview')).not.toBeInTheDocument()
+
+    await user.click(await screen.findByTestId('ai-scenario-generate-script'))
+    await screen.findByTestId('ai-scenario-script-preview')
+    expect(useAiStore.getState().scenarioTab).toBe('script')
+    expect(screen.getByTestId('ai-scenario-modal-tab-script')).toBeDisabled()
+    expect(await screen.findByTestId('ai-scenario-modal-script-body')).toBeInTheDocument()
+
+    // Board source renders highlighted tokens, not plain text.
+    const source = screen.getByTestId('ai-scenario-script-slide-source-1')
+    expect(source.innerHTML).toContain('anim-token')
+    expect(source.innerHTML).toContain('anim-keyword')
+    expect(source.innerHTML).toContain('anim-string')
+
+    await user.click(screen.getByTestId('ai-scenario-script-preview-close'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('ai-scenario-script-preview')).not.toBeInTheDocument()
+    })
+    expect(useAiStore.getState().scenarioTab).toBe('doc')
+    expect(screen.getByTestId('ai-scenario-modal-tab-script')).toBeDisabled()
+  })
+
+  it('highlights keywords, strings, numbers, properties, and comments', async () => {
+    const { highlightAnimationScript } = await import('../components/panels/AnimationScriptViewer')
+    const html = highlightAnimationScript('// comment\nscript "Hi" from 0\nreveal(a, over: 2)')
+    expect(html).toContain('anim-comment')
+    expect(html).toContain('anim-keyword')
+    expect(html).toContain('anim-string')
+    expect(html).toContain('anim-number')
+    expect(html).toContain('anim-function')
+    expect(html).toContain('anim-property')
+  })
+
+  it('colors each prompt block distinctly across prompter, title, and fractions', async () => {
+    const { promptBlockColor } = await import('../components/ai/AiScenarioScriptPanel')
+    expect(promptBlockColor('prompt-1')).not.toBe(promptBlockColor('prompt-2'))
+    const { value } = setupEngine(TWO_STEP_DOC, true)
+    render(
+      <EngineContext.Provider value={value}>
+        <AiScenarioModal projectId="p-1" conversationId="c-1" />
+      </EngineContext.Provider>,
+    )
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('ai-scenario-generate-script'))
+    await screen.findByTestId('ai-scenario-script-preview')
+
+    const chip1 = screen.getByTestId('ai-scenario-script-slide-block-1')
+    const chip2 = screen.getByTestId('ai-scenario-script-slide-block-2')
+    expect(chip1).toHaveAttribute('data-block', 'prompt-1')
+    expect(chip2).toHaveAttribute('data-block', 'prompt-2')
+    expect(chip1.style.background).not.toBe(chip2.style.background)
+
+    const prompter1 = screen.getByTestId('ai-scenario-script-slide-prompter-1')
+    expect(prompter1.style.borderLeft).toContain('solid')
+    expect(prompter1.style.borderLeft).toContain(chip1.style.background)
+    const fractions1 = screen.getByTestId('ai-scenario-script-slide-fractions-1')
+    const row = fractions1.querySelector('[data-block="prompt-1"]')
+    expect(row).not.toBeNull()
+  })
+
   it('refuses without any versions and asks to iterate first', async () => {
     const { value } = setupEngine('', false)
     render(

@@ -181,6 +181,21 @@ describe('Script tab shell', () => {
     expect(caution).toHaveTextContent(/ignore rotation/)
   })
 
+  it('shows a read-only highlighted preview of the draft', async () => {
+    const user = userEvent.setup()
+    const { engine } = renderPanel()
+    setupProject(engine)
+
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+    const editor = screen.getByLabelText('Animation Script source')
+    await user.type(editor, 'script "Hi" from 0')
+
+    const highlighted = screen.getByTestId('script-highlight-source')
+    expect(highlighted.innerHTML).toContain('anim-token')
+    expect(highlighted.innerHTML).toContain('anim-keyword')
+    expect(highlighted.innerHTML).toContain('anim-string')
+  })
+
   it('follows the active slide, hiding the tab again for slides without a script', async () => {
     const user = userEvent.setup()
     const { engine, dispatcher } = renderPanel()
