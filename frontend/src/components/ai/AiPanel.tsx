@@ -29,6 +29,42 @@ import type { ScenarioMarkdownVersion } from '../../api/aiApi'
 
 const EMPTY_MARKDOWN_VERSIONS: ScenarioMarkdownVersion[] = []
 
+/**
+ * United Blackboard polish (issue #472): voice fill/commit plus board
+ * authoring from the single Blackboard assistant, reusing the existing
+ * creation paths (CreatePrompterPart, AiCommitTts, SetSlideAnimationScript).
+ */
+function BlackboardUnitedViews({
+  projectId,
+  reconciliationId,
+  narrationId,
+  conversationId,
+  disabled,
+}: {
+  projectId: string
+  reconciliationId: string | null
+  narrationId: string | null
+  conversationId: string | null
+  disabled?: boolean
+}) {
+  return (
+    <>
+      <AiNarrationView
+        projectId={projectId}
+        reconciliationId={reconciliationId}
+        conversationId={conversationId}
+        disabled={disabled}
+      />
+      <AiBoardView
+        projectId={projectId}
+        narrationId={narrationId}
+        conversationId={conversationId}
+        disabled={disabled}
+      />
+    </>
+  )
+}
+
 export function AiPanel() {
   const { engine } = useEngine()
   const projectId = engine.project?.id ?? ''
@@ -318,10 +354,12 @@ export function AiPanel() {
     const legacy = !block && message ? extractLegacyScriptBlock(message.content) : null
     if (!block && !legacy) return
     const slideHint = block?.slideHint ?? legacy?.slideHint ?? null
+    // United Blackboard polish (issue #472): defaults to the active slide
+    // with an explicit override; other slides stay untouched.
     const slideId = resolveScriptSlideId(
       context.slides,
       slideHint,
-      context.animation.timeline.slideId,
+      context.activeSlideId ?? context.animation.timeline.slideId,
     )
     if (!slideId) {
       setDraftErrorByMessage((prev) => ({
@@ -682,8 +720,9 @@ export function AiPanel() {
               />
             </>
           ) : mode === 'blackboard' ? (
-            <AiBoardView
+            <BlackboardUnitedViews
               projectId={projectId}
+              reconciliationId={activeReconciliationId}
               narrationId={activeNarrationId}
               conversationId={activeId}
               disabled
@@ -1202,8 +1241,9 @@ export function AiPanel() {
               />
             </>
           ) : mode === 'blackboard' ? (
-            <AiBoardView
+            <BlackboardUnitedViews
               projectId={projectId}
+              reconciliationId={activeReconciliationId}
               narrationId={activeNarrationId}
               conversationId={activeId}
               disabled={unavailable}

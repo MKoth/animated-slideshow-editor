@@ -2,6 +2,7 @@ import type { AnimationProperty, EnginePublic, SceneNode, Slide } from '../engin
 import type { ShapeCategory } from '../engine/shapeCategory'
 import { categoryPathOfShape, qualifiedShapeName } from '../engine/shape'
 import { composeChain } from '../engine/worldTransform'
+import { buildBlackboardFocus, type BlackboardFocus } from './blackboardFocus'
 
 export interface ContextSnapshotSlide {
   id: string
@@ -126,8 +127,15 @@ export interface ContextSnapshot {
   projectName: string
   projectId: string | null
   activeSlideName: string | null
+  activeSlideId: string | null
   activeSlideDuration: number | null
   slides: ContextSnapshotSlide[]
+  /** United Blackboard polish focus (issue #472): active slide id plus length
+   * with prompt block ids/windows/text and per-action fractions, so the model
+   * sees ids and durations without reading whole scripts. Omitted in
+   * blackboard-only (scenario) snapshots and when there is no active slide.
+   */
+  blackboardFocus?: BlackboardFocus
   sceneNodes: string[]
   selection: string[]
   materials: string[]
@@ -296,6 +304,7 @@ export function buildContextSnapshot(
     projectName: project?.name ?? '',
     projectId: project?.id ?? null,
     activeSlideName: blackboardOnly ? null : (active?.name ?? null),
+    activeSlideId: blackboardOnly ? null : (active?.id ?? null),
     activeSlideDuration: blackboardOnly ? null : active ? active.duration : null,
     slides,
     sceneNodes: blackboardOnly ? [] : sceneNodes.slice(0, 200),
@@ -312,6 +321,16 @@ export function buildContextSnapshot(
     animation: blackboardOnly
       ? emptyAnimationSnapshot()
       : buildAnimationSnapshot(engine, active, collected, nodesTruncated, sources.selection ?? []),
+    ...(blackboardOnly || !active
+      ? {}
+      : (() => {
+          try {
+            const focus = buildBlackboardFocus(active)
+            return focus ? { blackboardFocus: focus } : {}
+          } catch {
+            return {}
+          }
+        })()),
     ...(sources.scenarioMarkdown
       ? { scenarioMarkdown: sources.scenarioMarkdown.slice(0, 8000) }
       : {}),

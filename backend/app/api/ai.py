@@ -345,6 +345,8 @@ _SCENARIO_DROPPED_CONTEXT_KEYS = frozenset(
         "animation",
         "animationAssistantAssets",
         "activeSlideDuration",
+        "activeSlideId",
+        "blackboardFocus",
     }
 )
 

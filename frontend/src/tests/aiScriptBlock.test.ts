@@ -50,12 +50,14 @@ describe('scriptBlock', () => {
     expect(extractScriptBlock(content)?.slideHint).toBe('Slide 1')
   })
 
-  it('resolves the slide id by name, single slide, then active slide', () => {
+  it('resolves the slide id by name, id, single slide, then active slide', () => {
     const slides = [
       { id: 's-1', name: 'Slide 1' },
       { id: 's-2', name: 'Slide 2' },
     ]
     expect(resolveScriptSlideId(slides, 'slide 1', 's-2')).toBe('s-1')
+    // Explicit override by stable slide id (context renders `Name [id]`).
+    expect(resolveScriptSlideId(slides, 's-2', 's-1')).toBe('s-2')
     expect(resolveScriptSlideId(slides, null, 's-2')).toBe('s-2')
     expect(resolveScriptSlideId([{ id: 's-9', name: 'Only' }], null, null)).toBe('s-9')
     expect(resolveScriptSlideId(slides, 'Missing', null)).toBeNull()

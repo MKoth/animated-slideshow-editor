@@ -15,6 +15,7 @@ function context(): ContextSnapshot {
     projectName: 'Unsaved Cat Edit',
     projectId: 'p-1',
     activeSlideName: 'Room',
+    activeSlideId: 's-1',
     activeSlideDuration: 12,
     slides: [{ id: 's-1', name: 'Room', order: 0 }],
     sceneNodes: ['Cat [n-cat]'],
@@ -655,9 +656,11 @@ describe('AiPanel animation mode', () => {
 
     await user.click(screen.getByTestId('ai-mode-blackboard'))
     expect(screen.getByTestId('ai-board-section')).toBeInTheDocument()
+    // United Blackboard polish (issue #472): voice fill/commit plus board
+    // authoring live in the single Blackboard assistant.
+    expect(screen.getByTestId('ai-narration-section')).toBeInTheDocument()
     expect(screen.queryByTestId('ai-scenario-open-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('ai-reconciliation-open-modal')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('ai-narration-section')).not.toBeInTheDocument()
   })
 
   it('switches to dedicated shapes and collections modes sharing the asset chrome', async () => {

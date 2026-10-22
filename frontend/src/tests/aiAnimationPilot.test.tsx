@@ -550,6 +550,7 @@ function pilotContext(): ContextSnapshot {
     projectName: 'Cat Pilot',
     projectId: 'p-1',
     activeSlideName: 'Room',
+    activeSlideId: 's-1',
     activeSlideDuration: 12,
     slides: [{ id: 's-1', name: 'Room', order: 0 }],
     sceneNodes: ['Cat [n-cat]'],

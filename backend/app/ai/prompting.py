@@ -43,6 +43,89 @@ class ChatMessage:
     content: str
 
 
+def _as_float(value: object) -> float | None:
+    """Finite float from a JSON number, else None (bools never count)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        as_float = float(value)
+        import math
+
+        return as_float if math.isfinite(as_float) else None
+    return None
+
+
+def _blackboard_focus_to_text(focus: object) -> str:
+    """Active-slide Blackboard focus (issue #472): id plus length with prompt
+    block ids/windows/text and per-action fractions, without whole scripts.
+    Pure and read-only; malformed focus renders as empty.
+    """
+    if not isinstance(focus, dict):
+        return ""
+    slide_id = focus.get("slideId")
+    slide_name = focus.get("slideName")
+    duration = _as_float(focus.get("duration"))
+    header = ""
+    if isinstance(slide_id, str) and slide_id.strip():
+        header = f"blackboard focus slide: {slide_id.strip()}"
+        if isinstance(slide_name, str) and slide_name.strip():
+            header += f' "{slide_name.strip()}"'
+        if duration is not None:
+            header += f" ({duration:g}s)"
+    elif isinstance(slide_name, str) and slide_name.strip():
+        header = f"blackboard focus slide: {slide_name.strip()}"
+        if duration is not None:
+            header += f" ({duration:g}s)"
+    lines: list[str] = []
+    if header:
+        lines.append(header)
+    blocks = focus.get("promptBlocks")
+    if isinstance(blocks, list) and blocks:
+        rendered: list[str] = []
+        for entry in blocks[:50]:
+            if not isinstance(entry, dict):
+                continue
+            block_id = entry.get("id")
+            if not isinstance(block_id, str) or not block_id.strip():
+                continue
+            start = _as_float(entry.get("start"))
+            end = _as_float(entry.get("end"))
+            window = f" [{start:g}-{end:g}s]" if start is not None and end is not None else ""
+            text = entry.get("text")
+            snippet = (
+                str(text).strip().replace("\n", " ")[:200]
+                if isinstance(text, str) and str(text).strip()
+                else ""
+            )
+            rendered.append(
+                f'{block_id.strip()}{window} "{snippet}"'
+                if snippet
+                else f"{block_id.strip()}{window}"
+            )
+        if rendered:
+            lines.append("prompt blocks: " + "; ".join(rendered))
+    actions = focus.get("actions")
+    if isinstance(actions, list) and actions:
+        rendered_actions: list[str] = []
+        for entry in actions[:100]:
+            if not isinstance(entry, dict):
+                continue
+            action = entry.get("action")
+            block = entry.get("block")
+            fraction = _as_float(entry.get("fraction"))
+            if not isinstance(action, str) or not action.strip():
+                continue
+            piece = action.strip()
+            if isinstance(block, str) and block.strip():
+                piece += f" @ {block.strip()}"
+            if fraction is not None:
+                piece += f" {fraction:.3f}"
+            rendered_actions.append(piece)
+        if rendered_actions:
+            lines.append("board actions: " + "; ".join(rendered_actions))
+    return "\n".join(lines)
+
+
 def compose_messages(
     system_prompt: str,
     context_text: str,
@@ -85,13 +168,49 @@ def context_to_text(context: object) -> str:
         value = context.get("projectName")
         if isinstance(value, str) and value.strip():
             parts.append(f"project: {value.strip()}")
-        value = context.get("activeSlideName")
-        if isinstance(value, str) and value.strip():
-            parts.append(f"active slide: {value.strip()}")
+        # Active-slide awareness (issue #472): chat context carries the active
+        # slide id plus length so polish defaults to the active slide with an
+        # explicit override. Rendered as one line to keep the prompt compact.
+        active_name = context.get("activeSlideName")
+        active_id = context.get("activeSlideId")
+        active_duration = _as_float(context.get("activeSlideDuration"))
+        if isinstance(active_name, str) and active_name.strip():
+            line = f"active slide: {active_name.strip()}"
+            if isinstance(active_id, str) and active_id.strip():
+                line += f" [{active_id.strip()}]"
+            if active_duration is not None:
+                line += f" ({active_duration:g}s)"
+            parts.append(line)
+        elif isinstance(active_id, str) and active_id.strip():
+            line = f"active slide id: {active_id.strip()}"
+            if active_duration is not None:
+                line += f" ({active_duration:g}s)"
+            parts.append(line)
+        elif active_duration is not None:
+            parts.append(f"active slide duration: {active_duration:g}s")
+        focus_text = _blackboard_focus_to_text(context.get("blackboardFocus"))
+        if focus_text:
+            parts.append(focus_text)
         slides = context.get("slides")
         if isinstance(slides, list) and slides:
-            names = [str(s.get("name", s)) if isinstance(s, dict) else str(s) for s in slides]
-            parts.append("slides: " + ", ".join(names[:50]))
+            # Slide ids ride alongside names so polish can target the active
+            # slide by default with an explicit override naming another slide.
+            rendered_slides: list[str] = []
+            for entry in slides[:50]:
+                if isinstance(entry, dict):
+                    name = entry.get("name")
+                    slide_id = entry.get("id")
+                    if isinstance(name, str) and name.strip():
+                        if isinstance(slide_id, str) and slide_id.strip():
+                            rendered_slides.append(f"{name.strip()} [{slide_id.strip()}]")
+                        else:
+                            rendered_slides.append(name.strip())
+                    elif isinstance(slide_id, str) and slide_id.strip():
+                        rendered_slides.append(f"[{slide_id.strip()}]")
+                else:
+                    rendered_slides.append(str(entry))
+            if rendered_slides:
+                parts.append("slides: " + ", ".join(rendered_slides))
         nodes = context.get("sceneNodes")
         if isinstance(nodes, list) and nodes:
             parts.append("scene nodes: " + ", ".join(str(n) for n in nodes[:100]))

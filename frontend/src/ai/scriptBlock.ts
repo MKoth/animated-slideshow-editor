@@ -72,8 +72,9 @@ export interface SlideRef {
 
 /**
  * Resolves the block's slide name against the snapshot slide list.
- * Exact (case-insensitive) match wins; a single-slide project resolves
- * without a header; otherwise falls back to the active slide id.
+ * Exact (case-insensitive) match wins; a stable slide id also matches for an
+ * explicit override; a single-slide project resolves without a header;
+ * otherwise falls back to the active slide id.
  */
 export function resolveScriptSlideId(
   slides: readonly SlideRef[],
@@ -81,8 +82,12 @@ export function resolveScriptSlideId(
   activeSlideId: string | null,
 ): string | null {
   if (slideHint) {
-    const exact = slides.find((s) => s.name.toLowerCase() === slideHint.toLowerCase())
+    const needle = slideHint.trim().toLowerCase()
+    const exact = slides.find((s) => s.name.toLowerCase() === needle)
     if (exact) return exact.id
+    // Explicit override by stable slide id (context renders `Name [id]`).
+    const byId = slides.find((s) => s.id.toLowerCase() === needle)
+    if (byId) return byId.id
   }
   if (slides.length === 1) return slides[0]?.id ?? null
   return activeSlideId
