@@ -555,4 +555,55 @@ describe('Animation Script create — text, table, asset, data, chart', () => {
     runOk(system, slideId, source)
     expect(positionX(system, heroId)).toEqual([0, 5])
   })
+
+  it('reports the amount of run steps up front and after each step', async () => {
+    const { system, slideId } = setup()
+    system.assetLibrarySync.apply([
+      { id: 'asset-dog', name: 'Dog' },
+      { id: 'asset-cat', name: 'Cat' },
+    ])
+    const source = [
+      'script "Builder" from 0',
+      'create asset "Dog" as dog',
+      'create asset "Cat" as cat',
+    ].join('\n')
+    const seen: { done: number; total: number; phase: string; label: string }[] = []
+    const result = await runAnimationScriptAsync(
+      system.engine,
+      boundDispatch(system),
+      slideId,
+      source,
+      {
+        captureAsset: async (definitionId) => {
+          system.engine.embedAsset({
+            id: definitionId,
+            name: definitionId === 'asset-dog' ? 'Dog' : 'Cat',
+            data: 'QUJD',
+            mimeType: 'image/png',
+          } satisfies EmbeddedAsset)
+          return true
+        },
+        onProgress: (progress) =>
+          seen.push({
+            done: progress.done,
+            total: progress.total,
+            phase: progress.phase,
+            label: progress.label,
+          }),
+      },
+    )
+    expect(result.ran).toBe(true)
+    // Opening report carries the total before any work, then one report per
+    // step: two asset embeds plus the final dispatch.
+    expect(seen).toHaveLength(4)
+    expect(seen[0]).toEqual({ done: 0, total: 3, phase: 'asset', label: 'asset "Dog"' })
+    expect(seen[1]).toMatchObject({ done: 1, total: 3, phase: 'asset' })
+    expect(seen[2]).toMatchObject({ done: 2, total: 3, phase: 'asset' })
+    expect(seen[3]).toEqual({
+      done: 3,
+      total: 3,
+      phase: 'dispatch',
+      label: 'applying scene changes',
+    })
+  })
 })

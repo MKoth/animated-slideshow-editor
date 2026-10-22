@@ -1671,6 +1671,14 @@ def post_ai_narration(request: Request, body: AiNarrationCreate) -> dict[str, ob
         raise HTTPException(status_code=422, detail="conversation does not belong to this project")
     if body.defaultVoicePromptId and body.defaultVoicePromptId.strip():
         _require_voice_prompt(request, body.defaultVoicePromptId.strip())
+    # Audio refuses without the accepted scenario.md snapshot: narrator text
+    # and timing ground truth come from the accepted markdown version, never
+    # from drafts or legacy rows alone. The generated HTML itself is a
+    # client-side render — its gate lives in the frontend (AiNarrationView).
+    try:
+        library.require_accepted_markdown_version(body.projectId)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
         reconciliation = library.get_reconciliation(body.reconciliationId)
     except KeyError as exc:
@@ -2523,6 +2531,14 @@ def post_ai_board(request: Request, body: AiBoardCreate) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
     if conversation.project_id != body.projectId:
         raise HTTPException(status_code=422, detail="conversation does not belong to this project")
+    # Blackboard refuses without the accepted scenario.md snapshot: board
+    # content and placement ground truth come from the accepted markdown
+    # version. The generated HTML itself is a client-side render — its gate
+    # lives in the frontend (AiBoardView).
+    try:
+        library.require_accepted_markdown_version(body.projectId)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
         narration_row = library.get_narration(body.narrationId)
     except KeyError as exc:

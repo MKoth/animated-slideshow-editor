@@ -12,6 +12,8 @@ import {
   SetSlideAnimationScriptCommand,
   UndoStack,
 } from '../engine/commands'
+import { AssetLibrarySync } from '../engine/assetLibrarySync'
+import { captureAssetSnapshot } from '../app/assetSnapshot'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { serialize } from '../engine/lessonSerializer'
@@ -27,6 +29,17 @@ import { noopPersistence } from './contextHarness'
 vi.mock('../app/materialLibraries', () => ({
   ensureMaterialLibrariesLoaded: vi.fn(async () => undefined),
 }))
+
+// Capture seams are backend fetches in the real app; tests control them for
+// the run-progress loader (deferred embed keeps the loader on screen).
+vi.mock('../app/assetSnapshot', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../app/assetSnapshot')>()
+  return {
+    ...mod,
+    captureAssetSnapshot: vi.fn(async () => true),
+    captureAudioSnapshot: vi.fn(async () => true),
+  }
+})
 
 function renderPanel() {
   const engine = createEngineInternal()
@@ -387,6 +400,41 @@ describe('Script tab Run', () => {
     expect(engine.getKeyframes(heroId, 'positionX')).toHaveLength(0)
     expect(engine.getActiveSlide()?.animationScript?.lastCompiled).toBeUndefined()
     expect(undoStack.entries).toHaveLength(undoBefore)
+  })
+
+  it('shows a step-count loader while a multi-step first run embeds assets', async () => {
+    const user = userEvent.setup()
+    const { engine, dispatcher } = renderPanel()
+    setupProject(engine)
+    new AssetLibrarySync(engine).apply([
+      { id: 'asset-dog', name: 'Dog' },
+      { id: 'asset-cat', name: 'Cat' },
+    ])
+    setScript(
+      dispatcher,
+      engine,
+      ['script "Demo" from 0', 'create asset "Dog" as dog', 'create asset "Cat" as cat'].join('\n'),
+    )
+    await user.click(screen.getByTestId('bottom-tab-script'))
+
+    // Hold the first embed mid-flight so the loader stays on screen with
+    // the real total: 2 asset embeds plus the final dispatch.
+    let release!: (value: boolean) => void
+    const gate = new Promise<boolean>((resolve) => {
+      release = resolve
+    })
+    vi.mocked(captureAssetSnapshot).mockImplementationOnce(() => gate)
+    const runClick = user.click(screen.getByTestId('script-run'))
+    await screen.findByTestId('script-run-progress')
+    expect(screen.getByTestId('script-run-progress')).toHaveTextContent('Running step 1 of 3')
+    expect(screen.getByTestId('script-run-progress')).toHaveTextContent('asset "Dog"')
+    expect(screen.getByTestId('script-run')).toHaveTextContent('Running…')
+
+    release(true)
+    await runClick
+    expect(screen.getByTestId('script-run-summary')).toHaveTextContent('Ran')
+    expect(screen.queryByTestId('script-run-progress')).not.toBeInTheDocument()
+    expect(screen.getByTestId('script-run')).toHaveTextContent('Run')
   })
 })
 

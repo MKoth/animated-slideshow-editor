@@ -70,10 +70,29 @@ export function AiNarrationView({
   // Default to the first slide without a cascading effect render.
   const effectiveTargetSlideId = targetSlideId || slides[0]?.id || ''
 
+  // Audio refuses without the scenario doc + generated HTML (ground truth for
+  // narrator text and timing). Backend enforces the accepted markdown version
+  // (409); the HTML render itself is client-side, so the refusal lives here.
+  const scenarioMarkdown = engine.project?.scenario?.currentMarkdown ?? ''
+  const scenarioHtml = engine.project?.scenario?.lastHtml ?? ''
+  const hasScenarioDoc = scenarioMarkdown.trim() !== ''
+  const hasScenarioHtml = scenarioHtml.trim() !== ''
+
   if (disabled) {
     return (
       <div className="ai-narration" data-testid="ai-narration-section">
         <div data-testid="ai-narration-disabled">Narration unavailable — backend unreachable.</div>
+      </div>
+    )
+  }
+
+  if (!hasScenarioDoc || !hasScenarioHtml) {
+    return (
+      <div className="ai-narration" data-testid="ai-narration-section">
+        <div data-testid="ai-narration-needs-scenario">
+          Audio needs scenario.md and the generated HTML first — accept a scenario version and
+          Generate HTML before filling the prompter.
+        </div>
       </div>
     )
   }
@@ -339,6 +358,12 @@ function AiNarrationDetail({
     <div data-testid="ai-narration-detail">
       <div data-testid="ai-narration-status">
         {status} — {parts.length} parts, slide duration {slideDuration.toFixed(2)}s (sum of parts)
+      </div>
+      <div data-testid="ai-narration-timing-note">
+        Pre-TTS timing is an estimate; the batch adopts each measured audio duration and shifts
+        downstream gap-free. When a part overruns or underruns its board window, shorten or lengthen
+        the spoken text itself (via the Scenario/Audio chat) and regenerate — slide duration is the
+        sum of adopted part durations.
       </div>
 
       <label>

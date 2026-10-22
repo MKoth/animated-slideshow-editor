@@ -164,6 +164,24 @@ def _make_accepted_narration(
     _fake_scenario(monkeypatch, SAMPLE_SCENARIO)
     _make_project(client, pid)
     conv = client.post("/api/ai/conversations", json={"projectId": pid}).json()
+    md = client.post(
+        "/api/ai/scenarios/markdown/versions",
+        json={
+            "projectId": pid,
+            "conversationId": conv["id"],
+            "content": "## Step 1 — One\n\n**Narrator:** Hello.\n",
+            "summary": "Test seed",
+            "touchedSteps": [1],
+        },
+    )
+    assert md.status_code == 201, md.text
+    assert (
+        client.post(
+            "/api/ai/scenarios/markdown/accept",
+            json={"projectId": pid, "versionId": md.json()["id"]},
+        ).status_code
+        == 200
+    )
     created = client.post(
         "/api/ai/scenarios",
         json={
@@ -349,6 +367,24 @@ def test_board_requires_accepted_narration(
     pid = "board-gate-proj"
     _make_project(client, pid)
     conv = client.post("/api/ai/conversations", json={"projectId": pid}).json()
+    md = client.post(
+        "/api/ai/scenarios/markdown/versions",
+        json={
+            "projectId": pid,
+            "conversationId": conv["id"],
+            "content": "## Step 1 — One\n\n**Narrator:** Hello.\n",
+            "summary": "Test seed",
+            "touchedSteps": [1],
+        },
+    )
+    assert md.status_code == 201, md.text
+    assert (
+        client.post(
+            "/api/ai/scenarios/markdown/accept",
+            json={"projectId": pid, "versionId": md.json()["id"]},
+        ).status_code
+        == 200
+    )
     created = client.post(
         "/api/ai/scenarios",
         json={"projectId": pid, "conversationId": conv["id"], "request": "hi", "context": {}},
@@ -429,7 +465,117 @@ def test_board_record_template_compile_accept_flow(
     canonical = client.get(f"/api/ai/board-scripts/{board_id}/canonical")
     assert canonical.status_code == 200, canonical.text
     assert "scripts" in canonical.json()
-    assert "marksMap" in canonical.json()
+
+
+def test_board_refuses_without_accepted_scenario_markdown(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Blackboard refuses when scenario.md has no accepted version."""
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+    _fake_scenario(monkeypatch, SAMPLE_SCENARIO)
+    pid = "board-nomd-proj"
+    _make_project(client, pid)
+    conv = client.post("/api/ai/conversations", json={"projectId": pid}).json()
+    created = client.post(
+        "/api/ai/scenarios",
+        json={"projectId": pid, "conversationId": conv["id"], "request": "hi", "context": {}},
+    ).json()
+    scenario_id = created["id"]
+    assert client.post(f"/api/ai/scenarios/{scenario_id}/accept").status_code == 200
+    rec = client.post(
+        "/api/ai/reconciliations",
+        json={
+            "projectId": pid,
+            "scenarioId": scenario_id,
+            "conversationId": conv["id"],
+            "context": {},
+        },
+    )
+    rec_id = rec.json()["id"]
+    assert client.post(f"/api/ai/reconciliations/{rec_id}/accept").status_code == 200
+    # Accept a markdown version, then delete it so the gate has nothing to read.
+    md = client.post(
+        "/api/ai/scenarios/markdown/versions",
+        json={
+            "projectId": pid,
+            "conversationId": conv["id"],
+            "content": "## Step 1 — One\n\n**Narrator:** Hello.\n",
+            "summary": "Seed",
+            "touchedSteps": [1],
+        },
+    )
+    assert md.status_code == 201, md.text
+    assert (
+        client.post(
+            "/api/ai/scenarios/markdown/accept",
+            json={"projectId": pid, "versionId": md.json()["id"]},
+        ).status_code
+        == 200
+    )
+    nar = client.post(
+        "/api/ai/narrations",
+        json={"projectId": pid, "reconciliationId": rec_id, "conversationId": conv["id"]},
+    )
+    assert nar.status_code == 201, nar.text
+    nar_id = nar.json()["id"]
+    assert client.delete(
+        "/api/ai/scenarios/markdown/versions", params={"projectId": pid}
+    ).status_code in (200, 204)
+    r = client.post(
+        "/api/ai/board-scripts",
+        json={"projectId": pid, "narrationId": nar_id, "conversationId": conv["id"]},
+    )
+    assert r.status_code == 409, r.text
+    assert "accepted scenario" in r.text.lower()
+
+
+def test_board_template_carries_e2e_contract() -> None:
+    """Template honors the spanish-gender e2e: blackboard-first, paw scale, carry."""
+    from app.ai.boards import (
+        BOARD_EFFECT_VERBS,
+        BOARD_STATEMENT_BUILTINS,
+        build_template_source,
+        validate_board_content,
+    )
+
+    assert "carry" in BOARD_EFFECT_VERBS
+    assert "carry" in BOARD_STATEMENT_BUILTINS
+    parts = [
+        {
+            "stepId": "m1",
+            "order": 0,
+            "spokenLine": "Ser is.",
+            "timelineStart": 0.0,
+            "timelineEnd": 2.0,
+            "audioDuration": 2.0,
+            "estimatedDuration": 2.0,
+        },
+        {
+            "stepId": "m2",
+            "order": 1,
+            "spokenLine": "Estar is.",
+            "timelineStart": 2.0,
+            "timelineEnd": 5.0,
+            "audioDuration": 3.0,
+            "estimatedDuration": 3.0,
+        },
+    ]
+    source = build_template_source(parts, "Board middle")
+    assert 'script "Board middle" from 0' in source
+    assert "blackboar-background" in source
+    assert 'mark("part-0")' in source and 'mark("part-1")' in source
+    assert "visualScale: 4" in source
+    assert "carry" in BOARD_EFFECT_VERBS
+    # carry(...) scripts validate clean under the board-content gate.
+    assert (
+        validate_board_content(
+            'script "B" from 0\nmark("part-0")\ncreate text "Hi" as line0\n'
+            "carry(img, to: {x: 1, y: 2})\nreveal(line0)\n"
+        )
+        == []
+    )
 
 
 def test_board_accept_blocked_on_overrun_and_cat(

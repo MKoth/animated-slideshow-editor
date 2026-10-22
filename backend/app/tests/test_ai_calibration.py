@@ -154,6 +154,24 @@ def _make_accepted_narration(
     _fake_scenario(monkeypatch, SAMPLE_SCENARIO)
     _make_project(client, pid)
     conv = client.post("/api/ai/conversations", json={"projectId": pid}).json()
+    md = client.post(
+        "/api/ai/scenarios/markdown/versions",
+        json={
+            "projectId": pid,
+            "conversationId": conv["id"],
+            "content": "## Step 1 — One\n\n**Narrator:** Hello.\n",
+            "summary": "Test seed",
+            "touchedSteps": [1],
+        },
+    )
+    assert md.status_code == 201, md.text
+    assert (
+        client.post(
+            "/api/ai/scenarios/markdown/accept",
+            json={"projectId": pid, "versionId": md.json()["id"]},
+        ).status_code
+        == 200
+    )
     created = client.post(
         "/api/ai/scenarios",
         json={
@@ -575,6 +593,24 @@ def test_calibration_refuses_draft_narration(
     _fake_scenario(monkeypatch, SAMPLE_SCENARIO)
     _make_project(client, "p-cal-draft")
     conv = client.post("/api/ai/conversations", json={"projectId": "p-cal-draft"}).json()
+    md = client.post(
+        "/api/ai/scenarios/markdown/versions",
+        json={
+            "projectId": "p-cal-draft",
+            "conversationId": conv["id"],
+            "content": "## Step 1 — One\n\n**Narrator:** Hello.\n",
+            "summary": "Test seed",
+            "touchedSteps": [1],
+        },
+    )
+    assert md.status_code == 201, md.text
+    assert (
+        client.post(
+            "/api/ai/scenarios/markdown/accept",
+            json={"projectId": "p-cal-draft", "versionId": md.json()["id"]},
+        ).status_code
+        == 200
+    )
     created = client.post(
         "/api/ai/scenarios",
         json={

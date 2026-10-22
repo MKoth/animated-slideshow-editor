@@ -1,8 +1,11 @@
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AiBoard } from '../api/aiApi'
-import { EngineProvider } from '../app/EngineProvider'
+import { EngineContext, type EngineContextValue } from '../app/engineContext'
 import { AiBoardView } from '../components/ai/AiBoardView'
+import { CommandDispatcher, UndoStack } from '../engine/commands'
+import { createEngineInternal, toReadOnly } from '../engine/internal'
+import { createEmptyScenarioSection, withScenarioHtml } from '../engine/scenarioSection'
 import { useAiStore } from '../stores/aiStore'
 import { useBackendStore } from '../stores/backendStore'
 
@@ -124,11 +127,25 @@ beforeEach(() => {
   seedStore()
 })
 
-function renderView(disabled = false) {
+function renderView(disabled = false, markdown?: string | null, html?: string | null) {
+  const engine = createEngineInternal()
+  engine.createProject({ name: 'Test' })
+  const doc =
+    markdown === undefined ? '## Step 1 — One\n\n**Narrator:** Hello.\n' : (markdown ?? '')
+  const rendered = html === undefined ? '<html></html>' : (html ?? '')
+  engine.project!.setScenario(withScenarioHtml(createEmptyScenarioSection(doc), rendered, 'v1'))
+  const undoStack = new UndoStack()
+  const dispatcher = new CommandDispatcher(engine, undoStack, () => undefined)
+  const value: EngineContextValue = {
+    engine: toReadOnly(engine),
+    undoStack,
+    dispatch: dispatcher.dispatch.bind(dispatcher) as unknown as EngineContextValue['dispatch'],
+    persistence: { save: vi.fn(), onCommandSucceeded: () => undefined, dispose: () => undefined },
+  }
   return render(
-    <EngineProvider>
+    <EngineContext.Provider value={value}>
       <AiBoardView projectId="p-1" narrationId="nar-1" conversationId="c-1" disabled={disabled} />
-    </EngineProvider>,
+    </EngineContext.Provider>,
   )
 }
 
@@ -152,5 +169,11 @@ describe('AiBoardView Stage E gate', () => {
   it('shows degraded state when the backend is down', () => {
     renderView(true)
     expect(screen.getByTestId('ai-board-disabled')).toBeInTheDocument()
+  })
+
+  it('refuses without scenario.md and generated HTML', () => {
+    const { unmount } = renderView(false, '', null)
+    expect(screen.getByTestId('ai-board-needs-scenario')).toBeInTheDocument()
+    unmount()
   })
 })

@@ -26,16 +26,23 @@ from typing import Any
 # create-then-reveal so it stays portable and reviewable.
 BOARD_COMMAND_TYPES: tuple[str, ...] = ("SetSlideAnimationScript",)
 
-# Effect verbs a board script may author. Temporary Mark loops ride the same
-# `mark(target, ...)` effect form; compile-time `mark("name")` labels are the
-# narration-window boundaries, not effects.
-BOARD_EFFECT_VERBS: tuple[str, ...] = ("reveal", "wipe", "mark")
+# Effect verbs a board script may author. Carry flies placed images in/out;
+# temporary Mark loops ride the same `mark(target, ...)` effect form; compile-time
+# `mark("name")` labels are the narration-window boundaries, not effects.
+BOARD_EFFECT_VERBS: tuple[str, ...] = ("reveal", "wipe", "mark", "carry")
 
 # Statement built-ins the compiler provides for board motion. Only
-# pointArrowAt is reused from the statement built-ins; reveal/wipe/mark are
+# pointArrowAt is reused from the statement built-ins; reveal/wipe/mark/carry are
 # the effect verbs above. Anything else that inlines code (local functions,
 # library entries) stays out so scripts stay reviewable.
-BOARD_STATEMENT_BUILTINS: tuple[str, ...] = ("pointArrowAt", "reveal", "wipe", "mark", "subtree")
+BOARD_STATEMENT_BUILTINS: tuple[str, ...] = (
+    "pointArrowAt",
+    "reveal",
+    "wipe",
+    "mark",
+    "carry",
+    "subtree",
+)
 
 # Methods that have no place on a blackboard script: clip/collection
 # playback, mouth morphs/controls, and rig-specific tracks. Tween/set survive
@@ -164,6 +171,14 @@ def build_template_source(parts: list[dict[str, Any]], title: str = "Board middl
     ordered = middle_parts_from_narration(parts)
     clean_title = title.strip() or "Board middle"
     lines = [f'script "{clean_title}" from 0']
+    # Blackboard-first contract (e2e spanish-gender-lesson.spec): the project
+    # already holds the `blackboar-background` scene node as the backdrop — the
+    # script adds lesson content only, and every effect below rides a paw
+    # performer at visualScale 4 / visualAnchor top-center with the e2e sound
+    # scheme (reveal -> writing-on-black-board, wipe -> dry-erase; carry/mark
+    # silent). Scenario mapping: `[place: slug]` -> carry(image), `[reveal: id]`
+    # -> reveal(target), `[wipe]` / `[remove: id]` -> wipe(target).
+    lines.append("// backdrop: reuse the existing blackboar-background node (do not recreate)")
     for index, part in enumerate(ordered):
         mark = mark_name_for_part(index)
         lines.append(f'mark("{mark}")')
@@ -172,7 +187,11 @@ def build_template_source(parts: list[dict[str, Any]], title: str = "Board middl
         # inside the owning narration window. Tables follow the same shape:
         # `create table "Grid{i}" as grid{i} {{ ... }}` then reveal(subtree(...)).
         lines.append(f'create text "Board line {index + 1}" as {alias}')
-        lines.append(f"reveal({alias})")
+        lines.append(
+            f'reveal({alias}, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", '
+            "wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, "
+            "wobbleSpeed: 7, sound: writeSfx)"
+        )
     # Close the slide at the last part end so the segment window is explicit.
     last_end = float(ordered[-1].get("timelineEnd", 0.0))
     lines.append(f"// slide ends at {last_end:.2f}s = sum of accepted part durations")
@@ -250,10 +269,10 @@ def validate_board_content(source: str) -> list[str]:
             "(create text and/or create table) then reveal/mark/wipe — "
             "no pre-placed board nodes"
         )
-    has_effect = any(verb in lowered for verb in ("reveal(", "wipe(", "mark("))
+    has_effect = any(verb in lowered for verb in ("reveal(", "wipe(", "mark(", "carry("))
     if not has_effect:
         errors.append(
-            "board script must animate with reveal/mark/wipe verbs (compiler built-ins only)"
+            "board script must animate with reveal/mark/wipe/carry verbs (compiler built-ins only)"
         )
     if "function " in lowered:
         errors.append(

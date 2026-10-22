@@ -40,6 +40,17 @@ export interface AnimationScriptRunResult {
   readonly error: string | null
 }
 
+/** One step of a multi-step Run (asset embeds, mesh gen, material/audio embeds, apply). */
+export interface AnimationScriptRunProgress {
+  /** Steps finished so far (0 on the opening report). */
+  readonly done: number
+  /** Total steps this run will take, known up front after compile. */
+  readonly total: number
+  readonly phase: 'compile' | 'asset' | 'mesh' | 'material' | 'audio' | 'dispatch'
+  /** Human line for the loader, e.g. `asset "oak-tree"`. */
+  readonly label: string
+}
+
 export interface AnimationScriptRunOptions extends AnimationScriptCheckOptions {
   /**
    * Embed an asset snapshot for a script-created asset instance. The app wires
@@ -64,6 +75,13 @@ export interface AnimationScriptRunOptions extends AnimationScriptCheckOptions {
    * a canvas. Defaults to the renderer's data-URL loader.
    */
   readonly loadImageData?: (asset: EmbeddedAsset) => Promise<ImageData>
+  /**
+   * Step-count loader seam: called once up front with `{ done: 0, total }`
+   * and after every run step (asset/mesh/material/audio embed, final
+   * dispatch). First runs of multi-step lessons embed dozens of assets, so
+   * the panel shows "step X of N" instead of a frozen Run button.
+   */
+  readonly onProgress?: (progress: AnimationScriptRunProgress) => void
 }
 
 /**
@@ -117,6 +135,54 @@ export async function runAnimationScriptAsync(
   if (!compiled.runnable) {
     return { ran: false, error: null, ...outcome }
   }
+  const report = options.onProgress
+  // Step-count loader: every awaited prep plus the final dispatch is one
+  // step. Totals are known up front (already-embedded items need no capture
+  // and are skipped), so the first run of a multi-step lesson shows its
+  // real amount of steps instead of a frozen button.
+  const assetNameById = new Map(
+    engine.assetDefinitions.map((definition) => [definition.id, definition.name] as const),
+  )
+  const pending: { phase: AnimationScriptRunProgress['phase']; label: string }[] = []
+  for (const created of compiled.creations.nodes) {
+    if (
+      created.assetDefinitionId !== undefined &&
+      engine.getEmbeddedAsset(created.assetDefinitionId) === undefined &&
+      options.captureAsset !== undefined
+    ) {
+      pending.push({ phase: 'asset', label: `asset "${created.name}"` })
+    }
+    if (created.mesh !== undefined) {
+      pending.push({ phase: 'mesh', label: `mesh "${created.mesh.assetName}"` })
+    }
+  }
+  for (const material of compiled.creations.materials) {
+    if (
+      engine.getEmbeddedMaterial(material.id) === undefined &&
+      options.captureMaterial !== undefined
+    ) {
+      pending.push({ phase: 'material', label: `material "${material.name}"` })
+    }
+  }
+  if (options.captureAudio !== undefined) {
+    const seen = new Set<string>()
+    for (const clip of compiled.audioClips) {
+      if (seen.has(clip.assetId) || engine.getEmbeddedAsset(clip.assetId) !== undefined) continue
+      seen.add(clip.assetId)
+      pending.push({
+        phase: 'audio',
+        label: `audio "${assetNameById.get(clip.assetId) ?? clip.assetId}"`,
+      })
+    }
+  }
+  pending.push({ phase: 'dispatch', label: 'applying scene changes' })
+  const total = pending.length
+  report?.({ done: 0, total, phase: pending[0].phase, label: pending[0].label })
+  let done = 0
+  const step = (phase: AnimationScriptRunProgress['phase'], label: string) => {
+    done += 1
+    report?.({ done, total, phase, label })
+  }
   const extrasByOrder = new Map<number, Command<unknown>[]>()
   for (const created of compiled.creations.nodes) {
     if (created.assetDefinitionId !== undefined) {
@@ -127,10 +193,12 @@ export async function runAnimationScriptAsync(
         } catch {
           // Fall through to the embedding check below, which reports cleanly.
         }
+        step('asset', `asset "${created.name}"`)
       }
     }
     if (created.mesh !== undefined) {
       const failure = await prepareMesh(engine, created.mesh, created.order, extrasByOrder, options)
+      step('mesh', `mesh "${created.mesh.assetName}"`)
       if (failure !== null) {
         return { ran: false, error: failure, ...outcome }
       }
@@ -147,6 +215,7 @@ export async function runAnimationScriptAsync(
     } catch {
       // Fall through: the assignment validates against the library instead.
     }
+    step('material', `material "${material.name}"`)
   }
   // Embed global audio an effect `sound:` resolved so the project stays
   // self-contained. Playback can still fetch the library URL when this fails.
@@ -160,9 +229,12 @@ export async function runAnimationScriptAsync(
       } catch {
         // Fall through: dispatch references the global id directly.
       }
+      step('audio', `audio "${assetNameById.get(clip.assetId) ?? clip.assetId}"`)
     }
   }
-  return dispatchCompiled(engine, dispatch, slideId, compiled, extrasByOrder, outcome)
+  const result = dispatchCompiled(engine, dispatch, slideId, compiled, extrasByOrder, outcome)
+  step('dispatch', 'applying scene changes')
+  return result
 }
 
 /** Generate a mesh request into `extrasByOrder`, or return an error message. */

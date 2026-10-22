@@ -97,10 +97,30 @@ export function AiBoardView({
     store.setActiveBoard(id || null)
   }
 
+  // Blackboard refuses without the scenario doc + generated HTML (ground truth
+  // for board content and placement). Backend enforces the accepted markdown
+  // version (409); the HTML render itself is client-side, so the refusal lives
+  // here alongside the accepted-narration timing gate.
+  const scenarioMarkdown = engine.project?.scenario?.currentMarkdown ?? ''
+  const scenarioHtml = engine.project?.scenario?.lastHtml ?? ''
+  const hasScenarioDoc = scenarioMarkdown.trim() !== ''
+  const hasScenarioHtml = scenarioHtml.trim() !== ''
+
   if (disabled) {
     return (
       <div className="ai-board" data-testid="ai-board-section">
         <div data-testid="ai-board-disabled">Board scripts unavailable — backend unreachable.</div>
+      </div>
+    )
+  }
+
+  if (!hasScenarioDoc || !hasScenarioHtml) {
+    return (
+      <div className="ai-board" data-testid="ai-board-section">
+        <div data-testid="ai-board-needs-scenario">
+          Blackboard needs scenario.md and the generated HTML first — accept a scenario version and
+          Generate HTML before authoring board scripts.
+        </div>
       </div>
     )
   }

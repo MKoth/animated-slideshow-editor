@@ -2,7 +2,10 @@ import { useRef, useState } from 'react'
 import { useEngine } from '../../app/useEngine'
 import { checkAnimationScript } from '../../engine/animationScriptCheck'
 import { runAnimationScriptAsync } from '../../engine/animationScriptRun'
-import type { AnimationScriptRunResult } from '../../engine/animationScriptRun'
+import type {
+  AnimationScriptRunProgress,
+  AnimationScriptRunResult,
+} from '../../engine/animationScriptRun'
 import { captureAssetSnapshot, captureAudioSnapshot } from '../../app/assetSnapshot'
 import { captureMaterialSnapshot, captureShaderSnapshot } from '../../app/definitionSnapshot'
 import { ensureMaterialLibrariesLoaded } from '../../app/materialLibraries'
@@ -64,6 +67,7 @@ export function ScriptPanel({
   const [syncedFrom, setSyncedFrom] = useState({ slideId, source })
   const [outcome, setOutcome] = useState<ScriptOutcome | null>(null)
   const [running, setRunning] = useState(false)
+  const [progress, setProgress] = useState<AnimationScriptRunProgress | null>(null)
 
   if (syncedFrom.slideId !== slideId || syncedFrom.source !== source) {
     if (syncedFrom.slideId !== slideId) {
@@ -120,11 +124,13 @@ export function ScriptPanel({
   const runScript = async () => {
     if (running) return
     setRunning(true)
+    setProgress(null)
     try {
       await ensureMaterialLibrariesLoaded()
       const result = await runAnimationScriptAsync(engine, dispatch, slideId, source, {
         measure: measuredNodeSize,
         globalAudioAssets: collectGlobalAudioAssets(),
+        onProgress: setProgress,
         captureAsset: (definitionId) => captureAssetSnapshot(engine, definitionId),
         captureAudio: (assetId) => captureAudioSnapshot(engine, assetId),
         captureMaterial: (definitionId) => {
@@ -136,6 +142,7 @@ export function ScriptPanel({
       setOutcome({ kind: 'run', source, result })
     } finally {
       setRunning(false)
+      setProgress(null)
     }
   }
 
@@ -208,7 +215,7 @@ export function ScriptPanel({
             fontSize: 11,
           }}
         >
-          Run
+          {running ? 'Running…' : 'Run'}
         </button>
         <button
           type="button"
@@ -244,6 +251,23 @@ export function ScriptPanel({
           Functions
         </button>
       </div>
+      {running && (
+        <div
+          data-testid="script-run-progress"
+          role="status"
+          style={{
+            padding: '4px 8px',
+            fontSize: 11,
+            color: 'var(--color-text)',
+            background: 'var(--color-bg-panel)',
+            borderBottom: '1px solid var(--color-border)',
+          }}
+        >
+          {progress === null || progress.total === 0
+            ? 'Running…'
+            : `Running step ${Math.min(progress.done + 1, progress.total)} of ${progress.total} — ${progress.label}`}
+        </div>
+      )}
       <div
         data-testid="script-reads-caution"
         style={{

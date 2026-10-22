@@ -139,6 +139,24 @@ def _make_accepted_reconciliation(
     _fake_scenario(monkeypatch, SAMPLE_SCENARIO)
     _make_project(client, pid)
     conv = client.post("/api/ai/conversations", json={"projectId": pid}).json()
+    # Audio/Blackboard refuse without the accepted scenario.md snapshot —
+    # the test project accepts one markdown version up front.
+    md = client.post(
+        "/api/ai/scenarios/markdown/versions",
+        json={
+            "projectId": pid,
+            "conversationId": conv["id"],
+            "content": "## Step 1 — One\n\n**Narrator:** Hello.\n",
+            "summary": "Test seed",
+            "touchedSteps": [1],
+        },
+    )
+    assert md.status_code == 201, md.text
+    acc_md = client.post(
+        "/api/ai/scenarios/markdown/accept",
+        json={"projectId": pid, "versionId": md.json()["id"]},
+    )
+    assert acc_md.status_code == 200, acc_md.text
     created = client.post(
         "/api/ai/scenarios",
         json={
@@ -619,3 +637,45 @@ def test_narration_commit_proposal_carries_asset_ids(
     )
     assert proposal.status_code == 201, proposal.text
     assert proposal.json()["validation"]["ok"] is True
+
+
+def test_narration_refuses_without_accepted_scenario_markdown(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audio refuses when scenario.md has no accepted version (ground truth missing)."""
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+    _fake_scenario(monkeypatch, SAMPLE_SCENARIO)
+    _make_project(client, "p-nar-nomd")
+    conv = client.post("/api/ai/conversations", json={"projectId": "p-nar-nomd"}).json()
+    created = client.post(
+        "/api/ai/scenarios",
+        json={
+            "projectId": "p-nar-nomd",
+            "conversationId": conv["id"],
+            "request": "Draft",
+            "context": {},
+        },
+    ).json()
+    client.post(f"/api/ai/scenarios/{created['id']}/accept")
+    rec = client.post(
+        "/api/ai/reconciliations",
+        json={
+            "projectId": "p-nar-nomd",
+            "scenarioId": created["id"],
+            "conversationId": conv["id"],
+            "context": {},
+        },
+    ).json()
+    client.post(f"/api/ai/reconciliations/{rec['id']}/accept")
+    r = client.post(
+        "/api/ai/narrations",
+        json={
+            "projectId": "p-nar-nomd",
+            "reconciliationId": rec["id"],
+            "conversationId": conv["id"],
+        },
+    )
+    assert r.status_code == 409, r.text
+    assert "accepted scenario" in r.text.lower()

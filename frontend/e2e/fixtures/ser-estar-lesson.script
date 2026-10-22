@@ -1,237 +1,330 @@
-// Lesson 01 — Ser and estar
+// Lesson 02 — Ser and Estar (assembled from 5 per-step blackboard prompts).
+// Effects are the only appearance/disappearance transitions in this lesson.
+// Run the creation portion first so Check has measured bounds, then the full
+// source replaces it with the complete scene and choreography.
 //
-// Runs on slide 1 of the project "Animation Script test".
-// 1. Fades in the blackboard background (asset "blackboar-background",
-//    asset-library folder "Backgrounds").
-// 2. Parks the three paw effect-performers off-screen (assets "paw with
-//    chalk", "paw with rag", "paw empty"): the effects script binds them by
-//    scene node name and sweeps them over its targets.
-// 3. Shows the lesson title, then fades it away.
-// 4. Fades in an empty conjugation table and fills it cell by cell:
-//    pronoun | SER | ESTAR (six persons).
-// 5. Below the table, six examples (three SER, three ESTAR) with their
-//    translations; the conjugated verb is tinted to match its column.
+// HOW TO RUN (two passes; the second replaces the first, nothing duplicates):
+//   1. Run everything above the "Each object starts hidden" marker to create
+//      the scene. 2. Park the playhead where a table is fully written
+//      (~120s, conjugation table) so Check measures real bounds, then Check
+//      the full source (expect 0 errors), Save, Run. A repeat full Run
+//      replaces its own clips/effects instead of duplicating them.
+// NEEDS from the library: images "oak-tree", "melting-ice-cube", "red-fox",
+// "brown-suitcase", paws "paw with chalk", "paw with rag", "paw with laser",
+// "paw empty", audio "writing-on-black-board" and "dry-erase", material
+// "Chalk". Browse each folder in Assets first so names resolve. Import the
+// four picture images before Run (Check reports unknown assets until then).
 //
-// Everything except the background lives under the "Lesson board" group, and
-// the built-in Chalk material is assigned to that group so the whole lesson
-// composites through its grain shader — chalk on the blackboard.
+// Windows are pre-TTS ESTIMATES (0.2s/char compressed to a 132s slide):
+// part-0 Step 1: 0-12, part-1 Step 2: 12-36, part-2 Step 3: 36-60,
+// part-3 Step 4: 60-92, part-4 Step 5: 92-132. TTS will adopt measured
+// durations later; every effect stays inside its owning narration window
+// so retiming stays proportional.
 //
-// World units are canvas pixels with the origin at the canvas top-left
-// (camera at identity). Canvas is 1090 x 893 at the 1600 x 1200 editor
-// viewport used by the e2e test.
-
-script "Lesson 01. Ser and estar" from 0
+// PACING (same scheme as the Spanish-gender lesson):
+// - One stage at a time; nothing overlaps; 2.5-3.5s pauses between stages.
+// - Picture stages: card placed first, labels written below, labels wiped,
+//   then card flown away. Never show-then-instantly-remove.
+// - Cards sit at y 360 (0.34 scale); labels below at y 505/548.
+// - Mask-setup wipes (visual: none, over: 0.01) hide cell contents while the
+//   border draws; silent and straight by design.
+// - mark and carry take no sound or wobble (the language forbids it there).
+// WOBBLE: full for words {12-24}/{8-18} speed 7; little for two-glyph cells
+// {4-8}/{3-6}; none for lone dashes; wide table borders triple-Y {24-54}.
+// DURATIONS: ~0.1s per char, 0.3s floor; table cells chained with ~0.4-0.5s
+// breath. SOUND: reveal -> writeSfx, wipe -> eraseSfx; carry/mark silent.
+script "Ser and Estar" from 0
 defaults { duration: 0.5s, ease: easeInOut }
-
-bind chalk = material("Chalk")
-
-// ── Geometry ──────────────────────────────────────────────────────────────
 let cw = 1090
-let ch = 893
-let tableScale = 1.5
-
-// ── Background ────────────────────────────────────────────────────────────
-create asset "blackboar-background" as bg at (cw / 2, ch / 2) { scaleX: ch / 4320, scaleY: ch / 4320, opacity: 0 }
-
-// ── Effect performers (bound by name in the effects script) ────────────────
-// Parked off-screen at full opacity: the source instances stay out of frame
-// while the renderer draws their sprites along each effect sweep. They live
-// at the scene root (outside "Lesson board") so the Chalk grain shader does
-// not apply to the paw photos. Scale 0.12 ≈ 100px tall on this 1090x893
-// canvas.
-create asset "paw with chalk" as pawchalk at (1500, 1200) { scaleX: 0.12, scaleY: 0.12 }
-create asset "paw with rag" as pawrag at (1640, 1200) { scaleX: 0.12, scaleY: 0.12 }
-create asset "paw empty" as pawempty at (1780, 1200) { scaleX: 0.12, scaleY: 0.12 }
-
-// ── Chalk group: title, table, examples and recap all filter through Chalk ─
-create group "Lesson board" as board
-
-// ── Title ─────────────────────────────────────────────────────────────────
-create text "Lesson title" as title at (cw / 2, 118) inside board { content: "Lesson 01. Ser and estar", fontSize: 56, alignment: "center", opacity: 0 }
-title.tint("#F5E6C8")
-
-// ── Conjugation table, created empty ──────────────────────────────────────
-// Transparent plate and white chalk borders: the blackboard shows through.
-create table "Grammar table" as grid at (183, 168) inside board { columns: [150, 160, 160], rows: [["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""]], padding: 6, borderWidth: 2, borderColor: "#FFFFFF", background: "transparent", opacity: 0, scaleX: tableScale, scaleY: tableScale }
-
-// Header row
-create text "Cell header pronoun" as h0 at (6, 5) inside grid.cell(0, 0) { content: "Pronombre", fontSize: 15, opacity: 0 }
-create text "Cell header ser" as h1 at (6, 5) inside grid.cell(0, 1) { content: "SER", fontSize: 17, opacity: 0 }
-create text "Cell header estar" as h2 at (6, 5) inside grid.cell(0, 2) { content: "ESTAR", fontSize: 17, opacity: 0 }
-
-// yo
-create text "Cell yo" as p1 at (6, 5) inside grid.cell(1, 0) { content: "yo", fontSize: 15, opacity: 0 }
-create text "Cell soy" as s1 at (6, 5) inside grid.cell(1, 1) { content: "soy", fontSize: 17, opacity: 0 }
-create text "Cell estoy" as e1 at (6, 5) inside grid.cell(1, 2) { content: "estoy", fontSize: 17, opacity: 0 }
-
-// tú
-create text "Cell tu" as p2 at (6, 5) inside grid.cell(2, 0) { content: "tú", fontSize: 15, opacity: 0 }
-create text "Cell eres" as s2 at (6, 5) inside grid.cell(2, 1) { content: "eres", fontSize: 17, opacity: 0 }
-create text "Cell estas" as e2 at (6, 5) inside grid.cell(2, 2) { content: "estás", fontSize: 17, opacity: 0 }
-
-// él / ella
-create text "Cell el ella" as p3 at (6, 5) inside grid.cell(3, 0) { content: "él / ella", fontSize: 15, opacity: 0 }
-create text "Cell es" as s3 at (6, 5) inside grid.cell(3, 1) { content: "es", fontSize: 17, opacity: 0 }
-create text "Cell esta" as e3 at (6, 5) inside grid.cell(3, 2) { content: "está", fontSize: 17, opacity: 0 }
-
-// nosotros
-create text "Cell nosotros" as p4 at (6, 5) inside grid.cell(4, 0) { content: "nosotros", fontSize: 15, opacity: 0 }
-create text "Cell somos" as s4 at (6, 5) inside grid.cell(4, 1) { content: "somos", fontSize: 17, opacity: 0 }
-create text "Cell estamos" as e4 at (6, 5) inside grid.cell(4, 2) { content: "estamos", fontSize: 17, opacity: 0 }
-
-// vosotros
-create text "Cell vosotros" as p5 at (6, 5) inside grid.cell(5, 0) { content: "vosotros", fontSize: 15, opacity: 0 }
-create text "Cell sois" as s5 at (6, 5) inside grid.cell(5, 1) { content: "sois", fontSize: 17, opacity: 0 }
-create text "Cell estais" as e5 at (6, 5) inside grid.cell(5, 2) { content: "estáis", fontSize: 17, opacity: 0 }
-
-// ellos
-create text "Cell ellos" as p6 at (6, 5) inside grid.cell(6, 0) { content: "ellos", fontSize: 15, opacity: 0 }
-create text "Cell son" as s6 at (6, 5) inside grid.cell(6, 1) { content: "son", fontSize: 17, opacity: 0 }
-create text "Cell estan" as e6 at (6, 5) inside grid.cell(6, 2) { content: "están", fontSize: 17, opacity: 0 }
-
-// Palette: SER is blue, ESTAR is orange, pronouns stay slate — lightened so
-// the chalk reads on the dark board.
-h0.tint("#B0BEC5")
-h1.tint("#81D4FA")
-h2.tint("#FFCC80")
-p1.tint("#CFD8DC")
-p2.tint("#CFD8DC")
-p3.tint("#CFD8DC")
-p4.tint("#CFD8DC")
-p5.tint("#CFD8DC")
-p6.tint("#CFD8DC")
-s1.tint("#81D4FA")
-s2.tint("#81D4FA")
-s3.tint("#81D4FA")
-s4.tint("#81D4FA")
-s5.tint("#81D4FA")
-s6.tint("#81D4FA")
-e1.tint("#FFCC80")
-e2.tint("#FFCC80")
-e3.tint("#FFCC80")
-e4.tint("#FFCC80")
-e5.tint("#FFCC80")
-e6.tint("#FFCC80")
-
-// ── Examples (three SER on the left, three ESTAR on the right) ────────────
-// 1. Yo soy estudiante. / I am a student.
-create text "ex1a" as ex1a at (107, 555) inside board { content: "Yo ", fontSize: 30, opacity: 0 }
-create text "ex1b" as ex1b at (161, 555) inside board { content: "soy", fontSize: 30, opacity: 0 }
-create text "ex1c" as ex1c at (296, 555) inside board { content: " estudiante.", fontSize: 30, opacity: 0 }
-create text "ex1t" as ex1t at (175, 599) inside board { content: "I am a student.", fontSize: 21, opacity: 0 }
-ex1a.tint("#F5E6C8")
-ex1b.tint("#4FC3F7")
-ex1c.tint("#F5E6C8")
-ex1t.tint("#A8A092")
-
-// 2. Estoy en el trabajo. / I am at work.
-create text "ex2a" as ex2a at (635, 555) inside board { content: "Estoy", fontSize: 30, opacity: 0 }
-create text "ex2b" as ex2b at (815, 555) inside board { content: " en el trabajo.", fontSize: 30, opacity: 0 }
-create text "ex2t" as ex2t at (672, 599) inside board { content: "I am at work.", fontSize: 21, opacity: 0 }
-ex2a.tint("#FFB74D")
-ex2b.tint("#F5E6C8")
-ex2t.tint("#A8A092")
-
-// 3. Tú eres mi amigo. / You are my friend.
-create text "ex3a" as ex3a at (107, 665) inside board { content: "Tú ", fontSize: 30, opacity: 0 }
-create text "ex3b" as ex3b at (170, 665) inside board { content: "eres", fontSize: 30, opacity: 0 }
-create text "ex3c" as ex3c at (296, 665) inside board { content: " mi amigo.", fontSize: 30, opacity: 0 }
-create text "ex3t" as ex3t at (193, 709) inside board { content: "You are my friend.", fontSize: 21, opacity: 0 }
-ex3a.tint("#F5E6C8")
-ex3b.tint("#4FC3F7")
-ex3c.tint("#F5E6C8")
-ex3t.tint("#A8A092")
-
-// 4. Ella está en casa. / She is at home.
-create text "ex4a" as ex4a at (635, 665) inside board { content: "Ella ", fontSize: 30, opacity: 0 }
-create text "ex4b" as ex4b at (716, 665) inside board { content: "está", fontSize: 30, opacity: 0 }
-create text "ex4c" as ex4c at (833, 665) inside board { content: " en casa.", fontSize: 30, opacity: 0 }
-create text "ex4t" as ex4t at (685, 709) inside board { content: "She is at home.", fontSize: 21, opacity: 0 }
-ex4a.tint("#F5E6C8")
-ex4b.tint("#FFB74D")
-ex4c.tint("#F5E6C8")
-ex4t.tint("#A8A092")
-
-// 5. Nosotros somos amigos. / We are friends.
-create text "ex5a" as ex5a at (161, 775) inside board { content: "Nosotros ", fontSize: 30, opacity: 0 }
-create text "ex5b" as ex5b at (287, 775) inside board { content: "somos", fontSize: 30, opacity: 0 }
-create text "ex5c" as ex5c at (404, 775) inside board { content: " amigos.", fontSize: 30, opacity: 0 }
-create text "ex5t" as ex5t at (175, 819) inside board { content: "We are friends.", fontSize: 21, opacity: 0 }
-ex5a.tint("#F5E6C8")
-ex5b.tint("#4FC3F7")
-ex5c.tint("#F5E6C8")
-ex5t.tint("#A8A092")
-
-// 6. Ellos están cansados. / They are tired.
-create text "ex6a" as ex6a at (644, 775) inside board { content: "Ellos ", fontSize: 30, opacity: 0 }
-create text "ex6b" as ex6b at (743, 775) inside board { content: "están", fontSize: 30, opacity: 0 }
-create text "ex6c" as ex6c at (878, 775) inside board { content: " cansados.", fontSize: 30, opacity: 0 }
-create text "ex6t" as ex6t at (685, 819) inside board { content: "They are tired.", fontSize: 21, opacity: 0 }
-ex6a.tint("#F5E6C8")
-ex6b.tint("#FFB74D")
-ex6c.tint("#F5E6C8")
-ex6t.tint("#A8A092")
-
-// ── Closing line ──────────────────────────────────────────────────────────
-create text "Recap" as recap at (cw / 2, 852) inside board { content: "SER = cómo es  ·  ESTAR = cómo está", fontSize: 24, alignment: "center", opacity: 0 }
-recap.tint("#F5E6C8")
-
-// The whole board renders through the built-in Chalk shader.
+bind chalk = material("Chalk")
+create asset "paw with chalk" as chalkpaw at (1500, 1200) { scaleX: 0.12, scaleY: 0.12 }
+create asset "paw with rag" as ragpaw at (1640, 1200) { scaleX: 0.12, scaleY: 0.12 }
+create asset "paw with laser" as laserpaw at (1780, 1200) { scaleX: 0.12, scaleY: 0.12 }
+create asset "paw empty" as pawempty at (1920, 1200) { scaleX: 0.12, scaleY: 0.12 }
+create group "Ser Estar board" as board
 board.material(chalk)
-
-// ── Timing ────────────────────────────────────────────────────────────────
-at(0) bg.fadeIn(1.4)
-at(0.8) title.fadeIn(1.0)
-at(4.2) title.fadeOut(0.6)
-at(5.0) grid.fadeIn(0.8)
-
-at(6.0) h0.fadeIn(0.45)
-at(6.2) h1.fadeIn(0.45)
-at(6.4) h2.fadeIn(0.45)
-
-at(7.4) p1.fadeIn(0.45)
-at(7.6) s1.fadeIn(0.45)
-at(7.8) e1.fadeIn(0.45)
-at(8.55) p2.fadeIn(0.45)
-at(8.75) s2.fadeIn(0.45)
-at(8.95) e2.fadeIn(0.45)
-at(9.7) p3.fadeIn(0.45)
-at(9.9) s3.fadeIn(0.45)
-at(10.1) e3.fadeIn(0.45)
-at(10.85) p4.fadeIn(0.45)
-at(11.05) s4.fadeIn(0.45)
-at(11.25) e4.fadeIn(0.45)
-at(12.0) p5.fadeIn(0.45)
-at(12.2) s5.fadeIn(0.45)
-at(12.4) e5.fadeIn(0.45)
-at(13.15) p6.fadeIn(0.45)
-at(13.35) s6.fadeIn(0.45)
-at(13.55) e6.fadeIn(0.45)
-
-at(15.6) ex1a.fadeIn(0.7)
-at(15.6) ex1b.fadeIn(0.7)
-at(15.6) ex1c.fadeIn(0.7)
-at(15.95) ex1t.fadeIn(0.7)
-at(16.5) ex2a.fadeIn(0.7)
-at(16.5) ex2b.fadeIn(0.7)
-at(16.85) ex2t.fadeIn(0.7)
-
-at(19.2) ex3a.fadeIn(0.7)
-at(19.2) ex3b.fadeIn(0.7)
-at(19.2) ex3c.fadeIn(0.7)
-at(19.55) ex3t.fadeIn(0.7)
-at(20.1) ex4a.fadeIn(0.7)
-at(20.1) ex4b.fadeIn(0.7)
-at(20.1) ex4c.fadeIn(0.7)
-at(20.45) ex4t.fadeIn(0.7)
-
-at(22.8) ex5a.fadeIn(0.7)
-at(22.8) ex5b.fadeIn(0.7)
-at(22.8) ex5c.fadeIn(0.7)
-at(23.15) ex5t.fadeIn(0.7)
-at(23.7) ex6a.fadeIn(0.7)
-at(23.7) ex6b.fadeIn(0.7)
-at(23.7) ex6c.fadeIn(0.7)
-at(24.05) ex6t.fadeIn(0.7)
-
-at(26.0) recap.fadeIn(1.0)
+create text "Ser Estar title" as s1title at (cw / 2, 220) inside board { content: "Ser and Estar", fontSize: 64, alignment: "center" }
+s1title.tint("#F5E6C8")
+// Each object starts hidden by its reveal mask and is erased by a wipe mask.
+bind chalkHand = node("paw with chalk")
+bind ragHand = node("paw with rag")
+bind laserHand = node("paw with laser")
+bind emptyHand = node("paw empty")
+bind writeSfx = audio("writing-on-black-board")
+bind eraseSfx = audio("dry-erase")
+bind tS1 = node("Ser Estar title")
+mark("part-0")
+reveal(tS1, at: 1.0, over: 1.5, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+wipe(tS1, at: 8.0, over: 1.0, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: eraseSfx)
+create text "Ser identity title" as s2title at (545, 150) inside board { content: "Ser = lasting identity", fontSize: 40, alignment: "center" }
+create asset "oak-tree" as oakTree at (1500, 1200) { scaleX: 0.34, scaleY: 0.34 }
+create text "Oak label" as s2l1 at (545, 505) inside board { content: "Oak tree - lasting and solid", fontSize: 26, alignment: "center" }
+create text "Oak label ES" as s2l2 at (545, 548) inside board { content: "Árbol de roble - duradero y sólido", fontSize: 26, alignment: "center" }
+s2title.tint("#F5E6C8")
+s2l1.tint("#F5E6C8")
+s2l2.tint("#F5E6C8")
+bind tS2 = node("Ser identity title")
+bind imgOak = node("oak-tree")
+bind tS2L1 = node("Oak label")
+bind tS2L2 = node("Oak label ES")
+mark("part-1")
+reveal(tS2, at: 12, over: 1.5, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+carry(imgOak, to: { x: 545, y: 360 }, approach: { x: 1500, y: 900 }, approachOver: 0.8, at: 16, over: 1.5, visual: emptyHand, visualScale: 4, visualAnchor: "top-center")
+reveal(tS2L1, at: 20, over: 0.8, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(tS2L2, at: 21.1, over: 0.8, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+wipe(tS2L1, at: 24.4, over: 0.6, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: eraseSfx)
+wipe(tS2L2, at: 25.3, over: 0.6, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: eraseSfx)
+carry(imgOak, to: { x: 1500, y: 1200 }, approach: { x: 545, y: 360 }, approachOver: 0.8, at: 28.4, over: 1.5, visual: emptyHand, visualScale: 4, visualAnchor: "top-center")
+wipe(tS2, at: 32.4, over: 1.0, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: eraseSfx)
+create text "Estar state title" as s3title at (545, 150) inside board { content: "Estar = temporary state and place", fontSize: 40, alignment: "center" }
+create asset "melting-ice-cube" as iceCube at (1500, 1200) { scaleX: 0.34, scaleY: 0.34 }
+create text "Ice label" as s3l1 at (545, 505) inside board { content: "Melting ice cube - cold right now", fontSize: 26, alignment: "center" }
+create text "Ice label ES" as s3l2 at (545, 548) inside board { content: "Cubito de hielo - frío ahora mismo", fontSize: 26, alignment: "center" }
+s3title.tint("#F5E6C8")
+s3l1.tint("#F5E6C8")
+s3l2.tint("#F5E6C8")
+bind tS3 = node("Estar state title")
+bind imgIce = node("melting-ice-cube")
+bind tS3L1 = node("Ice label")
+bind tS3L2 = node("Ice label ES")
+mark("part-2")
+reveal(tS3, at: 36, over: 1.5, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+carry(imgIce, to: { x: 545, y: 360 }, approach: { x: 1500, y: 900 }, approachOver: 0.8, at: 39.5, over: 1.5, visual: emptyHand, visualScale: 4, visualAnchor: "top-center")
+reveal(tS3L1, at: 43, over: 0.8, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(tS3L2, at: 45.8, over: 0.8, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+wipe(tS3L1, at: 48.6, over: 0.6, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: eraseSfx)
+wipe(tS3L2, at: 51.2, over: 0.6, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: eraseSfx)
+carry(imgIce, to: { x: 1500, y: 1200 }, approach: { x: 545, y: 360 }, approachOver: 0.8, at: 53.8, over: 1.5, visual: emptyHand, visualScale: 4, visualAnchor: "top-center")
+wipe(tS3, at: 57.3, over: 1.0, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: eraseSfx)
+create text "Step4 title" as s4title at (545, 120) inside board { content: "Same word, different verb, different meaning", fontSize: 32, alignment: "center" }
+create asset "red-fox" as fox at (1500, 1200) { scaleX: 0.34, scaleY: 0.34 }
+create text "Fox label" as s4foxl at (340, 505) inside board { content: "Red fox - es listo means clever", fontSize: 22, alignment: "center" }
+create asset "brown-suitcase" as suitcase at (1640, 1200) { scaleX: 0.34, scaleY: 0.34 }
+create text "Case label" as s4casel at (750, 505) inside board { content: "Brown suitcase - está listo means ready", fontSize: 22, alignment: "center" }
+create table "Step 4 table" as t4grid at (290, 580) inside board { columns: [170, 170, 170], rows: [["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""]], padding: 6, borderWidth: 2, borderColor: "#FFFFFF", background: "transparent" }
+create text "t4c00" as c00 at (5, 5) inside t4grid.cell(0, 0) { content: "Spanish", fontSize: 17 }
+create text "t4c01" as c01 at (5, 5) inside t4grid.cell(0, 1) { content: "Meaning with ser", fontSize: 17 }
+create text "t4c02" as c02 at (5, 5) inside t4grid.cell(0, 2) { content: "Meaning with estar", fontSize: 17 }
+create text "t4c10" as c10 at (5, 5) inside t4grid.cell(1, 0) { content: "listo", fontSize: 17 }
+create text "t4c11" as c11 at (5, 5) inside t4grid.cell(1, 1) { content: "clever", fontSize: 17 }
+create text "t4c12" as c12 at (5, 5) inside t4grid.cell(1, 2) { content: "ready", fontSize: 17 }
+create text "t4c20" as c20 at (5, 5) inside t4grid.cell(2, 0) { content: "aburrido", fontSize: 17 }
+create text "t4c21" as c21 at (5, 5) inside t4grid.cell(2, 1) { content: "boring", fontSize: 17 }
+create text "t4c22" as c22 at (5, 5) inside t4grid.cell(2, 2) { content: "bored", fontSize: 17 }
+create text "t4c30" as c30 at (5, 5) inside t4grid.cell(3, 0) { content: "bueno", fontSize: 17 }
+create text "t4c31" as c31 at (5, 5) inside t4grid.cell(3, 1) { content: "good person", fontSize: 17 }
+create text "t4c32" as c32 at (5, 5) inside t4grid.cell(3, 2) { content: "tasty / well", fontSize: 17 }
+s4title.tint("#F5E6C8")
+s4foxl.tint("#F5E6C8")
+s4casel.tint("#F5E6C8")
+c00.tint("#F5E6C8")
+c01.tint("#F5E6C8")
+c02.tint("#F5E6C8")
+c10.tint("#F5E6C8")
+c11.tint("#F5E6C8")
+c12.tint("#F5E6C8")
+c20.tint("#F5E6C8")
+c21.tint("#F5E6C8")
+c22.tint("#F5E6C8")
+c30.tint("#F5E6C8")
+c31.tint("#F5E6C8")
+c32.tint("#F5E6C8")
+bind tS4 = node("Step4 title")
+bind imgFox = node("red-fox")
+bind tFoxL = node("Fox label")
+bind imgCase = node("brown-suitcase")
+bind tCaseL = node("Case label")
+bind gT4 = table("Step 4 table")
+bind c00 = node("t4c00")
+bind c01 = node("t4c01")
+bind c02 = node("t4c02")
+bind c10 = node("t4c10")
+bind c11 = node("t4c11")
+bind c12 = node("t4c12")
+bind c20 = node("t4c20")
+bind c21 = node("t4c21")
+bind c22 = node("t4c22")
+bind c30 = node("t4c30")
+bind c31 = node("t4c31")
+bind c32 = node("t4c32")
+mark("part-3")
+reveal(tS4, at: 60, over: 2.0, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+carry(imgFox, to: { x: 340, y: 330 }, approach: { x: 1500, y: 1200 }, approachOver: 0.8, at: 62.4, over: 1.5, visual: emptyHand, visualScale: 4, visualAnchor: "top-center")
+reveal(tFoxL, at: 64.3, over: 1.0, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+carry(imgCase, to: { x: 750, y: 330 }, approach: { x: 1640, y: 1200 }, approachOver: 0.8, at: 65.7, over: 1.5, visual: emptyHand, visualScale: 4, visualAnchor: "top-center")
+reveal(tCaseL, at: 67.6, over: 1.0, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(gT4, at: 69, over: 1.2, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleY: { from: 24, to: 54 }, wobbleSpeed: 7, sound: writeSfx)
+wipe(c00, at: 70.2, over: 0.01, visual: none)
+wipe(c01, at: 70.2, over: 0.01, visual: none)
+wipe(c02, at: 70.2, over: 0.01, visual: none)
+wipe(c10, at: 70.2, over: 0.01, visual: none)
+wipe(c11, at: 70.2, over: 0.01, visual: none)
+wipe(c12, at: 70.2, over: 0.01, visual: none)
+wipe(c20, at: 70.2, over: 0.01, visual: none)
+wipe(c21, at: 70.2, over: 0.01, visual: none)
+wipe(c22, at: 70.2, over: 0.01, visual: none)
+wipe(c30, at: 70.2, over: 0.01, visual: none)
+wipe(c31, at: 70.2, over: 0.01, visual: none)
+wipe(c32, at: 70.2, over: 0.01, visual: none)
+reveal(c00, at: 70.6, over: 0.5, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(c01, at: 71.5, over: 0.6, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(c02, at: 72.5, over: 0.6, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(c10, at: 73.5, over: 0.3, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(c11, at: 74.2, over: 0.3, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(c12, at: 74.9, over: 0.3, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(c20, at: 75.6, over: 0.4, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(c21, at: 76.4, over: 0.3, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(c22, at: 77.1, over: 0.3, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(c30, at: 77.8, over: 0.3, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(c31, at: 78.5, over: 0.5, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(c32, at: 79.4, over: 0.6, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+wipe(tFoxL, at: 80.4, over: 0.8, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: eraseSfx)
+wipe(tCaseL, at: 81.6, over: 0.8, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: eraseSfx)
+carry(imgFox, to: { x: 1500, y: 1200 }, approach: { x: 340, y: 330 }, approachOver: 0.8, at: 82.8, over: 1.5, visual: emptyHand, visualScale: 4, visualAnchor: "top-center")
+carry(imgCase, to: { x: 1640, y: 1200 }, approach: { x: 750, y: 330 }, approachOver: 0.8, at: 84.7, over: 1.5, visual: emptyHand, visualScale: 4, visualAnchor: "top-center")
+wipe(subtree(t4grid), at: 86.6, over: 1.5, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: eraseSfx)
+wipe(tS4, at: 88.5, over: 1.0, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: eraseSfx)
+create table "Recap table" as t5agrid at (265, 300) inside board { columns: [280, 280], rows: [["", ""], ["", ""], ["", ""], ["", ""]], padding: 6, borderWidth: 2, borderColor: "#FFFFFF", background: "transparent" }
+create text "t5ac00" as t5ac00 at (5, 5) inside t5agrid.cell(0, 0) { content: "Use ser for", fontSize: 17 }
+create text "t5ac01" as t5ac01 at (5, 5) inside t5agrid.cell(0, 1) { content: "Use estar for", fontSize: 17 }
+create text "t5ac10" as t5ac10 at (5, 5) inside t5agrid.cell(1, 0) { content: "identity and traits", fontSize: 17 }
+create text "t5ac11" as t5ac11 at (5, 5) inside t5agrid.cell(1, 1) { content: "feelings now", fontSize: 17 }
+create text "t5ac20" as t5ac20 at (5, 5) inside t5agrid.cell(2, 0) { content: "origin and material", fontSize: 17 }
+create text "t5ac21" as t5ac21 at (5, 5) inside t5agrid.cell(2, 1) { content: "location now", fontSize: 17 }
+create text "t5ac30" as t5ac30 at (5, 5) inside t5agrid.cell(3, 0) { content: "es listo = clever", fontSize: 17 }
+create text "t5ac31" as t5ac31 at (5, 5) inside t5agrid.cell(3, 1) { content: "está listo = ready", fontSize: 17 }
+create text "Conjugation title" as s5t2 at (545, 150) inside board { content: "How you conjugate ser and estar", fontSize: 36, alignment: "center" }
+create table "Conjugation table" as t5bgrid at (290, 260) inside board { columns: [170, 170, 170], rows: [["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""]], padding: 6, borderWidth: 2, borderColor: "#FFFFFF", background: "transparent" }
+create text "t5bc00" as t5bc00 at (5, 5) inside t5bgrid.cell(0, 0) { content: "Person", fontSize: 17 }
+create text "t5bc01" as t5bc01 at (5, 5) inside t5bgrid.cell(0, 1) { content: "ser", fontSize: 17 }
+create text "t5bc02" as t5bc02 at (5, 5) inside t5bgrid.cell(0, 2) { content: "estar", fontSize: 17 }
+create text "t5bc10" as t5bc10 at (5, 5) inside t5bgrid.cell(1, 0) { content: "yo", fontSize: 17 }
+create text "t5bc11" as t5bc11 at (5, 5) inside t5bgrid.cell(1, 1) { content: "soy", fontSize: 17 }
+create text "t5bc12" as t5bc12 at (5, 5) inside t5bgrid.cell(1, 2) { content: "estoy", fontSize: 17 }
+create text "t5bc20" as t5bc20 at (5, 5) inside t5bgrid.cell(2, 0) { content: "tú", fontSize: 17 }
+create text "t5bc21" as t5bc21 at (5, 5) inside t5bgrid.cell(2, 1) { content: "eres", fontSize: 17 }
+create text "t5bc22" as t5bc22 at (5, 5) inside t5bgrid.cell(2, 2) { content: "estás", fontSize: 17 }
+create text "t5bc30" as t5bc30 at (5, 5) inside t5bgrid.cell(3, 0) { content: "él / ella", fontSize: 17 }
+create text "t5bc31" as t5bc31 at (5, 5) inside t5bgrid.cell(3, 1) { content: "es", fontSize: 17 }
+create text "t5bc32" as t5bc32 at (5, 5) inside t5bgrid.cell(3, 2) { content: "está", fontSize: 17 }
+create text "t5bc40" as t5bc40 at (5, 5) inside t5bgrid.cell(4, 0) { content: "nosotros", fontSize: 17 }
+create text "t5bc41" as t5bc41 at (5, 5) inside t5bgrid.cell(4, 1) { content: "somos", fontSize: 17 }
+create text "t5bc42" as t5bc42 at (5, 5) inside t5bgrid.cell(4, 2) { content: "estamos", fontSize: 17 }
+create text "t5bc50" as t5bc50 at (5, 5) inside t5bgrid.cell(5, 0) { content: "vosotros", fontSize: 17 }
+create text "t5bc51" as t5bc51 at (5, 5) inside t5bgrid.cell(5, 1) { content: "sois", fontSize: 17 }
+create text "t5bc52" as t5bc52 at (5, 5) inside t5bgrid.cell(5, 2) { content: "estáis", fontSize: 17 }
+s5t2.tint("#F5E6C8")
+t5ac00.tint("#F5E6C8")
+t5ac01.tint("#F5E6C8")
+t5ac10.tint("#F5E6C8")
+t5ac11.tint("#F5E6C8")
+t5ac20.tint("#F5E6C8")
+t5ac21.tint("#F5E6C8")
+t5ac30.tint("#F5E6C8")
+t5ac31.tint("#F5E6C8")
+t5bc00.tint("#F5E6C8")
+t5bc01.tint("#F5E6C8")
+t5bc02.tint("#F5E6C8")
+t5bc10.tint("#F5E6C8")
+t5bc11.tint("#F5E6C8")
+t5bc12.tint("#F5E6C8")
+t5bc20.tint("#F5E6C8")
+t5bc21.tint("#F5E6C8")
+t5bc22.tint("#F5E6C8")
+t5bc30.tint("#F5E6C8")
+t5bc31.tint("#F5E6C8")
+t5bc32.tint("#F5E6C8")
+t5bc40.tint("#F5E6C8")
+t5bc41.tint("#F5E6C8")
+t5bc42.tint("#F5E6C8")
+t5bc50.tint("#F5E6C8")
+t5bc51.tint("#F5E6C8")
+t5bc52.tint("#F5E6C8")
+bind gT5A = table("Recap table")
+bind tS5T2 = node("Conjugation title")
+bind gT5B = table("Conjugation table")
+bind a00 = node("t5ac00")
+bind a01 = node("t5ac01")
+bind a10 = node("t5ac10")
+bind a11 = node("t5ac11")
+bind a20 = node("t5ac20")
+bind a21 = node("t5ac21")
+bind a30 = node("t5ac30")
+bind a31 = node("t5ac31")
+bind b00 = node("t5bc00")
+bind b01 = node("t5bc01")
+bind b02 = node("t5bc02")
+bind b10 = node("t5bc10")
+bind b11 = node("t5bc11")
+bind b12 = node("t5bc12")
+bind b20 = node("t5bc20")
+bind b21 = node("t5bc21")
+bind b22 = node("t5bc22")
+bind b30 = node("t5bc30")
+bind b31 = node("t5bc31")
+bind b32 = node("t5bc32")
+bind b40 = node("t5bc40")
+bind b41 = node("t5bc41")
+bind b42 = node("t5bc42")
+bind b50 = node("t5bc50")
+bind b51 = node("t5bc51")
+bind b52 = node("t5bc52")
+mark("part-4")
+reveal(gT5A, at: 92.0, over: 1.2, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 24, to: 54 }, wobbleSpeed: 7, sound: writeSfx)
+wipe(a00, at: 93.5, over: 0.01, visual: none)
+wipe(a01, at: 93.5, over: 0.01, visual: none)
+wipe(a10, at: 93.5, over: 0.01, visual: none)
+wipe(a11, at: 93.5, over: 0.01, visual: none)
+wipe(a20, at: 93.5, over: 0.01, visual: none)
+wipe(a21, at: 93.5, over: 0.01, visual: none)
+wipe(a30, at: 93.5, over: 0.01, visual: none)
+wipe(a31, at: 93.5, over: 0.01, visual: none)
+reveal(a00, at: 94.0, over: 1.1, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(a01, at: 95.5, over: 1.3, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(a10, at: 97.2, over: 1.9, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(a11, at: 99.5, over: 1.2, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(a20, at: 101.1, over: 1.9, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(a21, at: 103.4, over: 1.2, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(a30, at: 105.0, over: 1.7, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(a31, at: 107.1, over: 1.9, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+wipe(subtree(t5agrid), at: 109.3, over: 0.6, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 24, to: 54 }, wobbleSpeed: 7, sound: eraseSfx)
+reveal(tS5T2, at: 110.2, over: 2.0, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(gT5B, at: 112.5, over: 1.2, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 24, to: 54 }, wobbleSpeed: 7, sound: writeSfx)
+wipe(b00, at: 114.0, over: 0.01, visual: none)
+wipe(b01, at: 114.0, over: 0.01, visual: none)
+wipe(b02, at: 114.0, over: 0.01, visual: none)
+wipe(b10, at: 114.0, over: 0.01, visual: none)
+wipe(b11, at: 114.0, over: 0.01, visual: none)
+wipe(b12, at: 114.0, over: 0.01, visual: none)
+wipe(b20, at: 114.0, over: 0.01, visual: none)
+wipe(b21, at: 114.0, over: 0.01, visual: none)
+wipe(b22, at: 114.0, over: 0.01, visual: none)
+wipe(b30, at: 114.0, over: 0.01, visual: none)
+wipe(b31, at: 114.0, over: 0.01, visual: none)
+wipe(b32, at: 114.0, over: 0.01, visual: none)
+wipe(b40, at: 114.0, over: 0.01, visual: none)
+wipe(b41, at: 114.0, over: 0.01, visual: none)
+wipe(b42, at: 114.0, over: 0.01, visual: none)
+wipe(b50, at: 114.0, over: 0.01, visual: none)
+wipe(b51, at: 114.0, over: 0.01, visual: none)
+wipe(b52, at: 114.0, over: 0.01, visual: none)
+reveal(b00, at: 114.4, over: 0.6, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b01, at: 115.4, over: 0.3, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b02, at: 116.1, over: 0.5, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b10, at: 117.0, over: 0.3, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 4, to: 8 }, wobbleY: { from: 3, to: 6 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b11, at: 117.7, over: 0.3, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b12, at: 118.4, over: 0.5, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b20, at: 119.3, over: 0.3, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 4, to: 8 }, wobbleY: { from: 3, to: 6 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b21, at: 120.0, over: 0.4, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b22, at: 120.8, over: 0.5, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b30, at: 121.7, over: 0.9, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b31, at: 123.0, over: 0.3, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 4, to: 8 }, wobbleY: { from: 3, to: 6 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b32, at: 123.7, over: 0.4, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b40, at: 124.5, over: 0.8, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b41, at: 125.7, over: 0.5, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b42, at: 126.6, over: 0.7, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b50, at: 127.7, over: 0.8, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b51, at: 128.9, over: 0.4, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+reveal(b52, at: 129.7, over: 0.6, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: writeSfx)
+wipe(subtree(t5bgrid), at: 130.6, over: 0.6, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 24, to: 54 }, wobbleSpeed: 7, sound: eraseSfx)
+wipe(tS5T2, at: 131.4, over: 0.5, visual: ragHand, visualScale: 4, visualAnchor: "top-center", wobbleX: { from: 12, to: 24 }, wobbleY: { from: 8, to: 18 }, wobbleSpeed: 7, sound: eraseSfx)
