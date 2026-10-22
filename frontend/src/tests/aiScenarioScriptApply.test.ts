@@ -145,13 +145,18 @@ describe('Scenario script apply execution (issue #471)', () => {
     for (let i = 0; i < slides.length; i += 1) {
       const slide = slides[i]!
       const draft = plan.slides[i]!
-      // One verbatim part, no stale audio links.
-      expect(slide.prompter?.parts).toHaveLength(1)
-      expect(slide.prompter!.parts[0]!.text).toBe(draft.prompterText)
-      expect(slide.prompter!.parts[0]!.audioClipId).toBeUndefined()
-      expect(slide.prompter!.parts[0]!.audioAssetId).toBeUndefined()
+      // Split parts, no stale audio links.
+      expect(slide.prompter?.parts).toHaveLength(draft.prompterParts.length)
+      expect(slide.prompter!.parts.map((p) => p.text)).toEqual(
+        draft.prompterParts.map((p) => p.text),
+      )
+      for (const part of slide.prompter!.parts) {
+        expect(part.audioClipId).toBeUndefined()
+        expect(part.audioAssetId).toBeUndefined()
+      }
       // Slide length stays the sum of parts.
-      expect(slide.prompter!.parts[0]!.duration).toBeCloseTo(draft.duration, 9)
+      const partsSum = slide.prompter!.parts.reduce((sum, p) => sum + p.duration, 0)
+      expect(partsSum).toBeCloseTo(draft.duration, 9)
       expect(slide.duration).toBeCloseTo(draft.duration, 9)
       // Board script written verbatim.
       expect(slide.animationScript?.source).toBe(draft.source)

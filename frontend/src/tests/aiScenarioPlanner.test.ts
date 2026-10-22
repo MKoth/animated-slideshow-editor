@@ -90,8 +90,20 @@ describe('Scenario planner core (issue #469)', () => {
     const result = planScenarioDraft(TWO_STEP_DOC, 0.1, [])
     expect(result.slides[0]?.prompterText).toBe('Ser is for who you are.')
     expect(result.slides[1]?.prompterText).toBe('Estar is for where you are.')
-    expect(result.slides[0]?.duration).toBeCloseTo('Ser is for who you are.'.length * 0.1)
-    expect(result.slides[1]?.duration).toBeCloseTo('Estar is for where you are.'.length * 0.1)
+    // Split like manual paste: delimiters stripped, so single-sentence
+    // narrators lose their trailing period for duration math.
+    expect(result.slides[0]?.prompterParts).toHaveLength(1)
+    expect(result.slides[0]?.prompterParts[0]?.text).toBe('Ser is for who you are')
+    expect(result.slides[0]?.prompterParts[0]?.promptBlockId).toBe('prompt-1-1')
+    expect(result.slides[0]?.prompterParts[0]?.markName).toBe('part-0')
+    expect(result.slides[0]?.duration).toBeCloseTo('Ser is for who you are'.length * 0.1)
+    expect(result.slides[1]?.duration).toBeCloseTo('Estar is for where you are'.length * 0.1)
+    // Slide length stays the sum of parts.
+    for (const slide of result.slides) {
+      const sum = slide.prompterParts.reduce((total, part) => total + part.duration, 0)
+      expect(slide.duration).toBeCloseTo(sum, 9)
+      expect(slide.duration).toBeCloseTo(slide.prompterDuration, 9)
+    }
   })
 
   it('board sources reuse backdrop, park performers, keep names verbatim, no absolute times', () => {
@@ -279,7 +291,7 @@ describe('Scenario planner tables, teardown, overflow, fractions (issue #470)', 
   })
 
   it('pads the owning prompter part on overflow while slide length stays the sum of parts', () => {
-    // Tiny narrator (4 chars → 0.4s) with a 2x2 table needing 5s+.
+    // Tiny narrator ("Hi" after `!` stripped → 0.2s) with a 2x2 table needing 5s+.
     const doc = [
       '# Lesson',
       '',
@@ -297,13 +309,15 @@ describe('Scenario planner tables, teardown, overflow, fractions (issue #470)', 
     const result = planScenarioDraft(doc, 0.1, [])
     const slide = result.slides[0]
     expect(slide).toBeDefined()
-    // 4 cells × 1s + border 1s = 5s > 0.3s narrator ("Hi!").
-    expect(slide?.prompterDuration).toBeCloseTo(0.3, 6)
+    // 4 cells × 1s + border 1s = 5s > 0.2s narrator ("Hi" without `!`).
+    expect(slide?.prompterDuration).toBeCloseTo(0.2, 6)
     expect(slide?.boardCost).toBeCloseTo(5, 6)
     expect(slide?.padded).toBe(true)
     expect(slide?.duration).toBeCloseTo(5, 6)
-    // Slide length stays the sum of parts: single part, duration equals total.
+    // Slide length stays the sum of parts: padded total equals the parts sum.
     expect(slide?.duration).toBe(slide?.boardCost)
+    const partsSum = (slide?.prompterParts ?? []).reduce((sum, part) => sum + part.duration, 0)
+    expect(slide?.duration).toBeCloseTo(partsSum, 9)
     const paddedDiag = result.diagnostics.find((d) => d.code === 'overflow-padded')
     expect(paddedDiag?.severity).toBe('warning')
     expect(paddedDiag?.step).toBe(1)
@@ -337,8 +351,10 @@ describe('Scenario planner tables, teardown, overflow, fractions (issue #470)', 
     const result = planScenarioDraft(TWO_STEP_DOC, 0.1, [])
     for (const slide of result.slides) {
       expect(slide.fractions.length).toBeGreaterThan(0)
+      const ownedBlocks = new Set(slide.prompterParts.map((part) => part.promptBlockId))
       for (const fraction of slide.fractions) {
-        expect(fraction.block).toBe(slide.promptBlockId)
+        // Each action ties to its owning split block (`prompt-N-M`).
+        expect(ownedBlocks.has(fraction.block)).toBe(true)
         expect(fraction.fraction).toBeGreaterThan(0)
         expect(fraction.fraction).toBeLessThanOrEqual(1)
       }

@@ -17,12 +17,12 @@ import type { PlannerResult, PlannerSlide } from './scenarioPlanner'
  * Pure command builder plus the one-Transaction execution seam: given the
  * deterministic planner result and the live slide list, converge slides
  * positionally (keeps renamed, surplus deleted, missing created), replace
- * each target slide's prompter with its single verbatim part (prior parts
- * deleted, which drops their stale audio links), set the slide duration to
- * the sum of parts, and write the board script source — all as one
- * Transaction with one undoable History entry. Re-runs converge without
- * duplicates: keeps are positional prefix matches, so a second apply only
- * rewrites content.
+ * each target slide's prompter with its split parts (prior parts deleted,
+ * which drops their stale audio links), set the slide duration to the sum
+ * of parts, and write the board script source — all as one Transaction
+ * with one undoable History entry. Re-runs converge without duplicates:
+ * keeps are positional prefix matches, so a second apply only rewrites
+ * content.
  *
  * Gating lives with the caller (the modal refuses without an accepted
  * snapshot and the Apply button stays disabled while the plan is blocked);
@@ -86,16 +86,23 @@ function slideContentCommands(
   for (let i = livePartIds.length - 1; i >= 0; i -= 1) {
     commands.push(new DeletePrompterPartCommand({ slideId, partId: livePartIds[i]! }))
   }
-  // One verbatim part: text is the step narrator, duration is the planned
-  // slide length (padded when table budgets overflowed the estimate).
-  commands.push(
-    new CreatePrompterPartCommand({
-      slideId,
-      text: draft.prompterText,
-      duration: draft.duration,
-    }),
-  )
-  // Slide length stays the sum of parts: single part, so both match.
+  // Split parts mirror manual prompter paste: one PrompterPart per prompt
+  // block (sentences + isolated foreign words), durations sum to the slide
+  // length (padded when table budgets overflowed the estimate).
+  const parts =
+    draft.prompterParts.length > 0
+      ? draft.prompterParts
+      : [{ text: draft.prompterText, duration: draft.duration }]
+  for (const part of parts) {
+    commands.push(
+      new CreatePrompterPartCommand({
+        slideId,
+        text: part.text,
+        duration: part.duration,
+      }),
+    )
+  }
+  // Slide length stays the sum of parts.
   commands.push(new SetSlideDurationCommand({ slideId, duration: draft.duration }))
   commands.push(new SetSlideAnimationScriptCommand({ slideId, source: draft.source }))
   return commands

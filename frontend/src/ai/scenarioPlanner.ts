@@ -3,15 +3,17 @@
  *
  * Deterministic, LLM-free pure seam: accepted scenario markdown plus the
  * project secondsPerCharacter setting yields a strict Slide N = Step N plan
- * with one verbatim prompter part per slide and a purely sequential board
+ * with split prompter parts per slide and a purely sequential board
  * draft.
  *
  * Identity (#469): positional convergence of middle slides to steps; display
  * name mirrors the step heading; insert/delete/rename middles, intro/outro
  * left to the caller.
  *
- * Prompter (#469): verbatim narrator text, duration = length ×
- * secondsPerCharacter.
+ * Prompter: narrator split like manual paste — sentence chunks on
+ * splitChars plus isolated foreign words/phrases as their own blocks
+ * (foreign list from chalk HTML `<strong class="foreign">` with stored
+ * fallback); duration = sum of part lengths × secondsPerCharacter.
  *
  * Board (#469 + #470):
  * - Sequential sources with no absolute time placements (`at:`); the
@@ -35,15 +37,15 @@
  *   split the remaining step time evenly and sequentially. Table budgets are
  *   fixed first; the remainder is shared.
  * - Overflow (#470): when fixed table budgets alone exceed the narrator
- *   estimate (or leave zero for non-cell actions), the owning prompter part is
- *   padded — slide duration grows to the board need — with `padded: true` on
- *   the slide plus a `overflow-padded` warning diagnostic. Slide length stays
- *   the sum of (padded) parts: each slide has one part, so duration is the
- *   padded total.
- * - Anchoring (#470): every board action ties to the owning prompt block
- *   (`prompt-N`, the single part mark per step) with a fractional position
- *   (midpoint of its `over:` window over the slide total). Fractions live in
- *   preview metadata only; generated scripts contain no absolute placements.
+ *   estimate (or leave zero for non-cell actions), the owning prompter parts
+ *   are padded — slide duration grows to the board need — with `padded: true`
+ *   on the slide plus a `overflow-padded` warning diagnostic. Slide length
+ *   stays the sum of (padded) parts.
+ * - Anchoring (#470): every board action ties to its owning prompt block
+ *   (`prompt-N-M` for the part whose window holds the action midpoint) with
+ *   a fractional position (midpoint of its `over:` window over the slide
+ *   total). Fractions live in preview metadata only; generated scripts
+ *   contain no absolute placements.
  *
  * Checker-clean ordering: paw `create asset` lines precede the
  * `bind node("paw ...")` lines so `node()` resolves to same-script creates
@@ -68,6 +70,8 @@ import {
 import type { ParsedScenario } from '../engine/scenarioMarkdown'
 import { markNameForPart } from './board'
 import { estimatePartDuration } from './narration'
+import { DEFAULT_PROMPTER_SPLIT_CHARS } from '../engine/prompter'
+import { resolveForeignWords, splitNarratorToPromptParts } from './scenarioPromptSplit'
 
 export interface PlannerExistingSlide {
   readonly id: string
@@ -91,6 +95,17 @@ export interface PlannerDiagnostic {
     | 'overflow-padded'
 }
 
+export interface PlannerPromptPart {
+  /** Split prompter text for one block (delimiters stripped, like manual paste). */
+  readonly text: string
+  /** Padded duration (sums to the slide total). */
+  readonly duration: number
+  /** Presentation id for this block (`prompt-N-M`). */
+  readonly promptBlockId: string
+  /** Compile-time mark for this block (`part-M`). */
+  readonly markName: string
+}
+
 export interface PlannerSlide {
   /** 1-based position in the draft (Slide N). */
   readonly position: number
@@ -99,24 +114,37 @@ export interface PlannerSlide {
   readonly title: string
   readonly slideName: string
   /**
-   * Slide length = sum of (padded) prompter parts. One part per slide, so this
-   * is the prompter estimate unless table budgets overflowed (see `padded`).
+   * Slide length = sum of (padded) prompter parts. Multiple parts per slide:
+   * sentences split on prompter splitChars with foreign words isolated as
+   * their own blocks (mirrors manual prompter paste).
    */
   readonly duration: number
-  /** Narrator estimate before padding (length × secondsPerCharacter). */
+  /** Narrator estimate before padding (sum of part lengths × secondsPerCharacter). */
   readonly prompterDuration: number
   /** Fixed board need from table budgets + non-cell shares (equals duration). */
   readonly boardCost: number
   /** True when table budgets overflowed the narrator estimate and padded it. */
   readonly padded: boolean
+  /** Original verbatim narrator (reference; parts carry the split texts). */
   readonly prompterText: string
+  /** Ordered prompt blocks for this slide (one PrompterPart each on apply). */
+  readonly prompterParts: readonly PlannerPromptPart[]
   readonly source: string
-  /** Cursor mark in the generated source (`part-0` per single-part slide). */
+  /** First part mark (`part-0`) — kept for single-mark readers. */
   readonly markName: string
-  /** Presentation id for the owning prompt block (`prompt-N`). */
+  /** Base presentation id for the slide (`prompt-N`) — parts use `prompt-N-M`. */
   readonly promptBlockId: string
   /** Per-action block fractions (preview/context metadata, never syntax). */
   readonly fractions: readonly PlannerFraction[]
+}
+
+export interface PlannerOptions {
+  /** Split delimiters (defaults to prompter setting / DEFAULT_PROMPTER_SPLIT_CHARS). */
+  readonly splitChars?: readonly string[]
+  /** Pre-resolved foreign words/phrases (unioned with HTML extraction). */
+  readonly foreignWords?: readonly string[]
+  /** Stored chalk HTML — `<strong class="foreign">` spans are parsed for foreigns. */
+  readonly html?: string
 }
 
 export interface PlannerFraction {
@@ -236,18 +264,20 @@ export function planParsedScenario(
   secondsPerCharacter: number,
   existingSlides: readonly PlannerExistingSlide[] = [],
   rawMarkdown = '',
+  options: PlannerOptions = {},
 ): PlannerResult {
-  return planFromParsed(parsed, secondsPerCharacter, existingSlides, rawMarkdown)
+  return planFromParsed(parsed, secondsPerCharacter, existingSlides, rawMarkdown, options)
 }
 
 export function planScenarioDraft(
   markdown: string,
   secondsPerCharacter: number,
   existingSlides: readonly PlannerExistingSlide[] = [],
+  options: PlannerOptions = {},
 ): PlannerResult {
   if (!(secondsPerCharacter > 0)) throw new Error('secondsPerCharacter must be > 0')
   const parsed = parseScenarioMarkdown(markdown)
-  return planFromParsed(parsed, secondsPerCharacter, existingSlides, markdown)
+  return planFromParsed(parsed, secondsPerCharacter, existingSlides, markdown, options)
 }
 
 function planFromParsed(
@@ -255,6 +285,7 @@ function planFromParsed(
   secondsPerCharacter: number,
   existingSlides: readonly PlannerExistingSlide[],
   rawMarkdown: string,
+  options: PlannerOptions = {},
 ): PlannerResult {
   if (!(secondsPerCharacter > 0)) throw new Error('secondsPerCharacter must be > 0')
   const diagnostics: PlannerDiagnostic[] = []
@@ -276,6 +307,9 @@ function planFromParsed(
   }
   for (const found of detectUnknownVerbs(rawMarkdown)) diagnostics.push(found)
 
+  const splitChars = options.splitChars ?? [...DEFAULT_PROMPTER_SPLIT_CHARS]
+  const foreignWords = resolveForeignWords(options.html, options.foreignWords)
+
   const slides: PlannerSlide[] = parsed.steps.map((step, order) => {
     const position = order + 1
     const title = step.title.trim()
@@ -290,17 +324,30 @@ function planFromParsed(
       })
     }
     const prompterText = narrator ?? ''
+    // Split like manual prompter paste (sentence delimiters) and isolate
+    // foreign words as their own blocks. Falls back to verbatim so a slide
+    // never plans zero parts.
+    let splitTexts = splitNarratorToPromptParts(prompterText, splitChars, foreignWords)
+    if (splitTexts.length === 0) {
+      const fallback = prompterText.trim()
+      splitTexts = fallback !== '' ? [fallback] : ['']
+    }
+    const estimates = splitTexts.map((text) => estimatePartDuration(text, secondsPerCharacter))
     // Reuses the duration estimator via the narration mirror (same function).
-    const prompterDuration = estimatePartDuration(prompterText, secondsPerCharacter)
-    const markName = markNameForPart(0)
-    const promptBlockId = `prompt-${position}`
+    const prompterDuration = estimates.reduce((sum, value) => sum + value, 0)
+    const basePromptBlockId = `prompt-${position}`
+    const subBlockIds = splitTexts.map((_, index) => `${basePromptBlockId}-${index + 1}`)
+    const subMarkNames = splitTexts.map((_, index) => markNameForPart(index))
+    const markName = subMarkNames[0] ?? markNameForPart(0)
     const built = buildBoardSource({
       slideName,
       prompterDuration,
       step,
-      markName,
       position,
-      promptBlockId,
+      basePromptBlockId,
+      subBlockIds,
+      subMarkNames,
+      partEstimates: estimates,
     })
     if (built.padded) {
       diagnostics.push({
@@ -309,10 +356,16 @@ function planFromParsed(
         message:
           `Step ${step.index} board needs ${built.boardCost.toFixed(2)}s ` +
           `but the narrator sizes ${prompterDuration.toFixed(2)}s — ` +
-          `owning prompter part padded to ${built.totalDuration.toFixed(2)}s`,
+          `owning prompter parts padded to ${built.totalDuration.toFixed(2)}s`,
         step: step.index,
       })
     }
+    const prompterParts: PlannerPromptPart[] = splitTexts.map((text, index) => ({
+      text,
+      duration: built.partDurations[index] ?? 0,
+      promptBlockId: subBlockIds[index]!,
+      markName: subMarkNames[index]!,
+    }))
     return {
       position,
       stepIndex: step.index,
@@ -323,9 +376,10 @@ function planFromParsed(
       boardCost: built.boardCost,
       padded: built.padded,
       prompterText,
+      prompterParts,
       source: built.source,
       markName,
-      promptBlockId,
+      promptBlockId: basePromptBlockId,
       fractions: built.fractions,
     }
   })
@@ -424,17 +478,28 @@ function buildBoardSource(input: {
     blocks: readonly { kind: string; table?: string }[]
     table?: string
   }
-  markName: string
   position: number
-  promptBlockId: string
+  basePromptBlockId: string
+  subBlockIds: readonly string[]
+  subMarkNames: readonly string[]
+  partEstimates: readonly number[]
 }): {
   source: string
   fractions: readonly PlannerFraction[]
   boardCost: number
   totalDuration: number
   padded: boolean
+  partDurations: readonly number[]
 } {
-  const { slideName, prompterDuration, step, markName, promptBlockId } = input
+  const {
+    slideName,
+    prompterDuration,
+    step,
+    basePromptBlockId,
+    subBlockIds,
+    subMarkNames,
+    partEstimates,
+  } = input
   const taken = new Set<string>(['board', 'chalkpaw', 'ragpaw', 'pawempty'])
 
   type Effect =
@@ -605,7 +670,7 @@ function buildBoardSource(input: {
     (prompterDuration - tableTotal) / nonTableCount <= 1e-9
   ) {
     // Overflow: tables alone exceed the narrator, or leave zero for the
-    // rest. Pad the owning part; non-cell actions get a fixed even share.
+    // rest. Pad the owning parts; non-cell actions get a fixed even share.
     padded = true
     nonTableShare = OVERFLOW_NONCELL_COST
     totalDuration = tableTotal + nonTableCount * nonTableShare
@@ -615,6 +680,41 @@ function buildBoardSource(input: {
   }
   const boardCost = totalDuration
   const durations = effects.map((e) => (e.kind === 'table-reveal' ? e.cost : nonTableShare))
+
+  // Per-part durations sum to the slide total (scaled when padded so board
+  // and voice stay gap-free, like the single-part pad before).
+  const partCount = partEstimates.length
+  let partDurations: number[]
+  if (partCount === 0) {
+    partDurations = []
+  } else if (padded && prompterDuration > 0) {
+    partDurations = partEstimates.map((estimate) => (estimate / prompterDuration) * totalDuration)
+    const sum = partDurations.reduce((a, b) => a + b, 0)
+    const delta = totalDuration - sum
+    if (Math.abs(delta) > 1e-9) partDurations[partDurations.length - 1]! += delta
+  } else if (prompterDuration <= 0 && totalDuration > 0) {
+    partDurations = partEstimates.map(() => totalDuration / partCount)
+  } else {
+    partDurations = [...partEstimates]
+  }
+
+  // Owns each board effect to the prompt block whose time window holds its
+  // midpoint — sequential in both timelines, so ownership is non-decreasing.
+  const partEnds: number[] = []
+  {
+    let cursor = 0
+    for (const dur of partDurations) {
+      cursor += dur
+      partEnds.push(cursor)
+    }
+  }
+  function owningPartIndex(midpoint: number): number {
+    if (partCount === 0) return -1
+    for (let i = 0; i < partEnds.length; i += 1) {
+      if (midpoint < partEnds[i]! - 1e-9 || i === partEnds.length - 1) return i
+    }
+    return partEnds.length - 1
+  }
 
   // Checker-clean order: paw creates precede `bind node(...)` so the binds
   // resolve to same-script nodes (no forward references).
@@ -634,25 +734,44 @@ function buildBoardSource(input: {
   lines.push('bind writeSfx = audio("writing-on-black-board")')
   lines.push('bind eraseSfx = audio("dry-erase")')
   lines.push('board.material(chalk)')
-  lines.push(`mark("${markName}")`)
   lines.push(...creations)
 
   const fractions: PlannerFraction[] = []
   let cursor = 0
-  effects.forEach((effect, index) => {
+  const effectOwners: number[] = effects.map((_, index) => {
     const over = durations[index] ?? 0
-    const overText = `, over: ${Number(over.toFixed(2))}`
-    const action =
-      effect.kind === 'carry-in' || effect.kind === 'carry-away'
-        ? `carry(${effect.alias})`
-        : effect.kind === 'reveal' || effect.kind === 'table-reveal'
-          ? `reveal(${effect.alias})`
-          : effect.kind === 'mark'
-            ? `mark(${effect.alias})`
-            : `wipe(${effect.alias})`
-    const fraction = totalDuration > 0 ? (cursor + over / 2) / totalDuration : 0
-    fractions.push({ action, block: promptBlockId, fraction })
+    const midpoint = totalDuration > 0 ? cursor + over / 2 : 0
     cursor += over
+    return owningPartIndex(midpoint)
+  })
+  // Group effect indices by owning part to interleave marks at part starts.
+  const groups: number[][] = subMarkNames.map(() => [])
+  const fallbackGroup: number[] = []
+  effects.forEach((_, index) => {
+    const owner = effectOwners[index] ?? -1
+    if (owner >= 0 && owner < groups.length) groups[owner]!.push(index)
+    else fallbackGroup.push(index)
+  })
+
+  // Display `over:` values round to 2 decimals for readability, but the
+  // rounded sum must not overrun the slide (e.g. 4×1.875 → 4×1.88 = 7.52 >
+  // 7.5). Adjust the last effect so the displayed sum equals the total.
+  const displayDurations = durations.map((over) => Number(over.toFixed(2)))
+  if (displayDurations.length > 0) {
+    const target = Number(totalDuration.toFixed(2))
+    const sumDisplay = displayDurations.reduce((sum, value) => sum + value, 0)
+    const diff = target - sumDisplay
+    if (Math.abs(diff) > 1e-9) {
+      const lastIndex = displayDurations.length - 1
+      const adjusted = (displayDurations[lastIndex] ?? 0) + diff
+      // Guard against degenerate non-positive overs; fall back to raw.
+      displayDurations[lastIndex] =
+        adjusted > 1e-9 ? Number(adjusted.toFixed(2)) : (durations[lastIndex] ?? 0)
+    }
+  }
+
+  function emitEffect(effect: (typeof effects)[number], over: number): void {
+    const overText = `, over: ${Number(over.toFixed(2))}`
     switch (effect.kind) {
       case 'carry-in':
         lines.push(
@@ -675,7 +794,57 @@ function buildBoardSource(input: {
         lines.push(`wipe(${effect.alias}${overText}, visual: ragHand, sound: eraseSfx)`)
         break
     }
-  })
+  }
+
+  function actionFor(effect: (typeof effects)[number]): string {
+    return effect.kind === 'carry-in' || effect.kind === 'carry-away'
+      ? `carry(${effect.alias})`
+      : effect.kind === 'reveal' || effect.kind === 'table-reveal'
+        ? `reveal(${effect.alias})`
+        : effect.kind === 'mark'
+          ? `mark(${effect.alias})`
+          : `wipe(${effect.alias})`
+  }
+
+  // Fractions in original effect order (midpoints over the slide total).
+  {
+    let cursorForFractions = 0
+    effects.forEach((effect, index) => {
+      const over = durations[index] ?? 0
+      const fraction = totalDuration > 0 ? (cursorForFractions + over / 2) / totalDuration : 0
+      const owner = effectOwners[index] ?? -1
+      const block =
+        owner >= 0 && owner < subBlockIds.length
+          ? (subBlockIds[owner] ?? basePromptBlockId)
+          : basePromptBlockId
+      fractions.push({ action: actionFor(effect), block, fraction })
+      cursorForFractions += over
+    })
+  }
+
+  // Marks interleaved with their owning effect groups so each part opens
+  // its own window; empty parts emit a bare mark (zero-duration, runnable).
+  if (subMarkNames.length === 0) {
+    lines.push(`mark("${markNameForPart(0)}")`)
+    effects.forEach((effect, index) => emitEffect(effect, displayDurations[index] ?? 0))
+  } else {
+    subMarkNames.forEach((mark, partIndex) => {
+      lines.push(`mark("${mark}")`)
+      for (const effectIndex of (groups[partIndex] ?? []) as number[]) {
+        emitEffect(effects[effectIndex]!, displayDurations[effectIndex] ?? 0)
+      }
+    })
+    for (const effectIndex of fallbackGroup) {
+      emitEffect(effects[effectIndex]!, displayDurations[effectIndex] ?? 0)
+    }
+  }
   lines.push(`// slide ends at ${Number(totalDuration.toFixed(2))}s = sum of prompter parts`)
-  return { source: `${lines.join('\n')}\n`, fractions, boardCost, totalDuration, padded }
+  return {
+    source: `${lines.join('\n')}\n`,
+    fractions,
+    boardCost,
+    totalDuration,
+    padded,
+    partDurations,
+  }
 }

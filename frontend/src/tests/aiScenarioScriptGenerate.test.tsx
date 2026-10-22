@@ -205,6 +205,7 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
   it('colors each prompt block distinctly across prompter, title, and fractions', async () => {
     const { promptBlockColor } = await import('../components/ai/AiScenarioScriptPanel')
     expect(promptBlockColor('prompt-1')).not.toBe(promptBlockColor('prompt-2'))
+    expect(promptBlockColor('prompt-1-1')).not.toBe(promptBlockColor('prompt-1-2'))
     const { value } = setupEngine(TWO_STEP_DOC, true)
     render(
       <EngineContext.Provider value={value}>
@@ -221,11 +222,12 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
     expect(chip2).toHaveAttribute('data-block', 'prompt-2')
     expect(chip1.style.background).not.toBe(chip2.style.background)
 
-    const prompter1 = screen.getByTestId('ai-scenario-script-slide-prompter-1')
-    expect(prompter1.style.borderLeft).toContain('solid')
-    expect(prompter1.style.borderLeft).toContain(chip1.style.background)
+    // Split parts render as sub-blocks (`prompt-1-1`) with distinct colors.
+    const part1 = screen.getByTestId('ai-scenario-script-slide-prompter-1-1')
+    expect(part1).toHaveAttribute('data-block', 'prompt-1-1')
+    expect(part1.style.borderLeft).toContain('solid')
     const fractions1 = screen.getByTestId('ai-scenario-script-slide-fractions-1')
-    const row = fractions1.querySelector('[data-block="prompt-1"]')
+    const row = fractions1.querySelector('[data-block="prompt-1-1"]')
     expect(row).not.toBeNull()
   })
 
@@ -326,14 +328,18 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
     expect(slides[0]!.name).toBe('Step 1 — Who you are')
     expect(slides[1]!.name).toBe('Step 2 — Where you are')
     for (const slide of slides) {
-      expect(slide.prompter?.parts).toHaveLength(1)
-      expect(slide.prompter!.parts[0]!.audioClipId).toBeUndefined()
-      expect(slide.prompter!.parts[0]!.audioAssetId).toBeUndefined()
-      expect(slide.duration).toBeCloseTo(slide.prompter!.parts[0]!.duration, 9)
+      expect(slide.prompter?.parts.length).toBeGreaterThan(0)
+      for (const part of slide.prompter!.parts) {
+        expect(part.audioClipId).toBeUndefined()
+        expect(part.audioAssetId).toBeUndefined()
+      }
+      const partsSum = slide.prompter!.parts.reduce((sum, p) => sum + p.duration, 0)
+      expect(slide.duration).toBeCloseTo(partsSum, 9)
       expect(slide.animationScript?.source).toContain(`script "${slide.name}"`)
       expect(slide.animationScript?.source).not.toMatch(/\bat\s*:/)
     }
-    expect(slides[0]!.prompter!.parts[0]!.text).toBe('Ser is for who you are.')
+    // Delimiters stripped like manual paste.
+    expect(slides[0]!.prompter!.parts[0]!.text).toBe('Ser is for who you are')
 
     // Undo restores the single original slide in one step.
     undoStack.undo(engine)

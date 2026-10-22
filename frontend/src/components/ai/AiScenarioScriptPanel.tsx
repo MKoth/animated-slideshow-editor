@@ -17,8 +17,9 @@ interface AiScenarioScriptPanelProps {
 
 /**
  * Distinct color per prompt block so split prompter parts stay visually
- * distinguishable across slides, fractions, and board sources. Palette cycles
- * by prompt-N number; unknown names hash into it.
+ * distinguishable across slides, fractions, and board sources. Base palette
+ * cycles by prompt-N number; sub-blocks (`prompt-N-M`) offset by the part
+ * index so siblings differ while staying related; unknown names hash into it.
  */
 export const PROMPT_BLOCK_COLORS = [
   '#e6194b',
@@ -32,6 +33,18 @@ export const PROMPT_BLOCK_COLORS = [
 ] as const
 
 export function promptBlockColor(block: string): string {
+  const sub = /prompt-(\d+)-(\d+)/.exec(block)
+  if (sub) {
+    const n = Number(sub[1])
+    const m = Number(sub[2])
+    if (Number.isFinite(n) && Number.isFinite(m)) {
+      const index = (n - 1 + (m - 1) * 3) % PROMPT_BLOCK_COLORS.length
+      return PROMPT_BLOCK_COLORS[
+        ((index % PROMPT_BLOCK_COLORS.length) + PROMPT_BLOCK_COLORS.length) %
+          PROMPT_BLOCK_COLORS.length
+      ]!
+    }
+  }
   const match = /prompt-(\d+)/.exec(block)
   if (match) {
     const n = Number(match[1])
@@ -127,29 +140,52 @@ export function AiScenarioScriptPanel({
             </div>
             <div
               data-testid={`ai-scenario-script-slide-prompter-${slide.position}`}
-              style={{
-                margin: '6px 0',
-                padding: '6px 8px',
-                borderLeft: `4px solid ${promptBlockColor(slide.promptBlockId)}`,
-                borderRadius: 4,
-                background: `color-mix(in srgb, ${promptBlockColor(slide.promptBlockId)} 12%, transparent)`,
-              }}
+              style={{ margin: '6px 0', display: 'flex', flexDirection: 'column', gap: 6 }}
             >
-              <span
-                style={{
-                  display: 'inline-block',
-                  padding: '1px 8px',
-                  borderRadius: 999,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: '#fff',
-                  background: promptBlockColor(slide.promptBlockId),
-                  marginRight: 8,
-                }}
-              >
-                {slide.promptBlockId}
-              </span>
-              <span>{slide.prompterText}</span>
+              {(slide.prompterParts.length > 0
+                ? slide.prompterParts.map((part) => ({
+                    block: part.promptBlockId,
+                    text: part.text,
+                    duration: part.duration,
+                  }))
+                : [
+                    {
+                      block: slide.promptBlockId,
+                      text: slide.prompterText,
+                      duration: slide.duration,
+                    },
+                  ]
+              ).map((part, partIndex) => (
+                <div
+                  key={partIndex}
+                  data-testid={`ai-scenario-script-slide-prompter-${slide.position}-${partIndex + 1}`}
+                  data-block={part.block}
+                  title={`Prompt block ${part.block} (${part.duration.toFixed(2)}s)`}
+                  style={{
+                    padding: '6px 8px',
+                    borderLeft: `4px solid ${promptBlockColor(part.block)}`,
+                    borderRadius: 4,
+                    background: `color-mix(in srgb, ${promptBlockColor(part.block)} 12%, transparent)`,
+                  }}
+                >
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      padding: '1px 8px',
+                      borderRadius: 999,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#fff',
+                      background: promptBlockColor(part.block),
+                      marginRight: 8,
+                    }}
+                  >
+                    {part.block}
+                  </span>
+                  <span>{part.text}</span>
+                  <span style={{ opacity: 0.7, marginLeft: 8 }}>({part.duration.toFixed(2)}s)</span>
+                </div>
+              ))}
             </div>
             <details open>
               <summary>Board source</summary>

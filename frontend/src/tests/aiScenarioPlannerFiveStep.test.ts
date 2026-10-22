@@ -111,13 +111,16 @@ describe('Scenario planner five-step reference lesson (issue #470)', () => {
       // Purely sequential: no absolute time placements.
       expect(slide.source).not.toMatch(/\bat\s*:/)
       expect(slide.source).toContain('mark("part-0")')
+      // Split narrators keep comma-split blocks with sub-block ids.
+      expect(slide.prompterParts.length).toBeGreaterThan(0)
+      const ownedBlocks = new Set(slide.prompterParts.map((part) => part.promptBlockId))
       // Parse-clean.
       const parsed = parseAnimationScript(slide.source)
       expect(parsed.diagnostics).toEqual([])
       // Every action tied to the owning prompt block with a fraction.
       expect(slide.fractions.length).toBeGreaterThan(0)
       for (const fraction of slide.fractions) {
-        expect(fraction.block).toBe(slide.promptBlockId)
+        expect(ownedBlocks.has(fraction.block)).toBe(true)
         expect(fraction.fraction).toBeGreaterThan(0)
         expect(fraction.fraction).toBeLessThanOrEqual(1)
       }

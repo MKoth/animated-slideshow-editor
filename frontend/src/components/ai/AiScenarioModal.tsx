@@ -26,7 +26,7 @@ import { planScenarioDraft } from '../../ai/scenarioPlanner'
 import { applyScenarioScript, snapshotScenarioScriptSlides } from '../../ai/scenarioScriptApply'
 import type { ScenarioScriptPreview } from './AiScenarioScriptPanel'
 import { AiScenarioScriptPanel } from './AiScenarioScriptPanel'
-import { getPrompterSecondsPerCharacter } from '../../engine/prompter'
+import { getPrompterSecondsPerCharacter, getPrompterSplitChars } from '../../engine/prompter'
 import { imageBytesToDataUrl, resolveScenarioImageBytes } from '../../engine/scenarioImageBytes'
 import { AiScenarioDocComments } from './AiScenarioDocComments'
 import type { ScenarioDocComment } from '../../engine/scenarioDocComments'
@@ -617,10 +617,20 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     setScriptApplyError(null)
     setScriptApplyDone(null)
     const secondsPerCharacter = getPrompterSecondsPerCharacter(engineValue.project.settings)
+    const splitChars = getPrompterSplitChars(engineValue.project.settings)
+    // Foreign vocabulary for block splitting comes from the stored chalk
+    // HTML (`<strong class="foreign">`) with the stored list as fallback —
+    // same highlights Generate HTML already rendered.
+    const scenarioSection = engineValue.project.scenario
     const plan = planScenarioDraft(
       acceptedContent,
       secondsPerCharacter,
       snapshotScenarioScriptSlides(engineValue.project.slides),
+      {
+        splitChars,
+        html: scenarioSection?.lastHtml,
+        foreignWords: scenarioSection?.foreignWords,
+      },
     )
     setScriptPreview({ acceptedVersionId: acceptedVersionId!, plan })
     store.setScenarioTab('script')
