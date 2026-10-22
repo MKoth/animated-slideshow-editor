@@ -590,14 +590,25 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     )
   }
 
-  // Source gate (issue #471): the script draft reads the accepted snapshot
-  // only. Store pointer wins, portable section trails as fallback; content
-  // must resolve in the combined server + portable versions.
-  const acceptedVersionId = acceptedStoreId ?? scenario?.acceptedVersionId ?? null
-  const acceptedContent =
-    acceptedVersionId !== null
-      ? versionsForState.find((v) => v.id === acceptedVersionId)?.content
+  // Source gate (issue #471 + default-latest): the script draft reads the
+  // accepted snapshot when one is pinned, otherwise the latest version as the
+  // implicit default. Store pointer wins, portable section trails as fallback;
+  // content must resolve in the combined server + portable versions. Once the
+  // user pins a version it stays pinned — newer drafts never move it.
+  const explicitAcceptedVersionId = acceptedStoreId ?? scenario?.acceptedVersionId ?? null
+  const explicitAcceptedContent =
+    explicitAcceptedVersionId !== null
+      ? versionsForState.find((v) => v.id === explicitAcceptedVersionId)?.content
       : undefined
+  const latestFallback =
+    versionsForState.length > 0 ? versionsForState[versionsForState.length - 1] : undefined
+  // Dangling explicit pins never fall back: a pinned id that no longer resolves
+  // keeps blocking Generate and marks the preview stale instead of silently
+  // switching source under the user.
+  const isDefaultAccept = explicitAcceptedVersionId === null && latestFallback !== undefined
+  const acceptedVersionId = explicitAcceptedVersionId ?? latestFallback?.id ?? null
+  const acceptedContent =
+    explicitAcceptedVersionId !== null ? explicitAcceptedContent : latestFallback?.content
   const hasAcceptedSnapshot = acceptedVersionId !== null && acceptedContent !== undefined
 
   const handleGenerateScript = () => {
@@ -783,8 +794,10 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
             disabled={!hasAcceptedSnapshot}
             title={
               hasAcceptedSnapshot
-                ? 'Draft slides, prompter parts, and board scripts from the accepted snapshot'
-                : 'Accept a version in History first — Generate Script reads the accepted snapshot only'
+                ? isDefaultAccept
+                  ? 'Draft slides, prompter parts, and board scripts from the latest version (default — nothing accepted yet)'
+                  : 'Draft slides, prompter parts, and board scripts from the accepted snapshot'
+                : 'No versions yet — chat to iterate, then Generate Script reads the latest version by default'
             }
             onClick={handleGenerateScript}
           >
@@ -811,8 +824,14 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         )}
         {!hasAcceptedSnapshot && (
           <div data-testid="ai-scenario-script-accept-hint">
-            No accepted scenario snapshot — accept a version in History first. Generate Script reads
-            the accepted snapshot only.
+            No versions yet — chat to iterate. Generate Script reads the latest version by default
+            once one exists.
+          </div>
+        )}
+        {hasAcceptedSnapshot && isDefaultAccept && (
+          <div data-testid="ai-scenario-script-default-hint">
+            Using latest version {acceptedVersionId!.slice(0, 8)} as default — nothing accepted yet.
+            Generate Script reads the latest version until you pin one.
             <button
               data-testid="ai-scenario-script-open-history"
               onClick={() => store.setScenarioTab('history')}

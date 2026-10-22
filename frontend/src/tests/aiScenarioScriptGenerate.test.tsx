@@ -134,7 +134,7 @@ beforeEach(() => {
 })
 
 describe('AiScenarioModal Generate Script (issue #471)', () => {
-  it('refuses without an accepted snapshot and asks to accept first', async () => {
+  it('defaults to the latest version when nothing is accepted yet', async () => {
     const { value } = setupEngine(TWO_STEP_DOC, false)
     render(
       <EngineContext.Provider value={value}>
@@ -142,18 +142,36 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
       </EngineContext.Provider>,
     )
     const generate = await screen.findByTestId('ai-scenario-generate-script')
-    expect(generate).toBeDisabled()
-    expect(generate).toHaveAttribute(
-      'title',
-      expect.stringContaining('Accept a version in History first'),
+    expect(generate).not.toBeDisabled()
+    expect(generate).toHaveAttribute('title', expect.stringContaining('latest version (default'))
+    expect(await screen.findByTestId('ai-scenario-script-default-hint')).toHaveTextContent(
+      /Using latest version.*as default/i,
     )
-    expect(await screen.findByTestId('ai-scenario-script-accept-hint')).toHaveTextContent(
-      /accept a version in History first/i,
-    )
-    // The hint offers a way to the History tab where acceptance happens.
+    // The hint offers a way to the History tab where a different version can be pinned.
     const user = userEvent.setup()
     await user.click(screen.getByTestId('ai-scenario-script-open-history'))
     expect(useAiStore.getState().scenarioTab).toBe('history')
+
+    // Generate works off the implicit latest snapshot with no explicit accept.
+    await user.click(generate)
+    const preview = await screen.findByTestId('ai-scenario-script-preview')
+    expect(preview).toHaveTextContent(/2 slide\(s\)/)
+    expect(screen.getByTestId('ai-scenario-script-apply')).not.toBeDisabled()
+  })
+
+  it('refuses without any versions and asks to iterate first', async () => {
+    const { value } = setupEngine('', false)
+    render(
+      <EngineContext.Provider value={value}>
+        <AiScenarioModal projectId="p-1" conversationId="c-1" />
+      </EngineContext.Provider>,
+    )
+    const generate = await screen.findByTestId('ai-scenario-generate-script')
+    expect(generate).toBeDisabled()
+    expect(generate).toHaveAttribute('title', expect.stringContaining('No versions yet'))
+    expect(await screen.findByTestId('ai-scenario-script-accept-hint')).toHaveTextContent(
+      /No versions yet/i,
+    )
   })
 
   it('previews per-slide durations, sources, fractions, and diagnostics from the accepted snapshot', async () => {
