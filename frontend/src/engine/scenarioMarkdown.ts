@@ -14,8 +14,9 @@
  *   placed image + optional `<!-- reuse: Name -->`. Brief required unless
  *   reuse present.
  * - `[remove: id]` takes a board item down; `[wipe]` clears the whole board
- *   (or `[wipe: id, ...]` clears listed ids). Steps end with `[wipe]` unless
- *   the next step continues the same board.
+ *   (or `[wipe: id, ...]` clears listed ids). `[mark: id]` draws a temporary
+ *   loop over an id already on the board (overlays expire, need no removal).
+ *   Steps end with `[wipe]` unless the next step continues the same board.
  * - Every appearance is marked with an id — images under their slug,
  *   chalk blocks under `[reveal: text1]`/`[reveal: table1]`-style ids.
  *   `[place: slug]` places the image declared by the visual, `[reveal: id]`
@@ -57,6 +58,8 @@ export interface ScenarioStep {
   readonly placed: readonly string[]
   /** Board ids revealed via `[reveal: id]` (`text1`/`table1`-style). */
   readonly reveals: readonly string[]
+  /** Board ids a temporary `[mark: id]` loop highlights (overlays, expire). */
+  readonly marks: readonly string[]
   /** Board ids this step takes down. */
   readonly removes: readonly string[]
   /** Board ids a targeted `[wipe: id, ...]` clears (empty when wiping all). */
@@ -92,6 +95,7 @@ export interface ScenarioWarning {
     | 'slug-mismatch'
     | 'missing-title'
     | 'unknown-remove'
+    | 'unknown-mark'
     | 'dangling-place'
     | 'dangling-wipe'
   readonly message: string
@@ -127,10 +131,11 @@ const REMOVE_RE = /^\s*\[remove:\s*(.+?)\s*\]\s*$/i
 const WIPE_RE = /^\s*\[wipe(?::\s*(.+?))?\s*\]\s*$/i
 const PLACE_RE = /^\s*\[place:\s*(.+?)\s*\]\s*$/i
 const REVEAL_RE = /^\s*\[reveal:\s*(.+?)\s*\]\s*$/i
+const MARK_RE = /^\s*\[mark:\s*(.+?)\s*\]\s*$/i
 const REUSE_RE = /^\s*<!--\s*reuse:\s*(.+?)\s*-->\s*$|^<!--\s*reuse:\s*(.+?)\s*-->/
 const TABLE_ROW_RE = /^\s*\|.*\|\s*$/
 
-function isDelimiterRow(line: string): boolean {
+export function isDelimiterRow(line: string): boolean {
   const trimmed = line.trim()
   if (!TABLE_ROW_RE.test(trimmed)) return false
   const cells = trimmed
@@ -141,7 +146,7 @@ function isDelimiterRow(line: string): boolean {
   return cells.every((cell) => /^:?-+:?$/.test(cell))
 }
 
-function splitTableCells(line: string): string[] {
+export function splitTableCells(line: string): string[] {
   const trimmed = line.trim()
   const inner = trimmed.startsWith('|') && trimmed.endsWith('|') ? trimmed.slice(1, -1) : trimmed
   return inner.split('|').map((c) => c.trim())
@@ -238,6 +243,7 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
     let pendingReuse: string | undefined
     const placed: string[] = []
     const reveals: string[] = []
+    const marks: string[] = []
     const removes: string[] = []
     const wipeTargets: string[] = []
     let wiped = false
@@ -431,6 +437,23 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
         continue
       }
 
+      const markMatch = MARK_RE.exec(entry.text)
+      if (markMatch) {
+        flushPendingVisual()
+        flushTableBufferAsText()
+        // Temporary overlays: comma-separated ids, each normalized. Marks
+        // never create board items and need no removal — they expire.
+        const listed = (markMatch[1] ?? '')
+          .split(',')
+          .map((part) => normalizeAssetKey(part))
+          .filter((part) => part !== '')
+        for (const target of listed) {
+          if (!marks.includes(target)) marks.push(target)
+        }
+        idx += 1
+        continue
+      }
+
       if (TABLE_ROW_RE.test(trimmed)) {
         flushPendingVisual()
         tableBuffer.push(entry)
@@ -501,6 +524,7 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
       visuals.length === 0 &&
       table === undefined &&
       text === undefined &&
+      marks.length === 0 &&
       removes.length === 0 &&
       wipeTargets.length === 0 &&
       !wiped
@@ -519,6 +543,7 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
       bare,
       placed: [...placed],
       reveals: [...reveals],
+      marks: [...marks],
       removes: [...removes],
       wipeTargets: [...wipeTargets],
       wiped,
@@ -539,8 +564,9 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
 
   // Board-state pass: actions must pair with content. Images live on the
   // board under their slug, chalk blocks under their reveal id; a wipe clears
-  // everything (or the listed ids), a remove takes down one listed id.
-  // Narrator is voice, never board content.
+  // everything (or the listed ids), a remove takes down one listed id, and a
+  // temporary mark highlights an id already on the board (overlays expire,
+  // never removed). Narrator is voice, never board content.
   const visualKeys = new Set<string>()
   for (const step of steps) {
     for (const visual of step.visuals) {
@@ -573,6 +599,15 @@ export function parseScenarioMarkdown(markdown: string): ParsedScenario {
         warnings.push({
           code: 'unknown-remove',
           message: `Step ${step.index} clears "${target}" which is not on the board`,
+          step: step.index,
+        })
+      }
+    }
+    for (const target of step.marks) {
+      if (!boardIds.has(target) && !stepAdds.includes(target)) {
+        warnings.push({
+          code: 'unknown-mark',
+          message: `Step ${step.index} marks "${target}" which is not on the board`,
           step: step.index,
         })
       }

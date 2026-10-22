@@ -347,6 +347,24 @@ describe('Animation Script create — text, table, asset, data, chart', () => {
     expect(system.engine.getKeyframes(cell.id, 'opacity').map((k) => k.value)).toEqual([0.5])
   })
 
+  it('reveals a freshly created table in the same script without renderer measurements', () => {
+    // Regression cover for the scenario planner (#470): `create table` mints
+    // implicit cell Text children, which carry the same planned-size fallback
+    // as explicit `create text` so reveal/wipe/mark of a new table is
+    // measurable before the first Run renders it.
+    const { system, slideId } = setup()
+    const source = [
+      'script "Builder" from 0',
+      'create table "Grid" as grid { columns: [100, 100], rows: [["A", "B"], ["C", "D"]] }',
+      'reveal(grid, over: 1, visual: none)',
+    ].join('\n')
+    const checked = checkAnimationScript(system.engine, slideId, source)
+    expect(checked.diagnostics.filter((d) => d.severity === 'error')).toEqual([])
+    expect(checked.runnable).toBe(true)
+    expect(checked.effects).toHaveLength(1)
+    expect(checked.effects[0]).toMatchObject({ kind: 'reveal', duration: 1 })
+  })
+
   it('places a created node inside a created table cell', () => {
     const { system, slideId } = setup()
     const source = [

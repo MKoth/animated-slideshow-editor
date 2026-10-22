@@ -5227,10 +5227,18 @@ class Compiler {
           isCamera: false,
           parentId: cellId,
           isText: true,
+          isRenderable: true,
           isGroup: false,
         }
         this.#createdNodes.push(textInfo)
         this.#createdNodeIds.add(textId)
+        // Mirror explicit `create text` (#createText): deterministic size
+        // estimate so reveal/wipe/mark of a freshly created table is
+        // measurable before the first Run renders it (planned fallback).
+        this.#createdTextSizes.set(textId, {
+          width: Math.max(cell.text.length * 14 * 0.6, 14),
+          height: 14 * 1.2,
+        })
         this.#createdInitial.set(textId, {
           x: 0,
           y: 0,
