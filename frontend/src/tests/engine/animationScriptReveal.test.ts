@@ -186,9 +186,10 @@ describe('Animation Script reveal', () => {
 
   it('pads planned reveal bounds when no renderer measurement exists yet', () => {
     const { system, slide } = setup()
-    // All-caps "FEMENINO" at 26px: the raw 0.6em/char estimate (124.8 wide)
-    // undershoots real caps, which used to leave the trailing O half-masked.
-    // With no measure available the fallback must err wide instead.
+    // All-caps "FEMENINO" at 26px: per-char caps (0.72em) measure wider than
+    // the old flat 0.6em/char (124.8), so the trailing O stays unclipped.
+    // Cover is length-proportional (2.5% each side) with a right bias
+    // (+4 vs +1 left) for trailing-glyph tails.
     const source = [
       'script "Builder" from 0',
       'create text "Caps" as caps at (340, 500) { content: "FEMENINO", fontSize: 26 }',
@@ -204,8 +205,8 @@ describe('Animation Script reveal', () => {
     if (effect.kind !== 'reveal') throw new Error('expected a reveal effect')
     const bounds = effect.bounds
     expect(bounds.maxX - bounds.minX).toBeGreaterThan(8 * 26 * 0.6)
-    expect(bounds.maxX - bounds.minX).toBeCloseTo(8 * 26 * 0.6 * 1.2 + 4, 0)
-    expect((bounds.minX + bounds.maxX) / 2).toBeCloseTo(340, 5)
+    expect(bounds.maxX - bounds.minX).toBeCloseTo(8 * 26 * 0.72 * 1.05 + 5, 0)
+    expect((bounds.minX + bounds.maxX) / 2).toBeCloseTo(341.5, 5)
   })
 
   it('unions live measurements with planned bounds when a rerun moved the node', () => {
@@ -597,5 +598,61 @@ describe('Animation Script reveal', () => {
     expect(duplicate.effects[0].nodeIds).not.toContain(first.id)
     expect(duplicate.effects[0].nodeIds.every((id) => duplicate.scene.getNode(id))).toBe(true)
     expect(duplicate.animationScript?.lastCompiled?.effectIds).toEqual([duplicate.effects[0].id])
+  })
+
+  it('places nested cell-text reveal bounds in world space on first check', () => {
+    const { system, slide } = setup()
+    system.materialLibrarySync.apply([
+      { id: 'mat-chalk', name: 'Chalk', parameters: [], shader_id: 'shader-chalk' },
+    ])
+    system.assetLibrarySync.apply([{ id: 'paw-chalk', name: 'paw with chalk' }])
+    system.engine.getSlide(slide.id).duration = 10
+    // Planner-shaped table output: cell text created at (5, 5) inside a cell
+    // of a table at (395, 300). With no prior render there are no measured
+    // bounds, so the check falls back to planned bounds — which must be
+    // world-aware, not parent-local (a parent-local box lands near the board
+    // origin and the chalk hand draws at top-left while cells stay empty).
+    const source = [
+      'script "T" from 0',
+      'create group "Board" as board',
+      'bind chalk = material("Chalk")',
+      'create asset "paw with chalk" as chalkpaw at (1500, 1200) { scaleX: 0.12, scaleY: 0.12 }',
+      'bind chalkHand = node("paw with chalk")',
+      'create table "table1" as table1 at (395, 300) inside board { columns: [150, 150], rows: [["", ""], ["", ""], ["", ""]], padding: 6, borderWidth: 2, borderColor: "#FFFFFF", background: "transparent" }',
+      'create text "table1c00" as table1c00 at (5, 5) inside table1.cell(0, 0) { content: "Spanish", fontSize: 17 }',
+      'mark("part-0")',
+      'reveal(table1, at: markTime("part-0"), over: 1.2, visual: chalkHand, visualScale: 4, visualAnchor: "top-center")',
+      'wipe(table1c00, at: markTime("part-0") + 1.2, over: 0.01, visual: none)',
+      'reveal(table1c00, at: markTime("part-0") + 1.21, over: 0.7, visual: chalkHand, visualScale: 4, visualAnchor: "top-center")',
+    ].join('\n')
+    const result = checkAnimationScript(system.engine, slide.id, source)
+    expect(result.diagnostics.filter((d) => d.severity === 'error')).toEqual([])
+    const cellReveal = result.effects.find(
+      (effect) => effect.kind === 'reveal' && effect.duration === 0.7,
+    )
+    expect(cellReveal).toBeDefined()
+    const bounds = (
+      cellReveal as { bounds: { minX: number; maxX: number; minY: number; maxY: number } }
+    ).bounds
+    // Cell (0, 0) spans roughly x 395–545, y 300–340 in world space.
+    expect(bounds.minX).toBeGreaterThan(300)
+    expect(bounds.maxX).toBeLessThan(600)
+    expect(bounds.minY).toBeGreaterThan(250)
+    expect(bounds.maxY).toBeLessThan(400)
+
+    // The table grid itself joins the border sweep (first-run frame from the
+    // create statement), so the grid stays hidden until the border draws
+    // instead of popping in at t=0.
+    const border = result.effects.find(
+      (effect) => effect.kind === 'reveal' && effect.duration === 1.2,
+    )
+    expect(border).toBeDefined()
+    const borderBounds = (
+      border as { bounds: { minX: number; maxX: number; minY: number; maxY: number } }
+    ).bounds
+    expect(borderBounds.minX).toBeLessThan(400)
+    expect(borderBounds.maxX).toBeGreaterThan(600)
+    expect(borderBounds.minY).toBeLessThan(305)
+    expect(borderBounds.maxY).toBeGreaterThan(340)
   })
 })

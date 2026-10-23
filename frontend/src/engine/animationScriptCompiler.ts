@@ -87,6 +87,7 @@ import type { SceneEffect } from './sceneEffect'
 import type { CarryEffect } from './sceneEffect'
 import { compileAnimationScriptReveal } from './animationScriptRevealCompiler'
 import { VISUAL_ANCHOR_NAMES } from './animationScriptRevealCompiler'
+import { estimateTextSize } from './estimatedTextMetrics'
 import {
   DEFAULT_MATERIAL_PARAMETERS,
   DEFAULT_OPACITY_MULTIPLIER,
@@ -871,6 +872,11 @@ class Compiler {
   readonly #createdTextSizes = new Map<string, { width: number; height: number }>()
   /** Declared table styles on created tables and cells, for tween start pins. */
   readonly #createdTableStyles = new Map<string, { borderRadius: number; padding: number }>()
+  /** Declared create-time frames of created tables for first-run reveal bounds. */
+  readonly #createdTableFrames = new Map<
+    string,
+    { x: number; y: number; width: number; rows: number; padding: number; borderWidth: number }
+  >()
   /** Created-node metadata for the async run prep (asset embed, mesh generation). */
   readonly #createdNodeInfos: AnimationScriptCreatedNodeInfo[] = []
   /** Created data-source metadata for the footprint and the summary. */
@@ -4522,10 +4528,7 @@ class Compiler {
       isGroup: false,
       ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
     }
-    this.#createdTextSizes.set(id, {
-      width: Math.max(content.length * fontSize * 0.6, fontSize),
-      height: fontSize * 1.2,
-    })
+    this.#createdTextSizes.set(id, estimateTextSize(content, fontSize))
     this.#recordCreatedNode(
       info,
       order,
@@ -5135,6 +5138,17 @@ class Compiler {
       },
     )
     this.#createdTableStyles.set(tableId, { borderRadius, padding })
+    this.#createdTableFrames.set(tableId, {
+      x: position.x,
+      y: position.y,
+      width: columns.reduce(
+        (sum, column) => sum + (column.width === 'auto' ? 100 : column.width),
+        0,
+      ),
+      rows: rows.length,
+      padding,
+      borderWidth,
+    })
 
     rows.forEach((row, rowIndex) => {
       const rowName = `Row ${rowIndex + 1}`
@@ -5237,10 +5251,7 @@ class Compiler {
         // Mirror explicit `create text` (#createText): deterministic size
         // estimate so reveal/wipe/mark of a freshly created table is
         // measurable before the first Run renders it (planned fallback).
-        this.#createdTextSizes.set(textId, {
-          width: Math.max(cell.text.length * 14 * 0.6, 14),
-          height: 14 * 1.2,
-        })
+        this.#createdTextSizes.set(textId, estimateTextSize(cell.text, 14))
         this.#createdInitial.set(textId, {
           x: 0,
           y: 0,
@@ -5644,22 +5655,91 @@ class Compiler {
       const previous = this.#context.nodes.find((node) => node.name === prospective.name)
       return previous?.id ?? nodeId
     }
+    // World-space frame of a created node via its static ancestor chain
+    // (null unless every ancestor up to the scene root is a same-script,
+    // unrotated create). Lets parent-local planned boxes serve world-space
+    // effects without guessing a moved frame.
+    const worldFrameOf = (
+      nodeId: string,
+    ): { x: number; y: number; scaleX: number; scaleY: number } | null => {
+      const initial = this.#createdInitial.get(nodeId)
+      if (!initial) return null
+      const byId = new Map(this.#allNodes().map((node) => [node.id, node] as const))
+      const rootId = this.#context.rootNodeId ?? this.#context.nodes[0]?.id
+      let x = initial.x
+      let y = initial.y
+      let scaleX = Math.abs(initial.scaleX)
+      let scaleY = Math.abs(initial.scaleY)
+      let current = byId.get(nodeId)
+      let guard = 0
+      while (current?.parentId !== undefined && guard++ < 1000) {
+        const parent = byId.get(current.parentId)
+        if (parent === undefined) return null
+        // The scene root contributes the identity frame.
+        if (parent.id === rootId) break
+        const parentInitial = this.#createdInitial.get(parent.id)
+        if (parentInitial === undefined || parentInitial.rotation !== 0) return null
+        x = parentInitial.x + x * Math.abs(parentInitial.scaleX)
+        y = parentInitial.y + y * Math.abs(parentInitial.scaleY)
+        scaleX *= Math.abs(parentInitial.scaleX)
+        scaleY *= Math.abs(parentInitial.scaleY)
+        current = parent
+      }
+      return { x, y, scaleX, scaleY }
+    }
+    // First-run frame of a created table (grids have no text size to plan
+    // from): table-local rect composed into world space. Masks err wide —
+    // the row height is a conservative estimate, and over-wide only uncovers
+    // empty board.
+    const plannedTableBounds = (nodeId: string) => {
+      const frame = worldFrameOf(nodeId)
+      const declared = this.#createdTableFrames.get(nodeId)
+      if (!frame || !declared) return null
+      const height = declared.rows * 36 + declared.padding * 2 + declared.borderWidth * 2 + 8
+      return {
+        minX: frame.x + declared.x - 4,
+        minY: frame.y + declared.y - 4,
+        maxX: frame.x + declared.x + declared.width + 4,
+        maxY: frame.y + declared.y + height + 4,
+      }
+    }
     const plannedTextBounds = (nodeId: string) => {
       const size = this.#createdTextSizes.get(nodeId)
       const initial = this.#createdInitial.get(nodeId)
       if (!size || !initial) return null
-      // Conservative fallback: renderer measurement was unavailable (often
-      // because the node is still masked), so err wide. An over-wide mask
-      // uncovers empty space (harmless) while an under-wide one clips
-      // trailing glyphs — e.g. the final O of an all-caps label estimated
-      // at 0.6em/char when the true caps run wider.
-      const halfWidth = (size.width * Math.abs(initial.scaleX) * 1.2) / 2 + 2
-      const halfHeight = (size.height * Math.abs(initial.scaleY)) / 2
+      // Created nodes carry parent-local positions but effects consume
+      // world-space boxes: resolve the static ancestor frame so the chalk
+      // hand and reveal mask land on nested content (table cells) instead of
+      // near the board origin.
+      const frame = worldFrameOf(nodeId)
+      if (!frame) {
+        const worldW = size.width * Math.abs(initial.scaleX)
+        const halfH = (size.height * Math.abs(initial.scaleY)) / 2
+        // Length-proportional cover: estimator error accumulates per glyph,
+        // so a fixed pad clips long sentences on the right. 2.5% each side
+        // plus a right-biased fixed pad (+4 right vs +1 left) for tails.
+        const prop = worldW * 0.025
+        const halfW = worldW / 2
+        return {
+          minX: initial.x - halfW - prop - 1,
+          minY: initial.y - halfH,
+          maxX: initial.x + halfW + prop + 4,
+          maxY: initial.y + halfH,
+        }
+      }
+      // Renderer measurement was unavailable (often because the node is still
+      // masked): the per-char estimate above is already caps-aware. Cover is
+      // length-proportional (fixed pads clip long sentences on the right)
+      // with a right bias for trailing-glyph tails (e.g. "d").
+      const worldW = size.width * frame.scaleX
+      const halfH = (size.height * frame.scaleY) / 2
+      const prop = worldW * 0.025
+      const halfW = worldW / 2
       return {
-        minX: initial.x - halfWidth,
-        minY: initial.y - halfHeight,
-        maxX: initial.x + halfWidth,
-        maxY: initial.y + halfHeight,
+        minX: frame.x - halfW - prop - 1,
+        minY: frame.y - halfH,
+        maxX: frame.x + halfW + prop + 4,
+        maxY: frame.y + halfH,
       }
     }
     const compiled = compileAnimationScriptReveal(statement, cursor, {
@@ -5685,23 +5765,48 @@ class Compiler {
       },
       nodeBounds: (nodeId, time) => {
         const measured = this.#context.reads.nodeBounds(readNodeId(nodeId), time)
-        const planned = plannedTextBounds(nodeId)
+        const planned = plannedTextBounds(nodeId) ?? plannedTableBounds(nodeId)
         if (!measured) return planned
         if (!planned) return measured
-        // Union only when both boxes live in the same neighborhood. Planned
-        // bounds are parent-local, so for text nested inside a moved parent
-        // (table cells) they sit near the origin while measured bounds are
-        // world-space — unioning those would smear the effect across the
-        // canvas (e.g. the table-border sweep). Overlapping boxes mean a
-        // small move or none: union covers the old spot and the new home.
-        // A re-run with positions already matching measures the right box,
-        // so large moves self-heal on the second run.
+        // Union only when both boxes live in the same neighborhood. A planned
+        // box that could not be resolved into world space (moved ancestor)
+        // still sits near the origin while measured bounds are world-space —
+        // unioning those would smear the effect across the canvas (e.g. the
+        // table-border sweep). Overlapping boxes mean a small move or none:
+        // union covers the old spot and the new home. A re-run with positions
+        // already matching measures the right box, so large moves self-heal
+        // on the second run.
         const overlaps =
           measured.minX <= planned.maxX &&
           planned.minX <= measured.maxX &&
           measured.minY <= planned.maxY &&
           planned.minY <= measured.maxY
         if (!overlaps) return measured
+        // Steady state (same spot): prefer the tight measured box. Unioning
+        // with the planned estimate here is what dragged the reveal's maxX
+        // past the last glyph, so the hand kept writing into empty board.
+        // Only union on a real move: centers far apart relative to the boxes.
+        const measuredCX = (measured.minX + measured.maxX) / 2
+        const measuredCY = (measured.minY + measured.maxY) / 2
+        const plannedCX = (planned.minX + planned.maxX) / 2
+        const plannedCY = (planned.minY + planned.maxY) / 2
+        const measuredW = measured.maxX - measured.minX
+        const measuredH = measured.maxY - measured.minY
+        const plannedW = planned.maxX - planned.minX
+        const plannedH = planned.maxY - planned.minY
+        const moved =
+          Math.abs(measuredCX - plannedCX) > (measuredW + plannedW) / 4 ||
+          Math.abs(measuredCY - plannedCY) > (measuredH + plannedH) / 4
+        if (!moved) {
+          const steadyW = measured.maxX - measured.minX
+          const steadyProp = steadyW * 0.025
+          return {
+            minX: measured.minX - 1 - steadyProp,
+            minY: measured.minY,
+            maxX: measured.maxX + 4 + steadyProp,
+            maxY: measured.maxY,
+          }
+        }
         return mergeBounds(measured, planned)
       },
       roundTime,

@@ -120,4 +120,52 @@ describe('RevealEffectRenderer', () => {
       .find((child) => 'texture' in child)
     expect(performer).toBeDefined()
   })
+
+  it('opens extra trailing pixels after the reveal ends without moving the hand', () => {
+    const world = new realPixi.Container()
+    const textureCache = {
+      get: vi.fn(),
+      load: vi.fn(),
+    } as unknown as TextureCache
+    const renderer = new RevealEffectRenderer(
+      world,
+      realPixi,
+      textureCache,
+      () => null,
+      () => null,
+    )
+    const reveal: SceneEffect = {
+      id: 'r1',
+      kind: 'reveal',
+      start: 10,
+      duration: 2,
+      scopeNodeIds: ['n1'],
+      nodeIds: ['n1'],
+      bounds: { minX: 0, minY: 0, maxX: 100, maxY: 40 },
+      visual: { kind: 'none' },
+    }
+    const container = new realPixi.Container()
+    const containers = new Map([['n1', container as never]])
+    const scene = { getNode: () => ({}) } as unknown as Scene
+    const maskRects = () =>
+      world.children
+        .filter((child) => (child as { kind?: string }).kind === 'graphics')
+        .flatMap((child) =>
+          (
+            (child as unknown as { calls: { method: string; args: unknown[] }[] }).calls ?? []
+          ).filter((call) => call.method === 'rect'),
+        )
+
+    // At the exact end the mask stays tight: the hand finishes at maxX.
+    renderer.update([reveal], scene, 12, containers)
+    const tight = maskRects()
+    expect(tight.length).toBeGreaterThan(0)
+    expect(tight[tight.length - 1]!.args[2]).toBe(100)
+
+    // After the hand is gone the mask opens extra trailing pixels.
+    renderer.update([reveal], scene, 12.04, containers)
+    const tailed = maskRects()
+    expect(tailed.length).toBeGreaterThan(0)
+    expect(tailed[tailed.length - 1]!.args[2]).toBeGreaterThan(100)
+  })
 })

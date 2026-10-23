@@ -377,6 +377,8 @@ function planFromParsed(
       subMarkNames,
       partEstimates: estimates,
       assetNameForPlaced,
+      stepIndex: step.index,
+      html: options.html,
     })
     if (built.padded) {
       diagnostics.push({
@@ -500,6 +502,8 @@ function buildBoardSource(input: {
   subMarkNames: readonly string[]
   partEstimates: readonly number[]
   assetNameForPlaced: (slug: string) => string
+  stepIndex: number
+  html?: string
 }): {
   source: string
   fractions: readonly PlannerFraction[]
@@ -517,6 +521,8 @@ function buildBoardSource(input: {
     subMarkNames,
     partEstimates,
     assetNameForPlaced,
+    stepIndex,
+    html,
   } = input
   const taken = new Set<string>(['board', 'background', 'chalkpaw', 'ragpaw', 'pawempty'])
 
@@ -583,6 +589,80 @@ function buildBoardSource(input: {
 
   const TITLE_TINT = '#F5E6C8'
 
+  /** Chalk accent palette shared with scenarioChalkRender (accent-* classes). */
+  const ACCENT_HEX: Record<string, string> = {
+    'accent-yellow': '#F2D98C',
+    'accent-pink': '#F2A9C4',
+    'accent-blue': '#A9CDF2',
+    'accent-green': '#A8D5A2',
+    'accent-orange': '#F2B880',
+  }
+
+  function decodeHtmlEntities(text: string): string {
+    return text
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+  }
+
+  function normalizeMatchText(text: string): string {
+    return decodeHtmlEntities(text.replace(/<[^>]*>/g, ''))
+      .replace(/\*\*/g, '')
+      .replace(/__/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  interface HtmlColorEntry {
+    text: string
+    color: string
+    used: boolean
+  }
+
+  /** Board-text colors in document order for this step's HTML section. */
+  function htmlColorEntries(): HtmlColorEntry[] {
+    if (!html) return []
+    const sectionRe = new RegExp(
+      `<section[^>]*data-step="${stepIndex}"[^>]*>([\\s\\S]*?)<\\/section>`,
+      'i',
+    )
+    const sectionMatch = sectionRe.exec(html)
+    const scope = sectionMatch?.[1] ?? html
+    const out: HtmlColorEntry[] = []
+    // figcaptions (visual labels), board-label paragraphs, chalk-text
+    // paragraphs — the exact sources board titles/labels are built from.
+    const re =
+      /<(figcaption|p)[^>]*class="[^"]*\b(accent-[a-z]+)\b[^"]*"[^>]*>([\s\S]*?)<\/(?:figcaption|p)>/gi
+    let match: RegExpExecArray | null
+    while ((match = re.exec(scope)) !== null) {
+      const color = ACCENT_HEX[match[2]!] ?? TITLE_TINT
+      const text = normalizeMatchText(match[3] ?? '')
+      if (text === '') continue
+      out.push({ text, color, used: false })
+    }
+    return out
+  }
+
+  const htmlColors = htmlColorEntries()
+
+  /** Steal the label/title color from the generated HTML when it matches. */
+  function tintAliasForContent(alias: string, content: string): void {
+    const needle = normalizeMatchText(content)
+    if (needle !== '') {
+      const exact = htmlColors.find((entry) => !entry.used && entry.text === needle)
+      const fuzzy = exact ?? htmlColors.find((entry) => !entry.used && entry.text.includes(needle))
+      if (fuzzy) {
+        fuzzy.used = true
+        tints.push(`${alias}.tint("${fuzzy.color}")`)
+        return
+      }
+    }
+    tintAlias(alias)
+  }
+
   /** Content-sized sweep: ~0.1s per character, clamped to [0.4, 4.0]. */
   function contentOver(text: string): number {
     const symbols = Array.from(text.trim()).length
@@ -603,8 +683,21 @@ function buildBoardSource(input: {
   }
 
   const VISUAL_SUFFIX = ', visualScale: 4, visualAnchor: "top-center"'
-  const TABLE_BORDER_WOBBLE =
-    ', wobbleX: { from: 12, to: 24 }, wobbleY: { from: 24, to: 54 }, wobbleSpeed: 7'
+  /** Table border draw wobble: Y grows with row count (2x at 4 rows, 3x at 6). */
+  function tableBorderWobble(rows: number): string {
+    const factor = Math.min(3, Math.max(1, rows / 2))
+    const fromY = Math.round(8 * factor)
+    const toY = Math.round(18 * factor)
+    return `, wobbleX: { from: 12, to: 24 }, wobbleY: { from: ${fromY}, to: ${toY} }, wobbleSpeed: 7`
+  }
+  /** Vertical gap between cascaded tables sharing one slide. */
+  const TABLE_STACK_GAP = 60
+  /** Estimated table row height for cascade spacing. */
+  const EST_TABLE_ROW_H = 34
+  /** Planned table homes (y + estimated height) for cascade spacing. */
+  const tableHomes: { y: number; h: number }[] = []
+  /** Table row counts by table node alias for border wobble scaling. */
+  const tableRowCounts = new Map<string, number>()
 
   // Appearance order: placed images first (doc order), then labels, tables,
   // and text reveals. Table chunks pair with `[reveal: table*]` ids in order;
@@ -686,7 +779,7 @@ function buildBoardSource(input: {
     creations.push(
       `create text "${escapeQuoted(name)}" as ${alias} at (${pos.x}, ${pos.y}) inside board { content: "${escapeQuoted(content)}", fontSize: ${fontSize}, alignment: "center" }`,
     )
-    tintAlias(alias)
+    tintAliasForContent(alias, content)
     effects.push({ kind: 'reveal', alias, name, content })
     if (role === 'title' && titleEffectIndex < 0) titleEffectIndex = effects.length - 1
   }
@@ -743,8 +836,19 @@ function buildBoardSource(input: {
     ).join(', ')
     const tableWidth = width * TABLE_COLUMN_WIDTH
     // Below the card/labels when the step stages any, recap height otherwise.
+    // Stacked tables cascade down: each next table starts below the previous
+    // table's estimated band plus a gap, so tables never share the same area.
     const tableX = Math.round(545 - tableWidth / 2)
-    const tableY = hasCard || labelY > 505 ? 580 : 300
+    const tableY =
+      tableHomes.length === 0
+        ? hasCard || labelY > 505
+          ? 580
+          : 300
+        : (tableHomes[tableHomes.length - 1]?.y ?? 300) +
+          (tableHomes[tableHomes.length - 1]?.h ?? 0) +
+          TABLE_STACK_GAP
+    tableHomes.push({ y: tableY, h: height * EST_TABLE_ROW_H + 4 })
+    tableRowCounts.set(alias, height)
     creations.push(
       `create table "${escapeQuoted(revealId)}" as ${alias} at (${tableX}, ${tableY}) inside board { columns: [${columns}], rows: [${emptyRows}], padding: 6, borderWidth: 2, borderColor: "#FFFFFF", background: "transparent" }`,
     )
@@ -844,8 +948,11 @@ function buildBoardSource(input: {
 
   // Teardown within the same slide, kind-matched in fixture order: caption
   // labels clear first, carried cards fly home, tables wipe as subtrees,
-  // the title wipes last. Targeted `[remove:]/[wipe:]` keeps the listed
-  // order instead. Marks never appear in boardItems, so they need no removal.
+  // the title wipes last. A bare `[wipe]` always clears the whole board,
+  // even when targeted `[remove:]/[wipe:]` entries are also present (those
+  // only pin mid-slide recaps like the previous-table clear); without a bare
+  // wipe, targeted entries expand in listed order instead. Marks never appear
+  // in boardItems, so they need no removal.
   const appearanceKeys: string[] = []
   for (const slug of step.placed) {
     const key = normalizeAssetKey(slug)
@@ -870,7 +977,62 @@ function buildBoardSource(input: {
     if (item.kind === 'table') return { kind: 'wipe-subtree', alias: item.alias, name: key }
     return { kind: 'wipe', alias: item.alias, content: item.content }
   }
-  if (step.wiped && step.wipeTargets.length === 0) {
+  // Already-hidden guard: a teardown removal whose whole target was wiped
+  // after its last reveal would flash hidden content back (a wipe starts
+  // fully open and only hides as it sweeps), so it is dropped instead.
+  // Cell ownership for subtree coverage (cell alias → table alias).
+  const cellOwner = new Map<string, string>()
+  effects.forEach((effect) => {
+    if (effect.kind === 'table-mask' || effect.kind === 'table-cell') {
+      cellOwner.set(effect.alias, effect.tableAlias)
+    }
+  })
+  const REVEAL_LIKE: ReadonlySet<Effect['kind']> = new Set([
+    'reveal',
+    'carry-in',
+    'table-border',
+    'table-cell',
+  ])
+  const WIPE_LIKE: ReadonlySet<Effect['kind']> = new Set([
+    'wipe',
+    'wipe-subtree',
+    'table-mask',
+    'carry-away',
+  ])
+  /** Aliases a removal sweep covers: itself, plus table cells for subtrees. */
+  function coveredMembers(alias: string, subtree: boolean): string[] {
+    if (!subtree) return [alias]
+    const out = [alias]
+    cellOwner.forEach((table, cell) => {
+      if (table === alias) out.push(cell)
+    })
+    return out
+  }
+  /**
+   * Whether every covered member's latest visibility effect is a wipe: the
+   * border sweep also uncovers cell texts while drawing, so it counts as a
+   * reveal for its table's cells.
+   */
+  function isAlreadyHidden(alias: string, subtree: boolean): boolean {
+    return coveredMembers(alias, subtree).every((member) => {
+      const ownerTable = cellOwner.get(member)
+      let lastReveal = -1
+      let lastWipe = -1
+      effects.forEach((effect, index) => {
+        const onMember = effect.alias === member
+        const onTable =
+          ownerTable !== undefined &&
+          effect.kind === 'table-border' &&
+          effect.tableAlias === ownerTable
+        const inSubtree =
+          effect.kind === 'wipe-subtree' && (effect.alias === member || effect.alias === ownerTable)
+        if ((onMember && REVEAL_LIKE.has(effect.kind)) || onTable) lastReveal = index
+        if ((onMember && WIPE_LIKE.has(effect.kind)) || inSubtree) lastWipe = index
+      })
+      return lastWipe > lastReveal
+    })
+  }
+  if (step.wiped) {
     const labels = appearanceKeys.filter((key) => {
       const item = boardItems.get(key)
       return item?.kind === 'revealed' && !item.title
@@ -883,19 +1045,21 @@ function buildBoardSource(input: {
     })
     for (const key of [...labels, ...carried, ...tables, ...titles]) {
       const removal = kindMatchedRemoval(key)
-      if (removal) {
-        effects.push(removal)
-        teardownEffects.add(removal)
-      }
+      if (!removal) continue
+      // Skip removals of already-hidden targets: re-wiping flashes them back.
+      if (isAlreadyHidden(removal.alias, removal.kind === 'wipe-subtree')) continue
+      effects.push(removal)
+      teardownEffects.add(removal)
     }
   } else {
     for (const id of [...step.removes, ...step.wipeTargets]) {
       const key = normalizeAssetKey(id)
       const removal = kindMatchedRemoval(key === '' ? id : key)
-      if (removal) {
-        effects.push(removal)
-        teardownEffects.add(removal)
-      }
+      if (!removal) continue
+      // Skip removals of already-hidden targets: re-wiping flashes them back.
+      if (isAlreadyHidden(removal.alias, removal.kind === 'wipe-subtree')) continue
+      effects.push(removal)
+      teardownEffects.add(removal)
     }
   }
 
@@ -1041,8 +1205,9 @@ function buildBoardSource(input: {
   // Builds spread space-between per prompt block (flex): a part's first
   // build starts at its own voice window start (never earlier, so `at:`
   // offsets stay non-negative), its last build ends at its window end, and
-  // middles spread evenly between with equal gaps. Mask-setup wipes stay
-  // glued (0 gap) to preserve the table build chain. The board cursor never
+  // middles spread evenly between with equal gaps. Mask-setup wipes all fire
+  // together just after their border starts (pinned below), so cell contents
+  // stay hidden for the whole border sweep and appear exactly once. The board cursor never
   // rewinds, so sweeps never overlap; when the board outruns the voice the
   // slide pads past the board end plus a 1s tail (the `overflow-padded`
   // diagnostic below). The global first action is pinned to part-0 and starts
@@ -1057,6 +1222,8 @@ function buildBoardSource(input: {
   const END_TAIL = 1
   /** Padding between consecutive teardown sweeps in the end cluster. */
   const TEARDOWN_GAP = 1
+  /** Minimum read time: finished board lingers before teardown starts. */
+  const TEARDOWN_DWELL = 0.5
   const effectAt: number[] = new Array<number>(effects.length).fill(0)
   const byOwner: number[][] = subMarkNames.map(() => [])
   effects.forEach((_, index) => {
@@ -1170,11 +1337,30 @@ function buildBoardSource(input: {
       cursor = (effectAt[lastIndex] ?? 0) + lastSpan
     })
   }
+  // Mask-setup wipes fire together just after their border starts drawing, so
+  // cell contents stay hidden for the whole border sweep and appear exactly
+  // once, via their own reveal — never prefilled, never disappearing and
+  // reappearing. (The chained layout above still spaces the reveals; only
+  // the mask pins move.)
+  {
+    const borderStartByTable = new Map<string, number>()
+    effects.forEach((effect, index) => {
+      if (effect.kind === 'table-border')
+        borderStartByTable.set(effect.tableAlias, effectAt[index] ?? 0)
+    })
+    effects.forEach((effect, index) => {
+      if (effect.kind === 'table-mask') {
+        const borderStart = borderStartByTable.get(effect.tableAlias)
+        if (borderStart !== undefined) effectAt[index] = borderStart + 0.01
+      }
+    })
+  }
   // Teardown cluster: removal sweeps stack right before the slide end with 1s
   // padding between sweeps, so one `[wipe]` clears the board in a tight run
   // instead of scattering across the voice. Backwards from the initial total
-  // (last teardown ends one second before it); forwards past the builds when
-  // the backwards cluster would overlap them. Owners reassign by time so
+  // (last teardown ends one second before it) when the finished board keeps
+  // read time; forwards past the builds plus dwell when the backwards cluster
+  // would overlap them or cut the linger short. Owners reassign by time so
   // `at:` offsets stay non-negative.
   const teardownIdx: number[] = []
   effects.forEach((_, index) => {
@@ -1195,12 +1381,14 @@ function buildBoardSource(input: {
         isTeardown(index) ? max : Math.max(max, (effectAt[index] ?? 0) + (spans[index] ?? 0)),
       0,
     )
-    if ((backStarts.get(teardownIdx[0]!) ?? 0) >= buildEnd - 1e-9) {
+    if ((backStarts.get(teardownIdx[0]!) ?? 0) >= buildEnd + TEARDOWN_DWELL - 1e-9) {
       backStarts.forEach((start, index) => {
         effectAt[index] = start
       })
     } else {
-      let run = buildEnd + TEARDOWN_GAP
+      // Forwards past the builds with read time: the finished board lingers
+      // before the teardown run so a freshly drawn table is seen, not flashed.
+      let run = buildEnd + TEARDOWN_DWELL
       for (const index of teardownIdx) {
         effectAt[index] = run
         run += (spans[index] ?? 0) + TEARDOWN_GAP
@@ -1259,7 +1447,7 @@ function buildBoardSource(input: {
         break
       case 'table-border':
         lines.push(
-          `reveal(${effect.alias}${atText}${overText}, visual: chalkHand${VISUAL_SUFFIX}${TABLE_BORDER_WOBBLE}, sound: writeSfx)`,
+          `reveal(${effect.alias}${atText}${overText}, visual: chalkHand${VISUAL_SUFFIX}${tableBorderWobble(tableRowCounts.get(effect.alias) ?? 3)}, sound: writeSfx)`,
         )
         break
       case 'table-mask':
@@ -1286,7 +1474,7 @@ function buildBoardSource(input: {
         break
       case 'wipe-subtree':
         lines.push(
-          `wipe(subtree(${effect.alias})${atText}${overText}, visual: ragHand${VISUAL_SUFFIX}${TABLE_BORDER_WOBBLE}, sound: eraseSfx)`,
+          `wipe(subtree(${effect.alias})${atText}${overText}, visual: ragHand${VISUAL_SUFFIX}${tableBorderWobble(tableRowCounts.get(effect.alias) ?? 3)}, sound: eraseSfx)`,
         )
         break
     }

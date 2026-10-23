@@ -2,6 +2,7 @@ import type { SceneNode } from '../../engine'
 import type { TextComponent } from '../../engine/components'
 import type { PixiContainer, PixiText, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
+import { estimateTextSize } from '../../engine/estimatedTextMetrics'
 import { hexColorToTint } from './placeholder'
 
 const DEFAULT_FONT_SIZE = 24
@@ -87,7 +88,5 @@ function buildTextStyle(textComponent: TextComponent): Record<string, unknown> {
 function measureText(textComponent: TextComponent): WorldSize {
   const fontSize = textComponent.fontSize || DEFAULT_FONT_SIZE
   const content = textComponent.content || ''
-  const estimatedWidth = Math.max(content.length * fontSize * 0.6, fontSize)
-  const estimatedHeight = fontSize * 1.2
-  return { width: estimatedWidth, height: estimatedHeight }
+  return estimateTextSize(content, fontSize)
 }

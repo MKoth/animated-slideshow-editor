@@ -229,13 +229,15 @@ describe('Scenario planner tables, teardown, overflow, fractions (issue #470)', 
     expect(slide?.source).toContain('rows: [["", ""], ["", ""], ["", ""]]')
     expect(slide?.source).toContain('inside table1.cell(0, 0)')
     expect(slide?.source).toMatch(/reveal\(table1, at: markTime\("part-0"\), over: 1\.2/)
-    // Border wobble is wide triple-Y; cells scale with their text.
-    expect(slide?.source).toMatch(/reveal\(table1,.*wobbleY: \{ from: 24, to: 54 \}/)
+    // Border wobble scales with row count (3 rows → 1.5x the {8-18} base);
+    // cells scale with their text.
+    expect(slide?.source).toMatch(/reveal\(table1,.*wobbleY: \{ from: 12, to: 27 \}/)
     expect(slide?.source).toMatch(/reveal\(table1c00,.*over: 0\.7,.*sound: writeSfx\)/)
     expect(slide?.source).toMatch(/reveal\(table1c10,.*over: 0\.4,.*sound: writeSfx\)/)
-    // Invisible mask-setup wipes hide cell contents while the border draws.
+    // Invisible mask-setup wipes fire together just after the border starts,
+    // hiding cell contents for the whole border draw.
     expect(slide?.source).toMatch(
-      /wipe\(table1c00, at: markTime\("part-0"\) \+ 1\.2, over: 0\.01, visual: none\)/,
+      /wipe\(table1c00, at: markTime\("part-0"\) \+ 0\.01, over: 0\.01, visual: none\)/,
     )
     // Chained order: border, mask, cell, mask, cell...
     const actions = slide?.fractions.map((f) => f.action) ?? []
@@ -497,7 +499,7 @@ describe('Scenario planner space-between board timing', () => {
     expect(last.offset + span).toBeCloseTo((slide?.duration ?? 0) - 1, 6)
   })
 
-  it('spreads table cells evenly per block with mask-setup wipes glued', () => {
+  it('spreads table cells evenly with all mask-setup wipes at the border start', () => {
     const result = planScenarioDraft(TABLE_DOC, 0.1, [])
     const slide = result.slides[0]
     expect(slide).toBeDefined()
@@ -508,26 +510,28 @@ describe('Scenario planner space-between board timing', () => {
     // Last cell reveal (over 0.7) ends one second before the slide end.
     const last = items[items.length - 1]!
     expect(last.offset + last.over).toBeCloseTo((slide?.duration ?? 0) - 1, 6)
-    // Mask-setup wipes (visual none, 0.01s) stay glued: zero gap after the
-    // previous sweep instead of sharing the even spacing.
+    // Mask-setup wipes (visual none, 0.01s) all fire together just after the
+    // border starts drawing — cell contents stay hidden for the whole border
+    // sweep and appear exactly once, via their own reveal. No prefilled grid,
+    // no disappear-then-reappear cycle.
     const lines = (slide?.source ?? '').split('\n')
     const atLines = lines.filter((line) => /at: markTime/.test(line) && /over:/.test(line))
-    atLines.forEach((line, i) => {
-      if (!/visual: none/.test(line) || i === 0) return
-      const prev = placements(atLines.slice(0, i + 1).join('\n'))
-      const prevItem = prev[prev.length - 2]!
-      const cur = prev[prev.length - 1]!
-      expect(cur.offset - (prevItem.offset + prevItem.over)).toBeCloseTo(0, 6)
-    })
-    // Even spacing: every non-mask gap between consecutive sweeps is equal.
+    const borderOffset = items[0]!.offset
+    for (const line of atLines) {
+      if (!/visual: none/.test(line)) continue
+      const at = line.match(/at: markTime\("part-\d+"\)(?: \+ ([\d.]+))?/)
+      const offset = at?.[1] !== undefined ? Number(at[1]) : 0
+      expect(offset).toBeCloseTo(borderOffset + 0.01, 6)
+    }
+    // Even spacing: gaps between consecutive reveals (masks excluded — they
+    // all fire at the border start now) are equal.
+    const reveals = items.filter((item) => !/visual: none/.test(item.line))
     const gaps: number[] = []
-    atLines.forEach((line, i) => {
-      if (i === 0 || /visual: none/.test(line)) return
-      const seq = placements(atLines.slice(0, i + 1).join('\n'))
-      const prevItem = seq[seq.length - 2]!
-      const cur = seq[seq.length - 1]!
-      gaps.push(cur.offset - (prevItem.offset + prevItem.over))
-    })
+    for (let i = 1; i < reveals.length; i += 1) {
+      const prevItem = reveals[i - 1]!
+      const cur = reveals[i]!
+      gaps.push(cur.offset - (prevItem.offset + prevItem.span))
+    }
     expect(gaps.length).toBeGreaterThan(1)
     for (const gap of gaps) {
       expect(gap).toBeGreaterThanOrEqual(-1e-9)
@@ -614,6 +618,9 @@ describe('Scenario planner space-between board timing', () => {
     // ...and the last one ends one second before the slide end.
     const last = teardown[teardown.length - 1]!
     expect(last.offset + last.span).toBeCloseTo((slide?.duration ?? 0) - 1, 6)
+    // Read time: the finished board lingers briefly before teardown starts.
+    const buildEnd = Math.max(...builds.map((b) => b.offset + b.span))
+    expect(teardown[0]!.offset - buildEnd).toBeCloseTo(0.5, 6)
     // No overlaps anywhere in script order.
     for (let i = 1; i < items.length; i += 1) {
       const prev = items[i - 1]!
@@ -790,5 +797,225 @@ describe('Scenario planner bound asset names', () => {
     })
     expect(checked.diagnostics.filter((d) => d.severity === 'error')).toEqual([])
     expect(checked.runnable).toBe(true)
+  })
+})
+
+describe('Scenario planner table layout', () => {
+  const TWO_TABLE_DOC = [
+    '# Lesson',
+    '',
+    '## Step 5 — Recap',
+    '',
+    '**Narrator:** So now you know the rule you can trust every single day.',
+    '',
+    '[reveal: table1]',
+    '',
+    '| Use ser for | Use estar for |',
+    '|---|---|',
+    '| identity and traits | feelings now |',
+    '| origin and material | location now |',
+    '| es listo = clever | está listo = ready |',
+    '',
+    '[wipe: table1]',
+    '',
+    '[reveal: table2]',
+    '',
+    '| Person | ser | estar |',
+    '|---|---|---|',
+    '| yo | soy | estoy |',
+    '| tú | eres | estás |',
+    '| él / ella | es | está |',
+    '| nosotros | somos | estamos |',
+    '| vosotros | sois | estáis |',
+    '',
+  ].join('\n')
+
+  function tableCreates(source: string): { name: string; x: number; y: number; rows: number }[] {
+    const out: { name: string; x: number; y: number; rows: number }[] = []
+    for (const line of source.split('\n')) {
+      const match = line.match(/create table "([^"]+)" as \S+ at \(([\d.]+), ([\d.]+)\)/)
+      if (!match) continue
+      const rows = (line.match(/\[(""|"(?:[^"\\]|\\.)*")(, ""|,"(?:[^"\\]|\\.)*")*\]/g) ?? [])
+        .length
+      out.push({ name: match[1]!, x: Number(match[2]), y: Number(match[3]), rows })
+    }
+    return out
+  }
+
+  it('cascades stacked tables down so they never share the same area', () => {
+    const result = planScenarioDraft(TWO_TABLE_DOC, 0.1, [])
+    const slide = result.slides[0]
+    expect(slide).toBeDefined()
+    const tables = tableCreates(slide?.source ?? '')
+    expect(tables.map((t) => t.name)).toEqual(['table1', 'table2'])
+    // table1: 2 cols x 150 = 300 wide → centered at 545; 4 rows.
+    expect(tables[0]?.rows).toBe(4)
+    expect(tables[0]?.x + 300 / 2).toBeCloseTo(545, 6)
+    // table2: 3 cols x 150 = 450 wide → centered at 545; 6 rows.
+    expect(tables[1]?.rows).toBe(6)
+    expect(tables[1]?.x + 450 / 2).toBeCloseTo(545, 6)
+    // No vertical overlap: table2 starts below table1's estimated band plus gap.
+    expect(tables[1]!.y).toBeGreaterThan(tables[0]!.y + 4 * 34)
+  })
+
+  it('scales table border wobbleY with the row count', () => {
+    const result = planScenarioDraft(TWO_TABLE_DOC, 0.1, [])
+    const source = result.slides[0]?.source ?? ''
+    // 4-row table → 2x the {8-18} base; 6-row table → 3x.
+    expect(source).toMatch(/reveal\(table1,.*wobbleY: \{ from: 16, to: 36 \}/)
+    expect(source).toMatch(/reveal\(table2,.*wobbleY: \{ from: 24, to: 54 \}/)
+    // The subtree wipes ride their own table's wobble.
+    expect(source).toMatch(/wipe\(subtree\(table1\).*wobbleY: \{ from: 16, to: 36 \}/)
+  })
+
+  it('keeps small tables calm: 2-row border uses the base wobble', () => {
+    const doc = [
+      '# Lesson',
+      '',
+      '## Step 1 — Small',
+      '',
+      '**Narrator:** A narrator line long enough to cover the board work here today.',
+      '',
+      '| A | B |',
+      '| --- | --- |',
+      '| C | D |',
+      '',
+      '[reveal: table1]',
+      '',
+    ].join('\n')
+    const result = planScenarioDraft(doc, 0.1, [])
+    expect(result.slides[0]?.source).toMatch(/reveal\(table1,.*wobbleY: \{ from: 8, to: 18 \}/)
+  })
+
+  it('drops the teardown wipe of a table already cleared mid-slide', () => {
+    const doc = [
+      '# Lesson',
+      '',
+      '## Step 5 — Recap',
+      '',
+      '**Narrator:** So now you know the rule you can trust every single day.',
+      '',
+      '[reveal: table1]',
+      '',
+      '| Use ser for | Use estar for |',
+      '|---|---|',
+      '| identity and traits | feelings now |',
+      '| origin and material | location now |',
+      '| es listo = clever | está listo = ready |',
+      '',
+      '[wipe: table1]',
+      '',
+      '[reveal: text2]',
+      '',
+      'How you conjugate ser and estar',
+      '',
+      '[reveal: table2]',
+      '',
+      '| Person | ser | estar |',
+      '|---|---|---|',
+      '| yo | soy | estoy |',
+      '| tú | eres | estás |',
+      '| él / ella | es | está |',
+      '| nosotros | somos | estamos |',
+      '| vosotros | sois | estáis |',
+      '',
+    ].join('\n')
+    const result = planScenarioDraft(doc, 0.1, [])
+    const source = result.slides[0]?.source ?? ''
+    // One mid-recap clear before table2 draws; the targeted end wipe is
+    // redundant (re-wiping hidden content flashes it back) and must go.
+    expect(source.match(/wipe\(subtree\(table1\)/g)).toHaveLength(1)
+  })
+
+  it('keeps one wipe per table under a full wipe: mid-recap for the first, teardown for the last', () => {
+    const doc = [
+      '# Lesson',
+      '',
+      '## Step 5 — Recap',
+      '',
+      '**Narrator:** So now you know the rule you can trust every single day.',
+      '',
+      '[reveal: table1]',
+      '',
+      '| Use ser for | Use estar for |',
+      '|---|---|',
+      '| identity and traits | feelings now |',
+      '| origin and material | location now |',
+      '| es listo = clever | está listo = ready |',
+      '',
+      '[reveal: table2]',
+      '',
+      '| Person | ser | estar |',
+      '|---|---|---|',
+      '| yo | soy | estoy |',
+      '| tú | eres | estás |',
+      '| él / ella | es | está |',
+      '| nosotros | somos | estamos |',
+      '| vosotros | sois | estáis |',
+      '',
+      '[wipe]',
+      '',
+    ].join('\n')
+    const result = planScenarioDraft(doc, 0.1, [])
+    const source = result.slides[0]?.source ?? ''
+    // table1: cleared once mid-slide before table2 draws, never again.
+    expect(source.match(/wipe\(subtree\(table1\)/g)).toHaveLength(1)
+    // table2: cleared once in the end cluster.
+    expect(source.match(/wipe\(subtree\(table2\)/g)).toHaveLength(1)
+    // The end cluster wipes table2 after table1's mid clear, never the reverse.
+    const mid = source.indexOf('wipe(subtree(table1)')
+    const tail = source.indexOf('wipe(subtree(table2)')
+    expect(mid).toBeGreaterThan(-1)
+    expect(tail).toBeGreaterThan(mid)
+  })
+
+  it('lets a bare wipe clear the board even when a targeted wipe is also present', () => {
+    const doc = [
+      '# Lesson',
+      '',
+      '## Step 5 — Recap',
+      '',
+      '**Narrator:** So now you know the rule you can trust every single day.',
+      '',
+      '[reveal: table1]',
+      '',
+      '| Use ser for | Use estar for |',
+      '|---|---|',
+      '| identity and traits | feelings now |',
+      '| origin and material | location now |',
+      '| es listo = clever | está listo = ready |',
+      '',
+      '[wipe: table1]',
+      '',
+      '[reveal: text2]',
+      '',
+      'How you conjugate ser and estar',
+      '',
+      '[reveal: table2]',
+      '',
+      '| Person | ser | estar |',
+      '|---|---|---|',
+      '| yo | soy | estoy |',
+      '| tú | eres | estás |',
+      '| él / ella | es | está |',
+      '| nosotros | somos | estamos |',
+      '| vosotros | sois | estáis |',
+      '',
+      '[wipe]',
+      '',
+    ].join('\n')
+    const result = planScenarioDraft(doc, 0.1, [])
+    const source = result.slides[0]?.source ?? ''
+    // table1: cleared once mid-slide; the targeted end duplicate stays gone.
+    expect(source.match(/wipe\(subtree\(table1\)/g)).toHaveLength(1)
+    // table2 + title: cleared once in the end cluster (bare wipe is not
+    // swallowed by the targeted entry).
+    expect(source.match(/wipe\(subtree\(table2\)/g)).toHaveLength(1)
+    expect(source).toMatch(/wipe\(text2, at: markTime/)
+    // End cluster order: the last table, then the title.
+    const table2Wipe = source.indexOf('wipe(subtree(table2)')
+    const titleWipe = source.indexOf('wipe(text2,')
+    expect(table2Wipe).toBeGreaterThan(-1)
+    expect(titleWipe).toBeGreaterThan(table2Wipe)
   })
 })

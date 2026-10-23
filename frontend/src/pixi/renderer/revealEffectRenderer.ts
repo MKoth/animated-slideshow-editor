@@ -121,6 +121,11 @@ export function sweepPenPosition(
   }
 }
 
+/** Final reveal over-uncover to the sweep's trailing side, applied only after
+ * the performer window ends so the hand never travels into it. Catches rare
+ * estimator under-measure on long lines without reintroducing hand overshoot. */
+export const REVEAL_TAIL_PAD = 48
+
 /** Mask rectangle for a reveal/wipe sweep, honoring the sweep direction. */
 export function sweepMask(
   effect: RevealEffect | WipeEffect,
@@ -303,8 +308,22 @@ export class RevealEffectRenderer {
       mask.clear()
       if (fieldWidth > 0) {
         const rect = sweepMask(effect, progress)
+        // After the hand is gone (strictly past the end), open extra pixels
+        // on the trailing side. During the sweep the mask stays tight so the
+        // hand never writes empty board; the tail only pops in afterwards to
+        // rescue rare under-measured trailing glyphs.
+        let tailX = rect.x
+        let tailWidth = rect.width
+        if (effect.kind === 'reveal' && time > effect.start + effect.duration) {
+          if (effect.direction === 'right-to-left') {
+            tailX = rect.x - REVEAL_TAIL_PAD
+            tailWidth = rect.width + REVEAL_TAIL_PAD
+          } else {
+            tailWidth = rect.width + REVEAL_TAIL_PAD
+          }
+        }
         mask
-          .rect(rect.x, effect.bounds.minY, rect.width, effect.bounds.maxY - effect.bounds.minY)
+          .rect(tailX, effect.bounds.minY, tailWidth, effect.bounds.maxY - effect.bounds.minY)
           .fill({ color: 0xffffff })
       }
     }
