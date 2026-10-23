@@ -55,6 +55,15 @@ describe('scenarioPromptSplit', () => {
     expect(parts).toEqual(['Call it', 'árbol de roble', 'duradero y sólido', 'today'])
     expect(parts.some((part) => !/[A-Za-z0-9\u00c0-\u024f]/u.test(part))).toBe(false)
   })
+  it('strips leading commas orphaned next to foreign phrases', () => {
+    const parts = splitNarratorToPromptParts(
+      'Think of ser, because it lasts.',
+      ['.', '!', '?', '\n'],
+      ['ser'],
+    )
+    expect(parts).toEqual(['Think of', 'ser', 'because it lasts'])
+  })
+
   it('combines HTML extraction with the stored fallback list', () => {
     const html = '<strong class="foreign">ser</strong>'
     expect(resolveForeignWords(html, ['estar'])).toEqual(['ser', 'estar'])

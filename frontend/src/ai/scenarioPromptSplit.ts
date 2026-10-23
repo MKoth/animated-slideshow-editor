@@ -77,6 +77,10 @@ export function splitNarratorToPromptParts(
   foreignWords: readonly string[],
 ): string[] {
   const hasSpeech = (text: string): boolean => /[\p{L}\p{N}]/u.test(text)
+  // A comma orphaned next to a foreign phrase (`, because ...`) stays inside
+  // its sentence chunk now that commas don't split — but a block must never
+  // *start* with it. Trailing commas are kept (natural TTS pause cue).
+  const cleanEdge = (text: string): string => text.replace(/^[,;:—–-]+/, '').trim()
   const source = typeof narrator === 'string' ? narrator : ''
   if (source.trim() === '') return []
   const sentences = splitImportText(source, splitChars)
@@ -92,13 +96,13 @@ export function splitNarratorToPromptParts(
     let cursor = 0
     for (const span of spans) {
       if (span.start < cursor) continue
-      const gap = sentence.slice(cursor, span.start).replace(/\s+/g, ' ').trim()
+      const gap = cleanEdge(sentence.slice(cursor, span.start).replace(/\s+/g, ' ').trim())
       if (gap !== '' && hasSpeech(gap)) out.push(gap)
       const foreign = sentence.slice(span.start, span.end).replace(/\s+/g, ' ').trim()
       if (foreign !== '') out.push(foreign)
       cursor = span.end
     }
-    const tail = sentence.slice(cursor).replace(/\s+/g, ' ').trim()
+    const tail = cleanEdge(sentence.slice(cursor).replace(/\s+/g, ' ').trim())
     if (tail !== '' && hasSpeech(tail)) out.push(tail)
   }
   if (out.length === 0) {

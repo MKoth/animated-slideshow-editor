@@ -279,10 +279,10 @@ export function ScriptPanel({
           background: 'var(--color-bg-panel)',
         }}
       >
-        Reads (alias.x, worldAt, bounds, cellRect, controlValue) are compile-time and side-effect
-        free. bounds use renderer-measured sizes and ignore rotation; read times must stay within
-        the slide. Objects a script creates belong to the run: re-running deletes and recreates
-        them.
+        Reads (alias.x, worldAt, bounds, cellRect, controlValue, markTime) are compile-time and
+        side-effect free. bounds use renderer-measured sizes and ignore rotation; read times must
+        stay within the slide. Objects a script creates belong to the run: re-running deletes and
+        recreates them.
       </div>
       {drift.length > 0 && (
         <div

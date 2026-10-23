@@ -665,6 +665,8 @@ const SCRIPT_READ_SPECS: Readonly<Record<string, ScriptReadSpec>> = {
   bounds: { shape: 'bounds(target, t?)', minArgs: 1, maxArgs: 2, timeArgument: 1 },
   cellRect: { shape: 'cellRect(table, row, column, t?)', minArgs: 3, maxArgs: 4, timeArgument: 3 },
   controlValue: { shape: 'controlValue(host, "Key", t?)', minArgs: 2, maxArgs: 3, timeArgument: 2 },
+  // No time argument: the marker name is a plain string, never a duration.
+  markTime: { shape: 'markTime("marker")', minArgs: 1, maxArgs: 1, timeArgument: -1 },
 }
 
 /**
@@ -7660,7 +7662,39 @@ class Compiler {
         return this.#evaluateCellRect(expression)
       case 'controlValue':
         return this.#evaluateControlValue(expression)
+      case 'markTime':
+        return this.#evaluateMarkTime(expression)
     }
+  }
+
+  /**
+   * `markTime("marker")` — the compiled slide-second of a `mark("...")`
+   * label. A plain number, so ordinary arithmetic and `let` calibration
+   * apply: `at: markTime("part-2") + 2`. Like `at("marker")`, the mark must
+   * already be declared at this point in the source — no forward references.
+   */
+  #evaluateMarkTime(expression: Extract<ScriptExpression, { kind: 'call' }>): ScriptValue | null {
+    if (!this.#checkReadArity(expression)) return null
+    const nameExpression = expression.args[0]
+    if (nameExpression?.kind !== 'string') {
+      this.#error(
+        `markTime needs a marker name in quotes, like markTime("part-0")`,
+        nameExpression?.span ?? expression.span,
+      )
+      return null
+    }
+    const marked = this.#markers.get(nameExpression.value as string)
+    if (marked === undefined) {
+      const suggestion = nearMissSuggestion(nameExpression.value as string, [
+        ...this.#markers.keys(),
+      ])
+      this.#error(
+        `Unknown marker "${nameExpression.value as string}" — define it with mark("${nameExpression.value as string}") before use.${suggestion}`,
+        nameExpression.span,
+      )
+      return null
+    }
+    return { kind: 'number', value: marked }
   }
 
   /**

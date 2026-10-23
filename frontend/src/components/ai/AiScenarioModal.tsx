@@ -622,6 +622,18 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     // HTML (`<strong class="foreign">`) with the stored list as fallback —
     // same highlights Generate HTML already rendered.
     const scenarioSection = engineValue.project.scenario
+    // Bound library names win over raw md slugs in `create asset`: the
+    // checklist binds each normalized scenario key to an asset id, so the
+    // planner names the asset the user actually bound (e.g. "fox"), not the
+    // md slug (e.g. "red-fox"). Embedded snapshots resolve first, matching
+    // the Generate/Download asset maps.
+    const assetNames: Record<string, string> = {}
+    for (const embedded of engineValue.embeddedAssets ?? []) {
+      if (assetNames[embedded.id] === undefined) assetNames[embedded.id] = embedded.name
+    }
+    for (const def of [...definitions, ...allDefinitions]) {
+      if (assetNames[def.id] === undefined) assetNames[def.id] = def.name
+    }
     const plan = planScenarioDraft(
       acceptedContent,
       secondsPerCharacter,
@@ -630,6 +642,8 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         splitChars,
         html: scenarioSection?.lastHtml,
         foreignWords: scenarioSection?.foreignWords,
+        bindings: scenarioSection?.bindings,
+        assetNames,
       },
     )
     setScriptPreview({ acceptedVersionId: acceptedVersionId!, plan })

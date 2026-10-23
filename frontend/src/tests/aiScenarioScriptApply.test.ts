@@ -154,10 +154,12 @@ describe('Scenario script apply execution (issue #471)', () => {
         expect(part.audioClipId).toBeUndefined()
         expect(part.audioAssetId).toBeUndefined()
       }
-      // Slide length stays the sum of parts.
+      // Slide length covers the voice (sum of parts) and pads past it when
+      // the absolute board choreography outruns the narration.
       const partsSum = slide.prompter!.parts.reduce((sum, p) => sum + p.duration, 0)
-      expect(partsSum).toBeCloseTo(draft.duration, 9)
+      expect(partsSum).toBeCloseTo(draft.prompterDuration, 9)
       expect(slide.duration).toBeCloseTo(draft.duration, 9)
+      expect(slide.duration).toBeGreaterThanOrEqual(partsSum - 1e-9)
       // Board script written verbatim.
       expect(slide.animationScript?.source).toBe(draft.source)
     }

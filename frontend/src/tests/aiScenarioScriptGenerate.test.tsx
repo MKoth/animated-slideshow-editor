@@ -277,8 +277,11 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
     // Block fractions on the owning prompt block.
     expect(screen.getByTestId('ai-scenario-script-slide-fractions-1')).toHaveTextContent(/prompt-1/)
     expect(screen.getByTestId('ai-scenario-script-slide-fractions-2')).toHaveTextContent(/prompt-2/)
-    // Clean draft: no diagnostics, apply enabled.
-    expect(screen.queryByTestId('ai-scenario-script-diagnostics')).not.toBeInTheDocument()
+    // Warnings-only draft (short voice, fixture-paced board pads the slide):
+    // overflow-padded diagnostics show, but Apply stays enabled.
+    expect(screen.getByTestId('ai-scenario-script-diagnostics')).toHaveTextContent(
+      /overflow-padded/,
+    )
     expect(screen.getByTestId('ai-scenario-script-apply')).not.toBeDisabled()
   })
 
@@ -334,9 +337,9 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
         expect(part.audioAssetId).toBeUndefined()
       }
       const partsSum = slide.prompter!.parts.reduce((sum, p) => sum + p.duration, 0)
-      expect(slide.duration).toBeCloseTo(partsSum, 9)
+      expect(slide.duration).toBeGreaterThanOrEqual(partsSum - 1e-9)
       expect(slide.animationScript?.source).toContain(`script "${slide.name}"`)
-      expect(slide.animationScript?.source).not.toMatch(/\bat\s*:/)
+      expect(slide.animationScript?.source).toMatch(/at: markTime\("part-\d+"\)/)
     }
     // Delimiters stripped like manual paste.
     expect(slides[0]!.prompter!.parts[0]!.text).toBe('Ser is for who you are')

@@ -97,21 +97,32 @@ describe('Scenario planner five-step reference lesson (issue #470)', () => {
     expect(result.slides.map((s) => s.stepIndex)).toEqual([1, 2, 3, 4, 5])
     expect(result.blocked).toBe(false)
     expect(result.diagnostics.filter((d) => d.severity === 'error')).toHaveLength(0)
-    // No overflow in the reference lesson: narrators cover honest budgets.
-    expect(result.slides.every((s) => !s.padded)).toBe(true)
+    // Voice parts stay estimate-sized; padded slides extend past the voice
+    // only when the absolute board choreography needs more time.
+    for (const slide of result.slides) {
+      const voice = slide.prompterParts.reduce((sum, part) => sum + part.duration, 0)
+      expect(voice).toBeCloseTo(slide.prompterDuration, 9)
+      expect(slide.duration).toBeGreaterThanOrEqual(voice - 1e-9)
+      expect(slide.duration).toBeCloseTo(slide.boardCost, 9)
+      expect(slide.padded).toBe(slide.boardCost > slide.prompterDuration + 1e-9)
+    }
   })
 
-  it('produces checker-clean sequential sources with per-action block fractions', () => {
+  it('produces checker-clean absolute sources with per-action block fractions', () => {
     const result = planScenarioDraft(FIVE_STEP_DOC, 0.1, [])
     const audioAssets = [
       { id: 'w', name: 'writing-on-black-board', duration: 0.4 },
       { id: 'e', name: 'dry-erase', duration: 0.4 },
     ]
     for (const slide of result.slides) {
-      // Purely sequential: no absolute time placements.
-      expect(slide.source).not.toMatch(/\bat\s*:/)
+      // Absolute `at:` anchors reference the owning prompt block; overs stay
+      // short and content-sized like the fixture.
+      expect(slide.source).toMatch(/at: markTime\("part-\d+"\)/)
       expect(slide.source).toContain('mark("part-0")')
-      // Split narrators keep comma-split blocks with sub-block ids.
+      for (const over of [...slide.source.matchAll(/over: ([\d.]+)/g)].map((m) => Number(m[1]))) {
+        expect(over).toBeLessThanOrEqual(4.0 + 1e-9)
+      }
+      // Split narrators keep sentence-level blocks with sub-block ids.
       expect(slide.prompterParts.length).toBeGreaterThan(0)
       const ownedBlocks = new Set(slide.prompterParts.map((part) => part.promptBlockId))
       // Parse-clean.
@@ -140,6 +151,7 @@ describe('Scenario planner five-step reference lesson (issue #470)', () => {
         },
       ])
       system.assetLibrarySync.apply([
+        { id: 'bg-board', name: 'blackboar-background' },
         { id: 'paw-chalk', name: 'paw with chalk' },
         { id: 'paw-rag', name: 'paw with rag' },
         { id: 'paw-empty', name: 'paw empty' },

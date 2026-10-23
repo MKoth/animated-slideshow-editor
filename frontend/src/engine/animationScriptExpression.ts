@@ -60,7 +60,13 @@ export const SCRIPT_MATH_BUILTINS = [
 export const SCRIPT_RANGE_BUILTIN = 'range'
 
 /** Compile-time read functions; the compiler evaluates them against the slide. */
-export const SCRIPT_READ_BUILTIN_NAMES = ['worldAt', 'bounds', 'cellRect', 'controlValue'] as const
+export const SCRIPT_READ_BUILTIN_NAMES = [
+  'worldAt',
+  'bounds',
+  'cellRect',
+  'controlValue',
+  'markTime',
+] as const
 
 export function isScriptReadBuiltin(name: string): boolean {
   return (SCRIPT_READ_BUILTIN_NAMES as readonly string[]).includes(name)

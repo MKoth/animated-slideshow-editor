@@ -584,6 +584,95 @@ describe('Animation Script time — markers', () => {
     expect(result.commands).toHaveLength(0)
   })
 
+  it('markTime reads a declared mark for absolute effect placement', () => {
+    const { system, slideId } = setup()
+    addNode(system, slideId, 'Hero')
+
+    const result = check(system, slideId, [
+      'script "Demo" from 0',
+      'create text "T" as t',
+      'mark("part-0")',
+      'wait(2)',
+      'mark("part-1")',
+      'reveal(t, at: markTime("part-1") + 1, over: 1)',
+    ])
+
+    expect(result.diagnostics).toEqual([])
+    expect(result.runnable).toBe(true)
+    const starts = result.effects.map((effect) => [effect.start, effect.duration])
+    expect(starts).toContainEqual([3, 1])
+  })
+
+  it('markTime composes with let calibration variables', () => {
+    const { system, slideId } = setup()
+    addNode(system, slideId, 'Hero')
+
+    const result = check(system, slideId, [
+      'script "Demo" from 0',
+      'create text "T" as t',
+      'mark("part-0")',
+      'wait(2)',
+      'mark("part-1")',
+      'let cue = markTime("part-1") + 2',
+      'reveal(t, at: cue, over: 1)',
+    ])
+
+    expect(result.diagnostics).toEqual([])
+    expect(result.runnable).toBe(true)
+    expect(result.effects.map((effect) => [effect.start, effect.duration])).toContainEqual([4, 1])
+  })
+
+  it('markTime rejects unknown markers with a suggestion', () => {
+    const { system, slideId } = setup()
+    addNode(system, slideId, 'Hero')
+
+    const result = check(system, slideId, [
+      'script "Demo" from 0',
+      'create text "T" as t',
+      'mark("part-0")',
+      'reveal(t, at: markTime("part-00") + 1, over: 1)',
+    ])
+
+    expect(result.runnable).toBe(false)
+    const error = result.diagnostics.find((diagnostic) => diagnostic.severity === 'error')
+    expect(error?.message).toMatch(/Unknown marker "part-00"/)
+    expect(error?.message).toContain('"part-0"')
+  })
+
+  it('markTime rejects use before the mark is declared', () => {
+    const { system, slideId } = setup()
+    addNode(system, slideId, 'Hero')
+
+    const result = check(system, slideId, [
+      'script "Demo" from 0',
+      'create text "T" as t',
+      'reveal(t, at: markTime("later") + 1, over: 1)',
+      'wait(2)',
+      'mark("later")',
+    ])
+
+    expect(result.runnable).toBe(false)
+    expect(messages(result).some((message) => /Unknown marker "later"/.test(message))).toBe(true)
+  })
+
+  it('markTime needs a quoted marker name', () => {
+    const { system, slideId } = setup()
+    addNode(system, slideId, 'Hero')
+
+    const result = check(system, slideId, [
+      'script "Demo" from 0',
+      'create text "T" as t',
+      'mark("part-0")',
+      'let cue = markTime("part-0") + 2',
+      'reveal(t, at: cue + markTime(part-0), over: 1)',
+    ])
+
+    expect(result.runnable).toBe(false)
+    expect(
+      messages(result).some((message) => /markTime needs a marker name in quotes/.test(message)),
+    ).toBe(true)
+  })
+
   it('labels a parallel child at its local time, not the enclosing cursor end', () => {
     const { system, slideId } = setup()
     addNode(system, slideId, 'A')
