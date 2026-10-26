@@ -44,6 +44,14 @@ import {
 } from '../../engine/ttsRegistry'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 
+/**
+ * Explicit "standard reference" selection for Base voice-clone: the backend
+ * default recording. Sent as `referenceAssetId: ""`, which forces the
+ * default even when the selected voice prompt stores its own reference —
+ * "None"/omitted cannot express that (the prompt's stored reference wins).
+ */
+export const TTS_STANDARD_REFERENCE = '__standard__'
+
 interface TtsModalProps {
   slideId: string
   partId: string
@@ -80,7 +88,11 @@ export function TtsModal({
   const [selectedPromptId, setSelectedPromptId] = useState<string>('')
   const [language, setLanguage] = useState('')
   const [voice, setVoice] = useState('')
-  const [voiceReference, setVoiceReference] = useState('')
+  const [voiceReference, setVoiceReference] = useState<string>(TTS_STANDARD_REFERENCE)
+  const [hasEditedReference, setHasEditedReference] = useState(false)
+  // Exact transcript of the custom reference recording (Base voice-clone
+  // needs it word-for-word; the standard recording uses its own transcript).
+  const [referenceTranscript, setReferenceTranscript] = useState('')
   const [instruction, setInstruction] = useState('')
 
   const [status, setStatus] = useState<'idle' | 'generating' | 'error'>('idle')
@@ -103,6 +115,10 @@ export function TtsModal({
   const [downloadedMap, setDownloadedMap] = useState<Record<string, boolean>>({})
   const [mlxAvailable, setMlxAvailable] = useState<boolean | null>(null)
   const [downloadingModel, setDownloadingModel] = useState(false)
+  const [referenceStatus, setReferenceStatus] = useState<{
+    audioConfigured: boolean
+    textConfigured: boolean
+  } | null>(null)
   const [capabilitiesMap, setCapabilitiesMap] = useState<
     Record<
       string,
@@ -184,6 +200,15 @@ export function TtsModal({
         else if (!ttsModel && defModel) setTtsModel(defModel)
         if (!hasEditedProvider && !ttsProviderId && defProv) setTtsProviderId(defProv)
         else if (!ttsProviderId && defProv) setTtsProviderId(defProv)
+        // standard-reference status for the Base voice-clone dropdown
+        const refStatus = (data as unknown as { reference?: unknown }).reference as
+          { audioConfigured?: unknown; textConfigured?: unknown } | undefined
+        if (refStatus && typeof refStatus === 'object') {
+          setReferenceStatus({
+            audioConfigured: refStatus.audioConfigured === true,
+            textConfigured: refStatus.textConfigured === true,
+          })
+        }
         // populate downloaded status
         const dl: Record<string, boolean> = {}
         if (data.downloaded) {
@@ -381,10 +406,25 @@ export function TtsModal({
         // warning for prompt-driven unknown is derived via ttsPromptVoiceWarning below, not state
       }
       if (!instruction && selected.instruction) setInstruction(selected.instruction)
-      if (!voiceReference) {
-        const ref = (selected.params as unknown as { referenceAssetId?: string } | null)
-          ?.referenceAssetId
-        if (typeof ref === 'string' && ref) setVoiceReference(ref)
+      if (!hasEditedReference) {
+        const params =
+          (selected.params as unknown as {
+            referenceAssetId?: string
+            ref_text?: string
+            refText?: string
+            referenceText?: string
+          } | null) ?? null
+        const ref = params?.referenceAssetId
+        setVoiceReference(
+          typeof ref === 'string' && ref.trim() !== '' ? ref : TTS_STANDARD_REFERENCE,
+        )
+        const storedTranscript =
+          params !== null
+            ? [params.ref_text, params.refText, params.referenceText].find(
+                (v): v is string => typeof v === 'string' && v.trim() !== '',
+              )
+            : undefined
+        setReferenceTranscript(storedTranscript ?? '')
       }
       // Per-generation model/provider: recall stored model; per-generation dropdown overrides at generation time
       const promptModel = (selected as unknown as { modelId?: string }).modelId
@@ -398,7 +438,7 @@ export function TtsModal({
     language,
     voice,
     instruction,
-    voiceReference,
+    hasEditedReference,
     ttsModel,
     capabilitiesMap,
   ])
@@ -447,7 +487,10 @@ export function TtsModal({
   // Note: voice excluded to avoid loop when we reset to '' ; warning reset handled above
 
   useEffect(() => {
-    if (!isTtsReferenceEnabled && voiceReference) setVoiceReference('')
+    if (!isTtsReferenceEnabled && voiceReference !== TTS_STANDARD_REFERENCE) {
+      setVoiceReference(TTS_STANDARD_REFERENCE)
+      setHasEditedReference(false)
+    }
   }, [ttsModel, isTtsReferenceEnabled]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -525,7 +568,15 @@ export function TtsModal({
           language: language || undefined,
           voice: voice || undefined,
           instruction: instruction || undefined,
-          referenceAssetId: voiceReference || undefined,
+          referenceAssetId:
+            voiceReference === TTS_STANDARD_REFERENCE
+              ? ''
+              : voiceReference.trim() !== ''
+                ? voiceReference
+                : undefined,
+          ...(voiceReference !== TTS_STANDARD_REFERENCE && referenceTranscript.trim() !== ''
+            ? { refText: referenceTranscript.trim() }
+            : {}),
           modelId: ttsModel || undefined,
           provider: ttsProviderId || undefined,
         })
@@ -1773,7 +1824,10 @@ export function TtsModal({
               data-testid="tts-voice-reference"
               value={voiceReference}
               disabled={!isTtsReferenceEnabled}
-              onChange={(e) => setVoiceReference(e.target.value)}
+              onChange={(e) => {
+                setVoiceReference(e.target.value)
+                setHasEditedReference(true)
+              }}
               style={{
                 width: '100%',
                 padding: '6px 8px',
@@ -1784,7 +1838,7 @@ export function TtsModal({
                 marginTop: 4,
               }}
             >
-              <option value="">— None (default recording) —</option>
+              <option value={TTS_STANDARD_REFERENCE}>Standard reference (default recording)</option>
               {referenceOptions.map((opt) => (
                 <option key={opt.id} value={opt.id}>
                   {opt.label}
@@ -1793,9 +1847,51 @@ export function TtsModal({
             </select>
             <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
               {isTtsReferenceEnabled
-                ? 'Select voice reference audio from assets (Base clones this voice) — empty uses your default recording'
+                ? 'Base clones this voice — Standard uses your default recording'
                 : 'Reference audio only for Base voice_clone models'}
             </div>
+            {isTtsReferenceEnabled && referenceStatus && (
+              <div
+                data-testid="tts-reference-status"
+                style={{
+                  fontSize: 10,
+                  marginTop: 2,
+                  color:
+                    referenceStatus.audioConfigured && referenceStatus.textConfigured
+                      ? '#6bff6b'
+                      : '#ffb74d',
+                }}
+              >
+                {referenceStatus.audioConfigured && referenceStatus.textConfigured
+                  ? 'Standard reference ready'
+                  : 'Standard reference missing — set TTS_REF_AUDIO (+ transcript) or pick an asset above'}
+              </div>
+            )}
+            {isTtsReferenceEnabled && voiceReference !== TTS_STANDARD_REFERENCE && (
+              <label style={{ fontSize: 11, display: 'block', marginTop: 6 }}>
+                Reference transcript (exact words of the recording above)
+                <textarea
+                  data-testid="tts-reference-transcript"
+                  value={referenceTranscript}
+                  onChange={(e) => {
+                    setReferenceTranscript(e.target.value)
+                    setHasEditedReference(true)
+                  }}
+                  placeholder="Type exactly what the reference audio says — cloning needs a word-for-word match"
+                  style={{
+                    width: '100%',
+                    minHeight: 44,
+                    padding: '6px 8px',
+                    background: '#1e1e1e',
+                    border: '1px solid #444',
+                    borderRadius: 4,
+                    color: '#e0e0e0',
+                    marginTop: 4,
+                    fontSize: 11,
+                  }}
+                />
+              </label>
+            )}
           </label>
         </div>
         <div style={{ marginBottom: 12 }}>

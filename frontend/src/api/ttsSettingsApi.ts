@@ -23,6 +23,7 @@ export interface TtsModelsResponse {
   downloaded?: Record<string, boolean>
   modelsStatus?: Array<{ id: string; downloaded: boolean }>
   mlxAvailable?: boolean
+  reference?: { audioConfigured: boolean; textConfigured: boolean }
 }
 
 export interface TtsCapabilitiesResponse {

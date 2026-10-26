@@ -403,3 +403,179 @@ describe('TtsModal seam + mocked voice prompts & TTS', () => {
     if (parsed.library) expect(parsed.library).not.toHaveProperty('voice_prompts')
   })
 })
+
+describe('TtsModal standard voice reference (Base)', () => {
+  const BASE_MODEL = 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16'
+
+  function baseModelsPayload() {
+    return {
+      models: [BASE_MODEL],
+      providers: ['auto'],
+      defaultModel: BASE_MODEL,
+      defaultProvider: 'auto',
+      capabilities: {
+        [BASE_MODEL]: { speakers: [], mode: 'voice_clone', instructionSupported: false },
+      },
+      reference: { audioConfigured: true, textConfigured: true },
+    }
+  }
+
+  // Reference assets resolve through the asset library, which the modal
+  // loads on mount — serve the girl-voice asset there.
+  const referenceAsset = {
+    id: 'asset-9',
+    name: 'Girl voice',
+    description: '',
+    category: 'audio',
+    tags: [],
+    ai_description: '',
+    original_filename: 'girl.wav',
+    import_date: '',
+    width: 0,
+    height: 0,
+    file_size: 0,
+    aspect_ratio: 0,
+    default_scale: 1,
+    default_rotation: 0,
+    pivot: { x: 0, y: 0 },
+    anchors: [],
+    original_url: '',
+    thumbnail_url: '',
+    mimeType: 'audio/wav',
+  }
+
+  function renderModal(opts: {
+    prompts: Array<Record<string, unknown>>
+    onGenerateBody: (body: Record<string, unknown>) => void
+  }) {
+    const { readOnly, dispatcher, slideId, partId } = makeEngineWithPrompter('Hello TTS', 2.0)
+    const wav = wavBytesForDuration(2.0)
+    const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.startsWith('/api/voice-prompts') && (init?.method ?? 'GET') === 'GET')
+        return new Response(JSON.stringify(opts.prompts), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      if (url === '/api/tts/models')
+        return new Response(JSON.stringify(baseModelsPayload()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      if (url.startsWith('/api/assets'))
+        return new Response(JSON.stringify([referenceAsset]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      if (url === '/api/tts/generate') {
+        opts.onGenerateBody(JSON.parse(init?.body as string) as Record<string, unknown>)
+        return new Response(wav.buffer as ArrayBuffer, {
+          status: 200,
+          headers: { 'Content-Type': 'audio/wav' },
+        })
+      }
+      return new Response(JSON.stringify({ detail: 'not found' }), { status: 404 })
+    })
+    vi.stubGlobal('fetch', mockFetch)
+    const client = new ApiClient()
+    const onClose = vi.fn()
+    const dispatch = (cmd: Parameters<CommandDispatcher['dispatch']>[0]) => dispatcher.dispatch(cmd)
+    const view = render(
+      <EngineContext.Provider
+        value={{
+          engine: readOnly,
+          undoStack: new UndoStack(),
+          dispatch: dispatch as unknown as never,
+          persistence: noopPersistence,
+        }}
+      >
+        <TtsModal
+          slideId={slideId}
+          partId={partId}
+          partText="Hello TTS"
+          partStartTime={0}
+          plannedDuration={2.0}
+          onClose={onClose}
+          ttsProvider={new TtsApi(client)}
+          voicePromptsApi={new VoicePromptsApi(client)}
+        />
+      </EngineContext.Provider>,
+    )
+    return { ...view, onClose }
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    document.body.innerHTML = ''
+  })
+
+  it('defaults to the standard reference and sends an explicit empty id', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const { container, onClose } = renderModal({
+      prompts: [],
+      onGenerateBody: (body) => bodies.push(body),
+    })
+    const ref = (await waitFor(() =>
+      container.querySelector('[data-testid="tts-voice-reference"]'),
+    )) as HTMLSelectElement
+    expect(ref).not.toBeDisabled()
+    expect(ref.value).toBe('__standard__')
+    expect(container.querySelector('[data-testid="tts-reference-status"]')).toHaveTextContent(
+      /Standard reference ready/,
+    )
+    fireEvent.click(container.querySelector('[data-testid="tts-generate"]') as HTMLElement)
+    await waitFor(() => expect(onClose).toHaveBeenCalled(), { timeout: 2000 })
+    expect(bodies).toHaveLength(1)
+    // Explicit "" forces the backend default even with no prompt involved.
+    expect(bodies[0]!.referenceAssetId).toBe('')
+  })
+
+  it('prefills a prompt-stored reference but resets to standard on prompts without one', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const stamp = new Date().toISOString()
+    const { container, onClose } = renderModal({
+      prompts: [
+        {
+          id: 'vp-ref',
+          title: 'With ref',
+          instruction: 'read well',
+          language: 'en',
+          voice: null,
+          params: { referenceAssetId: 'asset-9' },
+          created_at: stamp,
+          updated_at: stamp,
+        },
+        {
+          id: 'vp-plain',
+          title: 'Plain',
+          instruction: 'read plainly',
+          language: 'en',
+          voice: null,
+          params: null,
+          created_at: stamp,
+          updated_at: stamp,
+        },
+      ],
+      onGenerateBody: (body) => bodies.push(body),
+    })
+    await waitFor(() =>
+      expect(container.querySelector('[data-testid="tts-prompt-picker"]')).toBeInTheDocument(),
+    )
+    const picker = container.querySelector('[data-testid="tts-prompt-picker"]') as HTMLSelectElement
+    await waitFor(() => expect(picker.options.length).toBe(3))
+    const ref = container.querySelector('[data-testid="tts-voice-reference"]') as HTMLSelectElement
+
+    fireEvent.change(picker, { target: { value: 'vp-ref' } })
+    await waitFor(() => expect(ref.value).toBe('asset-9'))
+
+    // Switching to a prompt without a stored reference must not keep the
+    // stale asset: it falls back to the standard reference.
+    fireEvent.change(picker, { target: { value: 'vp-plain' } })
+    await waitFor(() => expect(ref.value).toBe('__standard__'))
+
+    fireEvent.click(container.querySelector('[data-testid="tts-generate"]') as HTMLElement)
+    await waitFor(() => expect(onClose).toHaveBeenCalled(), { timeout: 2000 })
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0]!.referenceAssetId).toBe('')
+  })
+})

@@ -23,7 +23,23 @@ import {
 } from '../../engine/scenarioPortableZip'
 import { parseScenarioMarkdown } from '../../engine/scenarioMarkdown'
 import { planScenarioDraft } from '../../ai/scenarioPlanner'
-import { applyScenarioScript, snapshotScenarioScriptSlides } from '../../ai/scenarioScriptApply'
+import { resolveForeignWords } from '../../ai/scenarioPromptSplit'
+import {
+  applyScenarioBoardStep,
+  applyScenarioPrompter,
+  snapshotScenarioScriptSlides,
+  type ScenarioScriptApplyDispatcher,
+} from '../../ai/scenarioScriptApply'
+import { runScenarioTtsBatch } from '../../ai/scenarioTtsBatch'
+import { useTtsForeignVoiceStore } from '../../stores/ttsForeignVoiceStore'
+import {
+  buildScriptWorkflowFingerprint,
+  useScenarioScriptWorkflowStore,
+} from '../../stores/scenarioScriptWorkflowStore'
+import { TtsApi } from '../../engine/ttsProvider'
+import { apiClient } from '../../api'
+import { TtsSettingsApi } from '../../api/ttsSettingsApi'
+import { useAudioResizePreferenceStore } from '../../stores/audioResizePreferenceStore'
 import type { ScenarioScriptPreview } from './AiScenarioScriptPanel'
 import { AiScenarioScriptPanel } from './AiScenarioScriptPanel'
 import { getPrompterSecondsPerCharacter, getPrompterSplitChars } from '../../engine/prompter'
@@ -139,13 +155,26 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   // Inline doc comments live in the modal (survive Doc/History tab switches)
   // and clear once the doc itself changes to a new markdown version.
   const [docComments, setDocComments] = useState<ScenarioDocComment[]>([])
-  // Reviewable script-draft preview (issue #471): computed from the accepted
-  // snapshot on demand, never persisted — Apply writes through the command
-  // stack so the whole draft lands as one undoable Transaction.
-  const [scriptPreview, setScriptPreview] = useState<ScenarioScriptPreview | null>(null)
-  const [scriptApplying, setScriptApplying] = useState(false)
-  const [scriptApplyError, setScriptApplyError] = useState<string | null>(null)
-  const [scriptApplyDone, setScriptApplyDone] = useState<string | null>(null)
+  // Reviewable script-draft preview (issue #471): the generated plan plus
+  // per-step completion live in the persisted workflow store, so closing
+  // and reopening the modal keeps the draft, the active buttons, and the
+  // Regenerate states. Only in-flight progress/errors stay in memory.
+  const storedWorkflow = useScenarioScriptWorkflowStore(
+    (s) => s.workflowsByProject[projectId] ?? null,
+  )
+  // Step 1 (prompter) converges slides + prompter parts + durations;
+  // per-step TTS synthesizes one step's blocks sequentially with the saved
+  // TTS defaults; per-step board writes one animation source onto its
+  // Step-1 slide. Steps 2 and 3 need Step 1 first, otherwise independent.
+  const [scriptPrompterApplying, setScriptPrompterApplying] = useState(false)
+  const [scriptPrompterError, setScriptPrompterError] = useState<string | null>(null)
+  const [ttsApplyingPosition, setTtsApplyingPosition] = useState<number | null>(null)
+  const [ttsProgressByStep, setTtsProgressByStep] = useState<
+    Record<number, { done: number; total: number }>
+  >({})
+  const [ttsErrorByStep, setTtsErrorByStep] = useState<Record<number, string | null>>({})
+  const [boardApplyingPosition, setBoardApplyingPosition] = useState<number | null>(null)
+  const [boardErrorByStep, setBoardErrorByStep] = useState<Record<number, string | null>>({})
 
   // Legacy Action Scenario data stays loadable for the in-modal editor and
   // Stage B reconciliation (which still reads the accepted scenario row).
@@ -611,11 +640,33 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     explicitAcceptedVersionId !== null ? explicitAcceptedContent : latestFallback?.content
   const hasAcceptedSnapshot = acceptedVersionId !== null && acceptedContent !== undefined
 
+  // Live plan inputs: a stored workflow is only reused while these still
+  // match (reading speed, split chars, bindings). An accepted-version change
+  // keeps the preview and reads stale; changed inputs discard it.
+  const liveFingerprint = buildScriptWorkflowFingerprint({
+    secondsPerCharacter: engine?.project
+      ? getPrompterSecondsPerCharacter(engine.project.settings)
+      : 0.1,
+    splitChars: engine?.project ? getPrompterSplitChars(engine.project.settings) : [],
+    bindings: scenario?.bindings,
+    html: scenario?.lastHtml,
+    foreignWords: scenario?.foreignWords,
+  })
+  const activeWorkflow =
+    storedWorkflow && storedWorkflow.fingerprint === liveFingerprint ? storedWorkflow : null
+  const scriptPreview: ScenarioScriptPreview | null = activeWorkflow
+    ? { acceptedVersionId: activeWorkflow.acceptedVersionId, plan: activeWorkflow.plan }
+    : null
+  const scriptStepsBusy =
+    scriptPrompterApplying || ttsApplyingPosition !== null || boardApplyingPosition !== null
+
   const handleGenerateScript = () => {
     const engineValue = engine
     if (!engineValue?.project || !hasAcceptedSnapshot || acceptedContent === undefined) return
-    setScriptApplyError(null)
-    setScriptApplyDone(null)
+    setScriptPrompterError(null)
+    setTtsErrorByStep({})
+    setTtsProgressByStep({})
+    setBoardErrorByStep({})
     const secondsPerCharacter = getPrompterSecondsPerCharacter(engineValue.project.settings)
     const splitChars = getPrompterSplitChars(engineValue.project.settings)
     // Foreign vocabulary for block splitting comes from the stored chalk
@@ -646,55 +697,234 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         assetNames,
       },
     )
-    setScriptPreview({ acceptedVersionId: acceptedVersionId!, plan })
+    // Same resolution the planner uses: HTML highlights + stored list.
+    // Batch TTS speaks exact matches in the foreign language (Spanish).
+    const resolvedForeignWords = resolveForeignWords(
+      scenarioSection?.lastHtml,
+      scenarioSection?.foreignWords,
+    )
+    useScenarioScriptWorkflowStore.getState().savePreview(projectId, {
+      acceptedVersionId: acceptedVersionId!,
+      fingerprint: buildScriptWorkflowFingerprint({
+        secondsPerCharacter,
+        splitChars,
+        bindings: scenarioSection?.bindings,
+        html: scenarioSection?.lastHtml,
+        foreignWords: scenarioSection?.foreignWords,
+      }),
+      plan,
+      foreignWords: resolvedForeignWords,
+      prompterApplied: false,
+      ttsDone: {},
+      boardDone: {},
+    })
     store.setScenarioTab('script')
   }
 
   const closeScriptPreview = () => {
-    setScriptPreview(null)
-    setScriptApplyError(null)
+    // Closing keeps the persisted workflow (draft + step states) so
+    // reopening the modal resumes where the user left off.
+    setScriptPrompterError(null)
+    setTtsErrorByStep({})
+    setBoardErrorByStep({})
     if (useAiStore.getState().scenarioTab === 'script') {
       store.setScenarioTab('doc')
     }
   }
 
-  const handleApplyScript = () => {
+  const getApplySystem = ():
+    | { ok: false; error: string }
+    | {
+        ok: true
+        engineValue: NonNullable<typeof engine>
+        applyDispatcher: ScenarioScriptApplyDispatcher
+      } => {
     const engineValue = engine
-    if (!engineValue?.project || !scriptPreview || scriptApplying) return
+    if (!engineValue?.project || !scriptPreview) return { ok: false, error: 'No preview.' }
     const applyDispatcher = dispatcher
       ? { dispatch: dispatcher.dispatch.bind(dispatcher) }
       : contextDispatch && undoStack
         ? { dispatch: contextDispatch }
         : null
     if (!applyDispatcher || !undoStack) {
-      setScriptApplyError('Apply unavailable — no command dispatcher in this host.')
+      return { ok: false, error: 'Apply unavailable — no command dispatcher in this host.' }
+    }
+    return { ok: true, engineValue, applyDispatcher }
+  }
+
+  const handleApplyPrompter = () => {
+    if (!scriptPreview || !activeWorkflow || scriptStepsBusy) return
+    const system = getApplySystem()
+    if (!system.ok) {
+      if (system.error !== 'No preview.') setScriptPrompterError(system.error)
       return
     }
-    setScriptApplying(true)
-    setScriptApplyError(null)
-    setScriptApplyDone(null)
+    const { engineValue, applyDispatcher } = system
+    setScriptPrompterApplying(true)
+    setScriptPrompterError(null)
     try {
-      const result = applyScenarioScript(
-        { dispatcher: applyDispatcher, undoStack },
+      const result = applyScenarioPrompter(
+        { dispatcher: applyDispatcher, undoStack: undoStack! },
         {
           plan: scriptPreview.plan,
-          existingSlides: snapshotScenarioScriptSlides(engineValue.project.slides),
+          existingSlides: snapshotScenarioScriptSlides(engineValue.project!.slides),
         },
       )
       if (!result.ok) {
-        setScriptApplyError(result.error ?? 'Apply failed.')
+        setScriptPrompterError(result.error ?? 'Apply failed.')
         useNotificationStore.getState().notify(result.error ?? 'Apply failed.')
         return
       }
-      setScriptPreview(null)
-      const done = `Applied script draft: ${result.targetSlideIds.length} slide(s) — one undo step.`
-      setScriptApplyDone(done)
+      // A prompter re-apply drops TTS audio and invalidates prior board/TTS
+      // work against the old parts — the store clears per-step states.
+      useScenarioScriptWorkflowStore.getState().markPrompterApplied(projectId)
+      const done = `Applied prompter text: ${result.targetSlideIds.length} slide(s) — one undo step.`
       useNotificationStore.getState().notify(done)
-      if (useAiStore.getState().scenarioTab === 'script') {
-        store.setScenarioTab('doc')
-      }
     } finally {
-      setScriptApplying(false)
+      setScriptPrompterApplying(false)
+    }
+  }
+
+  const handleGenerateTtsStep = (position: number) => {
+    if (!scriptPreview || !activeWorkflow || scriptStepsBusy) return
+    const system = getApplySystem()
+    if (!system.ok) {
+      if (system.error !== 'No preview.') {
+        setTtsErrorByStep((prev) => ({ ...prev, [position]: system.error }))
+      }
+      return
+    }
+    const { engineValue, applyDispatcher } = system
+    const project = engineValue.project!
+    if (project.slides.length < position) {
+      const message = `Step 1 has not been applied for step ${position} — apply prompter text first.`
+      setTtsErrorByStep((prev) => ({ ...prev, [position]: message }))
+      useNotificationStore.getState().notify(message)
+      return
+    }
+    const snapshot = {
+      slides: project.slides.map((s) => ({
+        id: s.id,
+        prompter: s.prompter
+          ? {
+              parts: s.prompter.parts.map((p) => ({
+                id: p.id,
+                text: p.text,
+                duration: p.duration,
+                startTime: p.startTime,
+              })),
+            }
+          : null,
+      })),
+      settings: project.settings,
+    }
+    setTtsApplyingPosition(position)
+    setTtsErrorByStep((prev) => ({ ...prev, [position]: null }))
+    setTtsProgressByStep((prev) => ({ ...prev, [position]: { done: 0, total: 0 } }))
+    void (async () => {
+      try {
+        // Saved TTS defaults (no per-block dialogs in batch): model/provider
+        // from the backend settings, mismatch handling from the saved voice
+        // preference (ask falls back to stretch so batch never blocks).
+        let modelId: string | undefined
+        let provider: string | undefined
+        try {
+          const api = new TtsSettingsApi(apiClient)
+          const models = await api.getModels()
+          modelId =
+            (models.defaultModel as string) || (models.default_model_id as string) || undefined
+          provider =
+            (models.defaultProvider as string) || (models.default_provider as string) || undefined
+        } catch {
+          // Fall back to engine defaults when settings are unreachable.
+        }
+        const savedPref = useAudioResizePreferenceStore.getState().getPreference('voice')
+        const mode = savedPref ?? 'stretch'
+        const foreignVoice = useTtsForeignVoiceStore.getState()
+        const tts = new TtsApi(apiClient)
+        const result = await runScenarioTtsBatch(
+          { dispatcher: applyDispatcher, undoStack: undoStack! },
+          snapshot,
+          tts,
+          {
+            ...(modelId ? { modelId } : {}),
+            ...(provider ? { provider } : {}),
+            mode,
+            positions: [position],
+            foreignWords: activeWorkflow.foreignWords,
+            ...(foreignVoice.referenceAssetId
+              ? {
+                  foreignReferenceAssetId: foreignVoice.referenceAssetId,
+                  ...(foreignVoice.referenceTranscript.trim() !== ''
+                    ? { foreignRefText: foreignVoice.referenceTranscript.trim() }
+                    : {}),
+                }
+              : {}),
+            onProgress: (done, total) =>
+              setTtsProgressByStep((prev) => ({ ...prev, [position]: { done, total } })),
+          },
+        )
+        if (!result.ok) {
+          setTtsErrorByStep((prev) => ({ ...prev, [position]: result.error }))
+          useNotificationStore.getState().notify(result.error)
+          setTtsProgressByStep((prev) => {
+            const next = { ...prev }
+            delete next[position]
+            return next
+          })
+          return
+        }
+        useScenarioScriptWorkflowStore.getState().markTtsDone(projectId, position)
+        const foreignVoiceUsed =
+          result.foreignCount > 0 && foreignVoice.referenceAssetId ? ' with Spanish voice' : ''
+        const done =
+          `Generated TTS for step ${position} (${result.count} block(s)` +
+          (result.foreignCount > 0
+            ? `, ${result.foreignCount} in Spanish${foreignVoiceUsed}`
+            : '') +
+          `)` +
+          (savedPref ? '' : ' (no saved mismatch default — used stretch)') +
+          ' — one undo step.'
+        useNotificationStore.getState().notify(done)
+      } finally {
+        setTtsApplyingPosition(null)
+      }
+    })()
+  }
+
+  const handleApplyBoardStep = (position: number) => {
+    if (!scriptPreview || !activeWorkflow || scriptStepsBusy) return
+    const system = getApplySystem()
+    if (!system.ok) {
+      if (system.error !== 'No preview.') {
+        setBoardErrorByStep((prev) => ({ ...prev, [position]: system.error }))
+      }
+      return
+    }
+    const { engineValue, applyDispatcher } = system
+    setBoardApplyingPosition(position)
+    setBoardErrorByStep((prev) => ({ ...prev, [position]: null }))
+    try {
+      // Snapshot live at click time: the step targets the Step-1 slide at
+      // this position with its current prompter start/end times.
+      const result = applyScenarioBoardStep(
+        { dispatcher: applyDispatcher, undoStack: undoStack! },
+        {
+          plan: scriptPreview.plan,
+          existingSlides: snapshotScenarioScriptSlides(engineValue.project!.slides),
+        },
+        position,
+      )
+      if (!result.ok) {
+        setBoardErrorByStep((prev) => ({ ...prev, [position]: result.error ?? 'Apply failed.' }))
+        useNotificationStore.getState().notify(result.error ?? 'Apply failed.')
+        return
+      }
+      useScenarioScriptWorkflowStore.getState().markBoardDone(projectId, position)
+      const done = `Applied board script for step ${position} — one undo step.`
+      useNotificationStore.getState().notify(done)
+    } finally {
+      setBoardApplyingPosition(null)
     }
   }
 
@@ -837,7 +1067,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
             }
             onClick={handleGenerateScript}
           >
-            Generate Script
+            {scriptPreview ? 'Regenerate Script' : 'Generate Script'}
           </button>
           <button data-testid="ai-scenario-modal-close" onClick={handleClose}>
             Close
@@ -876,10 +1106,6 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
             </button>
           </div>
         )}
-        {scriptApplyDone && (
-          <div data-testid="ai-scenario-script-apply-done">{scriptApplyDone}</div>
-        )}
-
         <div data-testid="ai-scenario-modal-tabs">
           <button
             data-testid="ai-scenario-modal-tab-doc"
@@ -921,13 +1147,35 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
             data-testid="ai-scenario-modal-script-body"
             style={{ marginTop: 8, maxHeight: '60vh', overflow: 'auto' }}
           >
-            {scriptPreview ? (
+            {scriptPreview && activeWorkflow ? (
               <AiScenarioScriptPanel
                 preview={scriptPreview}
                 currentAcceptedVersionId={acceptedVersionId}
-                applying={scriptApplying}
-                applyError={scriptApplyError}
-                onApply={handleApplyScript}
+                prompterApplying={scriptPrompterApplying}
+                prompterError={scriptPrompterError}
+                prompterApplied={activeWorkflow.prompterApplied}
+                onApplyPrompter={handleApplyPrompter}
+                steps={scriptPreview.plan.slides.map((slide) => ({
+                  position: slide.position,
+                  slideName: slide.slideName,
+                  ttsStatus:
+                    ttsApplyingPosition === slide.position
+                      ? 'applying'
+                      : activeWorkflow.ttsDone[slide.position]
+                        ? 'done'
+                        : 'idle',
+                  ttsProgress: ttsProgressByStep[slide.position] ?? null,
+                  ttsError: ttsErrorByStep[slide.position] ?? null,
+                  boardStatus:
+                    boardApplyingPosition === slide.position
+                      ? 'applying'
+                      : activeWorkflow.boardDone[slide.position]
+                        ? 'done'
+                        : 'idle',
+                  boardError: boardErrorByStep[slide.position] ?? null,
+                }))}
+                onGenerateTtsStep={handleGenerateTtsStep}
+                onApplyBoardStep={handleApplyBoardStep}
                 onClose={closeScriptPreview}
               />
             ) : (

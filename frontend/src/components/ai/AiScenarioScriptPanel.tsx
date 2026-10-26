@@ -6,12 +6,33 @@ export interface ScenarioScriptPreview {
   readonly plan: PlannerResult
 }
 
+export interface ScenarioScriptTtsProgress {
+  readonly done: number
+  readonly total: number
+}
+
+export type ScenarioScriptStepStatus = 'idle' | 'applying' | 'done'
+
+export interface ScenarioScriptStepUiState {
+  readonly position: number
+  readonly slideName: string
+  readonly ttsStatus: ScenarioScriptStepStatus
+  readonly ttsProgress: ScenarioScriptTtsProgress | null
+  readonly ttsError: string | null
+  readonly boardStatus: ScenarioScriptStepStatus
+  readonly boardError: string | null
+}
+
 interface AiScenarioScriptPanelProps {
   readonly preview: ScenarioScriptPreview
   readonly currentAcceptedVersionId: string | null
-  readonly applying: boolean
-  readonly applyError: string | null
-  readonly onApply: () => void
+  readonly prompterApplying: boolean
+  readonly prompterError: string | null
+  readonly prompterApplied: boolean
+  readonly onApplyPrompter: () => void
+  readonly steps: readonly ScenarioScriptStepUiState[]
+  readonly onGenerateTtsStep: (position: number) => void
+  readonly onApplyBoardStep: (position: number) => void
   readonly onClose: () => void
 }
 
@@ -62,20 +83,34 @@ export function promptBlockColor(block: string): string {
 
 /**
  * Reviewable script-draft preview (issue #471): per-slide durations, board
- * sources, block fractions, and diagnostics before anything is written. Hard
- * errors block Apply; a preview computed against a superseded accepted
- * snapshot is stale and cannot apply until re-generated.
+ * sources, block fractions, and diagnostics before anything is written.
+ * Three-step apply with persisted per-step states: (1) prompter text writes
+ * slides + prompter parts + durations; (2) per-step TTS synthesizes that
+ * step's prompter blocks sequentially with the saved TTS defaults; (3)
+ * per-step board buttons write animation sources onto the Step-1 slides.
+ * Steps 2 and 3 need Step 1 first but are otherwise independent; completed
+ * buttons flip to Regenerate. Hard errors block all steps; a preview
+ * computed against a superseded accepted snapshot is stale and cannot apply
+ * until re-generated.
  */
 export function AiScenarioScriptPanel({
   preview,
   currentAcceptedVersionId,
-  applying,
-  applyError,
-  onApply,
+  prompterApplying,
+  prompterError,
+  prompterApplied,
+  onApplyPrompter,
+  steps,
+  onGenerateTtsStep,
+  onApplyBoardStep,
   onClose,
 }: AiScenarioScriptPanelProps) {
   const stale = currentAcceptedVersionId !== preview.acceptedVersionId
   const blocked = preview.plan.blocked
+  const stepsBlocked = blocked || stale
+  const busy =
+    prompterApplying ||
+    steps.some((s) => s.ttsStatus === 'applying' || s.boardStatus === 'applying')
   return (
     <div data-testid="ai-scenario-script-preview">
       <div data-testid="ai-scenario-script-preview-summary">
@@ -250,27 +285,141 @@ export function AiScenarioScriptPanel({
           </li>
         ))}
       </ol>
-      <button
-        data-testid="ai-scenario-script-apply"
-        disabled={blocked || stale || applying}
-        title={
-          blocked
-            ? 'Blocked — fix the reported errors in the accepted scenario first'
-            : stale
-              ? 'Stale — the accepted snapshot changed, re-run Generate Script'
-              : 'Write slides, prompter parts, and board scripts in one undoable step'
-        }
-        onClick={onApply}
-      >
-        {applying ? 'Applying…' : 'Apply draft'}
-      </button>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <button
+          data-testid="ai-scenario-script-apply-prompter"
+          disabled={stepsBlocked || busy}
+          title={
+            blocked
+              ? 'Blocked — fix the reported errors in the accepted scenario first'
+              : stale
+                ? 'Stale — the accepted snapshot changed, re-run Generate Script'
+                : prompterApplied
+                  ? 'Step 1 — rewrite slides, prompter parts, and durations in one undoable step (re-applying drops existing TTS audio and resets per-step states)'
+                  : 'Step 1 — write slides, prompter parts, and durations in one undoable step'
+          }
+          onClick={onApplyPrompter}
+        >
+          {prompterApplying
+            ? 'Applying prompter…'
+            : prompterApplied
+              ? '1. Re-apply prompter text'
+              : '1. Apply prompter text'}
+        </button>
+      </div>
+      {prompterApplied && (
+        <div data-testid="ai-scenario-script-prompter-done">
+          Prompter text applied — per-step TTS and board buttons below.
+        </div>
+      )}
+      {prompterApplied && (
+        <ol data-testid="ai-scenario-script-steps" style={{ listStyle: 'none', padding: 0 }}>
+          {steps.map((step) => {
+            const ttsDisabled = stepsBlocked || busy || !prompterApplied
+            const boardDisabled = stepsBlocked || busy || !prompterApplied
+            return (
+              <li
+                key={step.position}
+                data-testid={`ai-scenario-script-step-${step.position}`}
+                style={{
+                  margin: '8px 0',
+                  padding: '8px',
+                  borderRadius: 8,
+                  border: '1px solid var(--color-border)',
+                }}
+              >
+                <div style={{ fontWeight: 600 }}>
+                  Step {step.position}: {step.slideName}
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    marginTop: 6,
+                  }}
+                >
+                  <button
+                    data-testid={`ai-scenario-script-generate-tts-${step.position}`}
+                    disabled={ttsDisabled}
+                    title={
+                      blocked
+                        ? 'Blocked — fix the reported errors in the accepted scenario first'
+                        : stale
+                          ? 'Stale — the accepted snapshot changed, re-run Generate Script'
+                          : 'Synthesize this step’s prompter blocks sequentially with the saved TTS defaults (one undoable step)'
+                    }
+                    onClick={() => onGenerateTtsStep(step.position)}
+                  >
+                    {step.ttsStatus === 'applying'
+                      ? 'Generating TTS…'
+                      : step.ttsStatus === 'done'
+                        ? `Regenerate TTS — Step ${step.position}`
+                        : `2. Generate TTS — Step ${step.position}`}
+                  </button>
+                  <button
+                    data-testid={`ai-scenario-script-apply-board-${step.position}`}
+                    disabled={boardDisabled}
+                    title={
+                      blocked
+                        ? 'Blocked — fix the reported errors in the accepted scenario first'
+                        : stale
+                          ? 'Stale — the accepted snapshot changed, re-run Generate Script'
+                          : 'Write this step’s board script in one undoable step'
+                    }
+                    onClick={() => onApplyBoardStep(step.position)}
+                  >
+                    {step.boardStatus === 'applying'
+                      ? 'Applying board…'
+                      : step.boardStatus === 'done'
+                        ? `Re-apply board — Step ${step.position}`
+                        : `3. Apply board — Step ${step.position}`}
+                  </button>
+                </div>
+                {step.ttsProgress && (
+                  <div data-testid={`ai-scenario-script-tts-progress-${step.position}`}>
+                    Generating TTS: {step.ttsProgress.done} of {step.ttsProgress.total}
+                    <progress
+                      data-testid={`ai-scenario-script-tts-progress-bar-${step.position}`}
+                      value={step.ttsProgress.done}
+                      max={Math.max(1, step.ttsProgress.total)}
+                      style={{ marginLeft: 8, verticalAlign: 'middle' }}
+                    />
+                  </div>
+                )}
+                {step.ttsStatus === 'done' && (
+                  <div data-testid={`ai-scenario-script-tts-done-${step.position}`}>
+                    TTS ready for Step {step.position} — Regenerate replaces it.
+                  </div>
+                )}
+                {step.boardStatus === 'done' && (
+                  <div data-testid={`ai-scenario-script-board-done-${step.position}`}>
+                    Board applied for Step {step.position} — Re-apply overwrites it.
+                  </div>
+                )}
+                {step.ttsError && (
+                  <div data-testid={`ai-scenario-script-tts-error-${step.position}`}>
+                    {step.ttsError}
+                  </div>
+                )}
+                {step.boardError && (
+                  <div data-testid={`ai-scenario-script-board-error-${step.position}`}>
+                    {step.boardError}
+                  </div>
+                )}
+              </li>
+            )
+          })}
+        </ol>
+      )}
       {blocked && !stale && (
         <div data-testid="ai-scenario-script-blocked-hint">
           Blocked — fix the reported errors in the accepted scenario, accept the fix, and re-run
           Generate Script.
         </div>
       )}
-      {applyError && <div data-testid="ai-scenario-script-apply-error">{applyError}</div>}
+      {prompterError && <div data-testid="ai-scenario-script-prompter-error">{prompterError}</div>}
       <button data-testid="ai-scenario-script-preview-close" onClick={onClose}>
         Close preview
       </button>

@@ -2,7 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { createEngineInternal } from '../engine/internal'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
 import { planScenarioDraft } from '../ai/scenarioPlanner'
-import { applyScenarioScript, buildScenarioScriptApplyCommands } from '../ai/scenarioScriptApply'
+import {
+  applyScenarioBoard,
+  applyScenarioBoardStep,
+  applyScenarioPrompter,
+  applyScenarioScript,
+  buildScenarioBoardApplyCommands,
+  buildScenarioBoardStepCommands,
+  buildScenarioPrompterApplyCommands,
+  buildScenarioScriptApplyCommands,
+} from '../ai/scenarioScriptApply'
 
 const TWO_STEP_DOC = [
   '# Ser and Estar',
@@ -248,5 +257,155 @@ describe('Scenario script apply execution (issue #471)', () => {
 
     expect(undoStack.entries.length).toBe(0)
     expect(engine.project!.slides).toHaveLength(1)
+  })
+})
+
+describe('Scenario script three-step split (prompter / board)', () => {
+  it('prompter builder converges structure + prompter without board scripts', () => {
+    const plan = planScenarioDraft(TWO_STEP_DOC, 0.1, [])
+    const { commands, targetSlideIds } = buildScenarioPrompterApplyCommands({
+      plan,
+      existingSlides: [
+        { id: 's1', name: 'Old name', partIds: ['p1'] },
+        { id: 's2', name: plan.slides[1]!.slideName, partIds: [] },
+      ],
+    })
+    expect(targetSlideIds).toEqual(['s1', 's2'])
+    const types = commands.map((c) => c.type)
+    expect(types.filter((t) => t === 'RenameSlide')).toHaveLength(1)
+    expect(types).not.toContain('CreateSlide')
+    expect(types).not.toContain('DeleteSlide')
+    expect(types.filter((t) => t === 'DeletePrompterPart')).toHaveLength(1)
+    expect(types.filter((t) => t === 'CreatePrompterPart')).toHaveLength(2)
+    expect(types.filter((t) => t === 'SetSlideDuration')).toHaveLength(2)
+    expect(types).not.toContain('SetSlideAnimationScript')
+  })
+
+  it('board builder writes scripts only, positionally', () => {
+    const plan = planScenarioDraft(TWO_STEP_DOC, 0.1, [])
+    const { commands, targetSlideIds } = buildScenarioBoardApplyCommands({
+      plan,
+      existingSlides: [
+        { id: 'live-1', name: plan.slides[0]!.slideName, partIds: [] },
+        { id: 'live-2', name: plan.slides[1]!.slideName, partIds: [] },
+        { id: 'extra', name: 'Extra', partIds: [] },
+      ],
+    })
+    expect(targetSlideIds).toEqual(['live-1', 'live-2'])
+    expect(commands).toHaveLength(2)
+    expect(commands.every((c) => c.type === 'SetSlideAnimationScript')).toBe(true)
+    expect(commands[0]!.parameters.slideId).toBe('live-1')
+    expect(commands[1]!.parameters.slideId).toBe('live-2')
+  })
+
+  it('per-step board writes one slide script; refuses before step 1', () => {
+    const plan = planScenarioDraft(TWO_STEP_DOC, 0.1, [])
+    // Step builder targets one position only.
+    const { commands, targetSlideIds } = buildScenarioBoardStepCommands(
+      {
+        plan,
+        existingSlides: [
+          { id: 'live-1', name: plan.slides[0]!.slideName, partIds: [] },
+          { id: 'live-2', name: plan.slides[1]!.slideName, partIds: [] },
+        ],
+      },
+      2,
+    )
+    expect(targetSlideIds).toEqual(['live-2'])
+    expect(commands).toHaveLength(1)
+    expect(commands[0]!.type).toBe('SetSlideAnimationScript')
+    expect(commands[0]!.parameters).toMatchObject({ slideId: 'live-2' })
+
+    // Out-of-range positions build nothing and refuse on apply.
+    expect(
+      buildScenarioBoardStepCommands(
+        { plan, existingSlides: [{ id: 'live-1', name: 'x', partIds: [] }] },
+        9,
+      ).commands,
+    ).toHaveLength(0)
+
+    const { engine, undoStack, system } = setupEngine()
+    engine.createSlide('Only')
+    const missing = applyScenarioBoardStep(
+      system,
+      {
+        plan,
+        existingSlides: snapshotSlides(engine),
+      },
+      2,
+    )
+    expect(missing.ok).toBe(false)
+    expect(missing.error).toMatch(/Step 1/)
+    expect(undoStack.entries.length).toBe(0)
+
+    // Applies one slide's script in one Transaction, leaving others alone.
+    const { engine: engine2, undoStack: undo2, system: system2 } = setupEngine()
+    engine2.createSlide('Old A')
+    engine2.createSlide('Old B')
+    const promoted = applyScenarioPrompter(system2, {
+      plan,
+      existingSlides: snapshotSlides(engine2),
+    })
+    expect(promoted.ok).toBe(true)
+    const before = undo2.entries.length
+    const step = applyScenarioBoardStep(
+      system2,
+      {
+        plan,
+        existingSlides: snapshotSlides(engine2),
+      },
+      1,
+    )
+    expect(step.ok).toBe(true)
+    expect(step.targetSlideIds).toHaveLength(1)
+    expect(undo2.entries.length).toBe(before + 1)
+    const slides = engine2.project!.slides
+    expect(slides[0]!.animationScript?.source).toContain(`script "${slides[0]!.name}"`)
+    expect(slides[1]!.animationScript).toBeNull()
+  })
+
+  it('prompter then board round-trips; board refuses before step 1', () => {
+    const { engine, undoStack, system } = setupEngine()
+    engine.createSlide('Old A')
+    engine.createSlide('Old B')
+    const plan = planScenarioDraft(TWO_STEP_DOC, 0.1, [])
+    expect(plan.blocked).toBe(false)
+
+    // Board before Step 1 on an empty project refuses (slides missing).
+    const fresh = setupEngine()
+    const earlyBoard = applyScenarioBoard(fresh.system, {
+      plan,
+      existingSlides: snapshotSlides(fresh.engine),
+    })
+    expect(earlyBoard.ok).toBe(false)
+    expect(earlyBoard.error).toMatch(/Step 1/)
+    expect(fresh.undoStack.entries.length).toBe(0)
+
+    // Step 1: slides + prompter, no scripts.
+    const before = undoStack.entries.length
+    const first = applyScenarioPrompter(system, {
+      plan,
+      existingSlides: snapshotSlides(engine),
+    })
+    expect(first.ok).toBe(true)
+    expect(undoStack.entries.length).toBe(before + 1)
+    const slides = engine.project!.slides
+    expect(slides).toHaveLength(2)
+    for (const slide of slides) {
+      expect(slide.prompter?.parts.length).toBeGreaterThan(0)
+      expect(slide.animationScript).toBeNull()
+    }
+
+    // Step 3: scripts only, snapshot live at click time.
+    const board = applyScenarioBoard(system, {
+      plan,
+      existingSlides: snapshotSlides(engine),
+    })
+    expect(board.ok).toBe(true)
+    expect(board.targetSlideIds).toEqual(engine.project!.slides.map((s) => s.id))
+    expect(undoStack.entries.length).toBe(before + 2)
+    for (const slide of engine.project!.slides) {
+      expect(slide.animationScript?.source).toContain(`script "${slide.name}"`)
+    }
   })
 })

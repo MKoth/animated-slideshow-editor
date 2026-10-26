@@ -24,6 +24,14 @@ import type { PlannerResult, PlannerSlide } from './scenarioPlanner'
  * keeps are positional prefix matches, so a second apply only rewrites
  * content.
  *
+ * Three-step split: Step 1 (prompter) converges structure plus prompter
+ * parts and durations but leaves board scripts untouched; Step 3 (board)
+ * writes only `SetSlideAnimationScript` onto the slides Step 1 created,
+ * snapshot live at click time. Step 2 (batch TTS) is independent of Step 3
+ * once Step 1 has run. The legacy single-shot `applyScenarioScript`
+ * (structure + prompter + board) is kept for tests/back-compat; the modal
+ * now drives the three granular seams instead.
+ *
  * Gating lives with the caller (the modal refuses without an accepted
  * snapshot and the Apply button stays disabled while the plan is blocked);
  * this seam additionally refuses blocked or empty plans so no partial write
@@ -108,12 +116,113 @@ function slideContentCommands(
   return commands
 }
 
+function slidePrompterCommands(
+  slideId: string,
+  draft: PlannerSlide,
+  livePartIds: readonly string[],
+): Command<unknown>[] {
+  const commands: Command<unknown>[] = []
+  // Delete prior parts last-to-first (downstream shifts stay minimal).
+  // Deleting drops each part's linked audio clips/segments — stale voice
+  // links never survive the draft; re-commit rides the existing voice path.
+  for (let i = livePartIds.length - 1; i >= 0; i -= 1) {
+    commands.push(new DeletePrompterPartCommand({ slideId, partId: livePartIds[i]! }))
+  }
+  // Split parts mirror manual prompter paste: one PrompterPart per prompt
+  // block (sentences + isolated foreign words), durations sum to the slide
+  // length (padded when table budgets overflowed the estimate).
+  const parts =
+    draft.prompterParts.length > 0
+      ? draft.prompterParts
+      : [{ text: draft.prompterText, duration: draft.duration }]
+  for (const part of parts) {
+    commands.push(
+      new CreatePrompterPartCommand({
+        slideId,
+        text: part.text,
+        duration: part.duration,
+      }),
+    )
+  }
+  // Slide length stays the sum of parts.
+  commands.push(new SetSlideDurationCommand({ slideId, duration: draft.duration }))
+  return commands
+}
+
 /**
- * Build the apply Transaction children. Pure: reads only the plan and the
- * live slide snapshot, never the engine. New slides get pre-generated ids
- * (`CreateSlideCommand` `slideId`) so later children of the same
- * Transaction can configure them — no forward references, no second
- * dispatch, one History entry.
+ * Step 1 builder: structure (keeps renamed, surplus deleted, missing
+ * created) plus prompter parts and durations — no board scripts. Pure:
+ * reads only the plan and the live slide snapshot, never the engine.
+ */
+export function buildScenarioPrompterApplyCommands(
+  input: ScenarioScriptApplyInput,
+): ScenarioScriptApplyPlan {
+  const { plan, existingSlides } = input
+  const commands: Command<unknown>[] = []
+  const targetSlideIds: string[] = []
+
+  const keepCount = Math.min(existingSlides.length, plan.slides.length)
+
+  for (let i = 0; i < keepCount; i += 1) {
+    const existing = existingSlides[i]!
+    const desired = plan.slides[i]!
+    targetSlideIds.push(existing.id)
+    if (existing.name !== desired.slideName) {
+      commands.push(new RenameSlideCommand({ slideId: existing.id, name: desired.slideName }))
+    }
+  }
+
+  for (let i = existingSlides.length - 1; i >= plan.slides.length; i -= 1) {
+    commands.push(new DeleteSlideCommand({ slideId: existingSlides[i]!.id }))
+  }
+
+  for (let i = existingSlides.length; i < plan.slides.length; i += 1) {
+    const desired = plan.slides[i]!
+    const slideId = newId('slide')
+    targetSlideIds.push(slideId)
+    commands.push(new CreateSlideCommand({ name: desired.slideName, slideId }))
+  }
+
+  for (let i = 0; i < plan.slides.length; i += 1) {
+    const desired = plan.slides[i]!
+    const slideId = targetSlideIds[i]!
+    const livePartIds = i < existingSlides.length ? (existingSlides[i]!.partIds ?? []) : []
+    commands.push(...slidePrompterCommands(slideId, desired, livePartIds))
+  }
+
+  return { commands, targetSlideIds }
+}
+
+/**
+ * Step 3 builder: board scripts only, mapped positionally onto the live
+ * slides Step 1 created (snapshot live at click time). Refuses when the
+ * live list is shorter than the plan — Step 1 must run first. Extra live
+ * slides beyond the plan are left untouched.
+ */
+export function buildScenarioBoardApplyCommands(
+  input: ScenarioScriptApplyInput,
+): ScenarioScriptApplyPlan {
+  const { plan, existingSlides } = input
+  const commands: Command<unknown>[] = []
+  const targetSlideIds: string[] = []
+  for (let i = 0; i < plan.slides.length; i += 1) {
+    const existing = existingSlides[i]
+    if (!existing) break
+    targetSlideIds.push(existing.id)
+    commands.push(
+      new SetSlideAnimationScriptCommand({ slideId: existing.id, source: plan.slides[i]!.source }),
+    )
+  }
+  return { commands, targetSlideIds }
+}
+
+/**
+ * Legacy single-shot builder (structure + prompter + board). Kept for
+ * tests/back-compat; the modal now drives the three granular seams.
+ * Pure: reads only the plan and the live slide snapshot, never the engine.
+ * New slides get pre-generated ids (`CreateSlideCommand` `slideId`) so
+ * later children of the same Transaction can configure them — no forward
+ * references, no second dispatch, one History entry.
  */
 export function buildScenarioScriptApplyCommands(
   input: ScenarioScriptApplyInput,
@@ -141,11 +250,9 @@ export function buildScenarioScriptApplyCommands(
 
   // Missing slides created (appended, in desired order) with pre-generated
   // ids so content commands below can target them in the same Transaction.
-  const createdIds: string[] = []
   for (let i = existingSlides.length; i < plan.slides.length; i += 1) {
     const desired = plan.slides[i]!
     const slideId = newId('slide')
-    createdIds.push(slideId)
     targetSlideIds.push(slideId)
     commands.push(new CreateSlideCommand({ name: desired.slideName, slideId }))
   }
@@ -160,6 +267,128 @@ export function buildScenarioScriptApplyCommands(
   }
 
   return { commands, targetSlideIds }
+}
+
+function executeTransaction(
+  system: ApplySystem,
+  commands: Command<unknown>[],
+): { ok: true; historyEntryId: string } | { ok: false; error: string } {
+  const before = system.undoStack.entries.length
+  const result = system.dispatcher.dispatch(new TransactionCommand(commands), 'ai')
+  if (!result.ok) {
+    return { ok: false, error: result.error.message }
+  }
+  const top = system.undoStack.entries[0]
+  const expected = before + 1
+  if (system.undoStack.entries.length !== expected || top?.type !== 'Transaction') {
+    return { ok: false, error: 'Execution did not record exactly one History entry.' }
+  }
+  return { ok: true, historyEntryId: top.id }
+}
+
+function refuseBlockedOrEmpty(plan: PlannerResult): string | null {
+  if (plan.blocked) {
+    const first = plan.diagnostics.find((d) => d.severity === 'error')
+    return first
+      ? `Draft has blocking errors — ${first.message} Fix the accepted scenario and re-run Generate. Nothing executed.`
+      : 'Draft has blocking errors — fix the accepted scenario and re-run Generate. Nothing executed.'
+  }
+  if (plan.slides.length === 0) {
+    return 'Draft has no slides — the accepted scenario defines no steps. Nothing executed.'
+  }
+  return null
+}
+
+/**
+ * Step 1 execution: slides + prompter parts + durations as one Transaction
+ * with one History entry. Leaves board scripts untouched.
+ */
+export function applyScenarioPrompter(
+  system: ApplySystem,
+  input: ScenarioScriptApplyInput,
+): ScenarioScriptApplyResult {
+  const refused = refuseBlockedOrEmpty(input.plan)
+  if (refused) return { ok: false, targetSlideIds: [], error: refused }
+  const { commands, targetSlideIds } = buildScenarioPrompterApplyCommands(input)
+  const executed = executeTransaction(system, commands)
+  if (!executed.ok) return { ok: false, targetSlideIds: [], error: executed.error }
+  return { ok: true, targetSlideIds, historyEntryId: executed.historyEntryId }
+}
+
+/**
+ * Step 3 execution: board scripts only as one Transaction with one History
+ * entry. Requires Step 1 to have converged the slide list (live count must
+ * cover the plan); otherwise refuses with a Step-1-first error.
+ */
+export function applyScenarioBoard(
+  system: ApplySystem,
+  input: ScenarioScriptApplyInput,
+): ScenarioScriptApplyResult {
+  const refused = refuseBlockedOrEmpty(input.plan)
+  if (refused) return { ok: false, targetSlideIds: [], error: refused }
+  if (input.existingSlides.length < input.plan.slides.length) {
+    return {
+      ok: false,
+      targetSlideIds: [],
+      error: `Step 1 has not been applied — ${input.plan.slides.length - input.existingSlides.length} slide(s) missing. Apply prompter text first. Nothing executed.`,
+    }
+  }
+  const { commands, targetSlideIds } = buildScenarioBoardApplyCommands(input)
+  const executed = executeTransaction(system, commands)
+  if (!executed.ok) return { ok: false, targetSlideIds: [], error: executed.error }
+  return { ok: true, targetSlideIds, historyEntryId: executed.historyEntryId }
+}
+
+/**
+ * Per-step Step 3 builder: the board script for one plan position only,
+ * mapped onto the live slide at the same position (snapshot live at click
+ * time, so it targets the Step-1 slide with its current prompter timing).
+ * Positions are 1-based. Empty commands when the position is out of range —
+ * the applier below refuses those cases explicitly.
+ */
+export function buildScenarioBoardStepCommands(
+  input: ScenarioScriptApplyInput,
+  position: number,
+): ScenarioScriptApplyPlan {
+  const draft = input.plan.slides[position - 1]
+  const existing = input.existingSlides[position - 1]
+  if (!draft || !existing) return { commands: [], targetSlideIds: [] }
+  return {
+    commands: [new SetSlideAnimationScriptCommand({ slideId: existing.id, source: draft.source })],
+    targetSlideIds: [existing.id],
+  }
+}
+
+/**
+ * Per-step Step 3 execution: one slide's board script as one Transaction
+ * with one History entry. Needs Step 1 to have created the slide at that
+ * position; otherwise refuses with a Step-1-first error.
+ */
+export function applyScenarioBoardStep(
+  system: ApplySystem,
+  input: ScenarioScriptApplyInput,
+  position: number,
+): ScenarioScriptApplyResult {
+  const refused = refuseBlockedOrEmpty(input.plan)
+  if (refused) return { ok: false, targetSlideIds: [], error: refused }
+  if (!Number.isInteger(position) || position < 1 || position > input.plan.slides.length) {
+    return {
+      ok: false,
+      targetSlideIds: [],
+      error: `No step ${position} in this draft — nothing executed.`,
+    }
+  }
+  if (input.existingSlides.length < position) {
+    return {
+      ok: false,
+      targetSlideIds: [],
+      error: `Step 1 has not been applied for step ${position} — apply prompter text first. Nothing executed.`,
+    }
+  }
+  const { commands, targetSlideIds } = buildScenarioBoardStepCommands(input, position)
+  const executed = executeTransaction(system, commands)
+  if (!executed.ok) return { ok: false, targetSlideIds: [], error: executed.error }
+  return { ok: true, targetSlideIds, historyEntryId: executed.historyEntryId }
 }
 
 export interface ScenarioScriptApplyDispatcher {

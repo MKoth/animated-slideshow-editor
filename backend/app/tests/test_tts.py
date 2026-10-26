@@ -1,5 +1,7 @@
 import asyncio
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -55,8 +57,9 @@ def test_tts_settings_reports_mlx_and_reference(client: TestClient) -> None:
     assert "mlxAvailable" in r2.json()
 
 
-def test_tts_generate_serialized_queue(client: TestClient) -> None:
-    # The backend uses asyncio.Lock to serialize concurrent TTS generation.
+def test_tts_generate_serialized_queue(
+    client: TestClient,
+) -> None:  # The backend uses asyncio.Lock to serialize concurrent TTS generation.
     # Verify that two rapid requests both succeed (queued, not rejected).
     # TestClient is not thread-safe, so we do sequential rapid calls and check both succeed.
     # The lock's existence is verified by checking the module has a lock.
@@ -70,3 +73,95 @@ def test_tts_generate_serialized_queue(client: TestClient) -> None:
     assert r2.status_code == 200
     assert r1.content[:4] == b"RIFF"
     assert r2.content[:4] == b"RIFF"
+
+
+def test_select_voice_reference_prefers_body_over_prompt() -> None:
+    from app.api.tts import _select_voice_reference
+
+    prompt_params = {"referenceAssetId": "prompt-ref", "ref_text": "prompt transcript"}
+    # Explicit body id wins over the prompt's stored reference.
+    assert _select_voice_reference("body-ref", None, prompt_params) == (
+        "body-ref",
+        "prompt transcript",
+        False,
+    )
+    # Explicit empty string forces the standard reference: prompt-stored
+    # reference id AND transcript are both ignored.
+    assert _select_voice_reference("", None, prompt_params) == (None, None, True)
+    assert _select_voice_reference("   ", "  ", prompt_params) == (None, None, True)
+    # Omitted body id keeps legacy behavior: prompt-stored values apply.
+    assert _select_voice_reference(None, None, prompt_params) == (
+        "prompt-ref",
+        "prompt transcript",
+        False,
+    )
+    # No prompt either: standard default via engine fallback.
+    assert _select_voice_reference(None, None, None) == (None, None, False)
+    assert _select_voice_reference("", None, None) == (None, None, True)
+    # Explicit body transcript wins; prompt transcript is the fallback.
+    assert _select_voice_reference(None, "body transcript", prompt_params) == (
+        "prompt-ref",
+        "body transcript",
+        False,
+    )
+
+
+def test_spanish_default_reference_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.tts.engine import (
+        _default_ref_audio_path,
+        _default_ref_text,
+        _is_spanish_language,
+        get_reference_status,
+    )
+
+    # Env overrides must not leak into the file-resolution assertions.
+    for var in (
+        "TTS_REF_AUDIO",
+        "TTS_REF_AUDIO_ES",
+        "TTS_REF_TEXT",
+        "TTS_REF_TEXT_ES",
+        "TTS_REF_TEXT_FILE",
+        "TTS_REF_TEXT_FILE_ES",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    assert _is_spanish_language("es") is True
+    assert _is_spanish_language("ES-419") is True
+    assert _is_spanish_language("Spanish") is True
+    assert _is_spanish_language("en") is False
+    assert _is_spanish_language(None) is False
+    assert _is_spanish_language("") is False
+
+    audio_es = _default_ref_audio_path("es")
+    assert audio_es is not None and audio_es.endswith("my_voice_es.wav")
+    text_es = _default_ref_text("es")
+    assert text_es is not None and "Hola" in text_es
+
+    # English / unset behavior is unchanged (previous files).
+    audio_en = _default_ref_audio_path("en")
+    assert audio_en is not None and audio_en.endswith("my_voice.wav")
+    assert not audio_en.endswith("my_voice_es.wav")
+    assert _default_ref_audio_path(None) == audio_en
+    text_en = _default_ref_text("en")
+    assert text_en is not None and "Hello, my name is Michael" in text_en
+
+    status_es = get_reference_status(language="es")
+    assert status_es["audioConfigured"] is True
+    assert status_es["textConfigured"] is True
+    status_en = get_reference_status()
+    assert status_en["audioConfigured"] is True
+    assert status_en["textConfigured"] is True
+
+
+def test_spanish_reference_env_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from app.tts.engine import _default_ref_audio_path, _default_ref_text
+
+    custom_wav = tmp_path / "custom_es.wav"
+    custom_wav.write_bytes(b"RIFF")
+    monkeypatch.setenv("TTS_REF_AUDIO_ES", str(custom_wav))
+    monkeypatch.setenv("TTS_REF_TEXT_ES", "hola custom transcript")
+    assert _default_ref_audio_path("es") == str(custom_wav)
+    assert _default_ref_text("es") == "hola custom transcript"
+    # English resolution ignores the _ES overrides.
+    assert _default_ref_audio_path("en") != str(custom_wav)
+    assert _default_ref_text("en") != "hola custom transcript"

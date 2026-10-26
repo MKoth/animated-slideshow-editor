@@ -55,8 +55,12 @@ def _get_reference_status() -> dict[str, Any]:
     try:
         from app.tts.engine import get_reference_status as _status
 
-        status = _status()
-        return dict(status)
+        status = dict(_status())
+        try:
+            status["spanish"] = dict(_status(language="es"))
+        except Exception:
+            pass
+        return status
     except Exception:
         return {"audioConfigured": False, "textConfigured": False}
 
@@ -68,7 +72,12 @@ class TTSGenerateRequest(BaseModel):
     voice: str | None = None
     instruction: str | None = None
     referenceAssetId: str | None = Field(
-        default=None, description="asset library audio id used as Base voice-clone reference"
+        default=None,
+        description=(
+            "asset library audio id used as Base voice-clone reference; "
+            "empty string forces the standard default reference even when "
+            "the voice prompt stores its own reference"
+        ),
     )
     refText: str | None = Field(
         default=None, description="transcript override for the voice-clone reference audio"
@@ -190,6 +199,42 @@ class TtsSettingsUpdate(BaseModel):
             raise ValueError(str(e)) from e
         except Exception:
             return v.strip()
+
+
+def _select_voice_reference(
+    body_reference_asset_id: str | None,
+    body_ref_text: str | None,
+    prompt_params: dict[str, Any] | None,
+) -> tuple[str | None, str | None, bool]:
+    """Decide the Base voice-clone reference for one generation. Pure.
+
+    Returns (ref_asset_id, ref_text_override, explicit_default):
+    - Non-empty body id wins outright.
+    - Explicit empty-string body id means "standard reference": ignore any
+      prompt-stored reference id AND transcript so the default recording
+      (plus its own transcript) is used.
+    - Otherwise the prompt's stored reference id/transcript apply (legacy).
+    """
+    ref_asset_id: str | None = None
+    explicit_default = (
+        isinstance(body_reference_asset_id, str) and not body_reference_asset_id.strip()
+    )
+    if isinstance(body_reference_asset_id, str) and body_reference_asset_id.strip():
+        ref_asset_id = body_reference_asset_id.strip()
+    elif not explicit_default and isinstance(prompt_params, dict):
+        maybe_ref = prompt_params.get("referenceAssetId")
+        if isinstance(maybe_ref, str) and maybe_ref.strip():
+            ref_asset_id = maybe_ref.strip()
+    ref_text_override: str | None = None
+    if isinstance(body_ref_text, str) and body_ref_text.strip():
+        ref_text_override = body_ref_text.strip()
+    elif not explicit_default and isinstance(prompt_params, dict):
+        for _k in ("ref_text", "refText", "referenceText"):
+            _v = prompt_params.get(_k)
+            if isinstance(_v, str) and _v.strip():
+                ref_text_override = _v.strip()
+                break
+    return ref_asset_id, ref_text_override, explicit_default
 
 
 def _get_registry_defaults() -> tuple[
@@ -620,7 +665,8 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
 
     # Resolve Base voice-clone reference: per-request asset > prompt stored asset > defaults.
     # Engine falls back to TTS_REF_AUDIO / backend/my_voice.wav + transcript when
-    # no explicit reference is given, so Base works out of the box.
+    # no explicit reference is given (Spanish generations use my_voice_es.wav +
+    # audio_ref_script_es.txt), so Base works out of the box.
     try:
         from app.tts.registry import get_model_mode as _mode_for_ref
 
@@ -628,25 +674,19 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
     except Exception:
         _needs_ref = False
     if _needs_ref:
-        ref_asset_id: str | None = None
-        if isinstance(body.referenceAssetId, str) and body.referenceAssetId.strip():
-            ref_asset_id = body.referenceAssetId.strip()
-        elif isinstance(effective_params, dict):
-            maybe_ref = effective_params.get("referenceAssetId")
-            if isinstance(maybe_ref, str) and maybe_ref.strip():
-                ref_asset_id = maybe_ref.strip()
-        ref_text_override: str | None = None
-        if isinstance(body.refText, str) and body.refText.strip():
-            ref_text_override = body.refText.strip()
-        elif isinstance(effective_params, dict):
-            for _k in ("ref_text", "refText", "referenceText"):
-                _v = effective_params.get(_k)
-                if isinstance(_v, str) and _v.strip():
-                    ref_text_override = _v.strip()
-                    break
+        ref_asset_id, ref_text_override, ref_explicit_default = _select_voice_reference(
+            body.referenceAssetId if isinstance(body.referenceAssetId, str) else None,
+            body.refText if isinstance(body.refText, str) else None,
+            effective_params,
+        )
         merged: dict[str, Any] = (
             dict(effective_params) if isinstance(effective_params, dict) else {}
         )
+        if ref_explicit_default:
+            # Standard reference: drop the prompt's stored reference id so
+            # nothing downstream can pick it up; the engine then resolves
+            # the default recording (plus its own transcript) by itself.
+            merged.pop("referenceAssetId", None)
         if ref_asset_id is not None:
             merged["ref_audio"] = _resolve_reference_asset_path(request, ref_asset_id)
             merged["referenceAssetId"] = ref_asset_id

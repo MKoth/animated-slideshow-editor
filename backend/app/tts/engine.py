@@ -305,11 +305,36 @@ class SineTtsEngine:
         return _wav_bytes_for_text_sine(text, None, language, voice, instruction)
 
 
-def _default_ref_audio_path() -> str | None:
-    """Default Base voice-clone reference audio (re-resolved per call)."""
+def _is_spanish_language(language: str | None) -> bool:
+    """Whether a TTS language selects the Spanish default reference."""
+    if not language:
+        return False
+    key = language.strip().lower()
+    primary = key.split("-")[0].split("_")[0]
+    return primary in {"es", "spa", "spanish"}
+
+
+def _default_ref_audio_path(language: str | None = None) -> str | None:
+    """Default Base voice-clone reference audio (re-resolved per call).
+
+    Spanish generations use the Spanish reference (TTS_REF_AUDIO_ES or
+    backend/my_voice_es.wav); everything else uses TTS_REF_AUDIO or
+    backend/my_voice.wav.
+    """
     import os
     from pathlib import Path
 
+    if _is_spanish_language(language):
+        env = os.getenv("TTS_REF_AUDIO_ES")
+        if env is not None and env.strip():
+            return env.strip()
+        candidate = Path(__file__).resolve().parents[2] / "my_voice_es.wav"
+        try:
+            if candidate.is_file():
+                return str(candidate)
+        except OSError:
+            return None
+        return None
     env = os.getenv("TTS_REF_AUDIO")
     if env is not None and env.strip():
         return env.strip()
@@ -322,15 +347,21 @@ def _default_ref_audio_path() -> str | None:
     return None
 
 
-def _default_ref_text() -> str | None:
-    """Default Base voice-clone transcript (re-read per call so edits apply)."""
+def _default_ref_text(language: str | None = None) -> str | None:
+    """Default Base voice-clone transcript (re-read per call so edits apply).
+
+    Precedence: TTS_REF_TEXT_ES env > TTS_REF_TEXT_FILE_ES env >
+    backend/audio_ref_script_es.txt for Spanish; TTS_REF_TEXT env >
+    TTS_REF_TEXT_FILE env > backend/audio_ref_script.txt otherwise.
+    """
     import os
     from pathlib import Path
 
-    direct = os.getenv("TTS_REF_TEXT")
+    spanish = _is_spanish_language(language)
+    direct = os.getenv("TTS_REF_TEXT_ES" if spanish else "TTS_REF_TEXT")
     if direct is not None and direct.strip():
         return direct.strip()
-    file_env = os.getenv("TTS_REF_TEXT_FILE")
+    file_env = os.getenv("TTS_REF_TEXT_FILE_ES" if spanish else "TTS_REF_TEXT_FILE")
     if file_env is not None and file_env.strip():
         try:
             text = Path(file_env.strip()).expanduser().read_text(encoding="utf-8").strip()
@@ -338,7 +369,9 @@ def _default_ref_text() -> str | None:
                 return text
         except OSError:
             pass
-    candidate = Path(__file__).resolve().parents[2] / "audio_ref_script.txt"
+    candidate = Path(__file__).resolve().parents[2] / (
+        "audio_ref_script_es.txt" if spanish else "audio_ref_script.txt"
+    )
     try:
         if candidate.is_file():
             text = candidate.read_text(encoding="utf-8").strip()
@@ -376,13 +409,16 @@ def _model_mode(model_id: str) -> str:
 
 
 def get_reference_status(
-    ref_audio: str | None = None, ref_text: str | None = None
+    ref_audio: str | None = None, ref_text: str | None = None, language: str | None = None
 ) -> dict[str, object]:
-    """Report whether the Base voice-clone reference is configured."""
+    """Report whether the Base voice-clone reference is configured.
+
+    With `language="es"` reports the Spanish reference instead.
+    """
     from pathlib import Path
 
-    audio = ref_audio if ref_audio is not None else _default_ref_audio_path()
-    text = ref_text if ref_text is not None else _default_ref_text()
+    audio = ref_audio if ref_audio is not None else _default_ref_audio_path(language)
+    text = ref_text if ref_text is not None else _default_ref_text(language)
     audio_exists = False
     if audio:
         try:
@@ -481,19 +517,19 @@ class MlxQwenTtsEngine:
                 ref_audio = (
                     _params_str(params, "ref_audio", "refAudio", "referenceAudio")
                     or self._ref_audio_override
-                    or _default_ref_audio_path()
+                    or _default_ref_audio_path(language)
                 )
                 ref_text = (
                     _params_str(params, "ref_text", "refText", "referenceText", "ref_transcript")
                     or self._ref_text_override
-                    or _default_ref_text()
+                    or _default_ref_text(language)
                 )
                 if not ref_audio or not ref_text:
                     raise TtsModelLoadError(
                         "Base voice_clone requires a voice reference: set TTS_REF_AUDIO "
-                        "to your recording (e.g. backend/my_voice.wav) and TTS_REF_TEXT / "
-                        "TTS_REF_TEXT_FILE to its exact transcript "
-                        "(e.g. backend/audio_ref_script.txt)"
+                        "to your recording (e.g. backend/my_voice.wav, backend/my_voice_es.wav "
+                        "for Spanish) and TTS_REF_TEXT / TTS_REF_TEXT_FILE to its exact "
+                        "transcript (e.g. backend/audio_ref_script.txt)"
                     )
                 from pathlib import Path as _Path
 

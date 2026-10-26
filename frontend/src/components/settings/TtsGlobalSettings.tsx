@@ -9,6 +9,9 @@ import {
   modelDownloadLabel,
   shortModelLabel,
 } from '../../engine/ttsRegistry'
+import { useAudioResizePreferenceStore } from '../../stores/audioResizePreferenceStore'
+import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
+import { useTtsForeignVoiceStore } from '../../stores/ttsForeignVoiceStore'
 
 export function TtsGlobalSettings() {
   const api = useMemo(() => new TtsSettingsApi(apiClient), [])
@@ -23,6 +26,25 @@ export function TtsGlobalSettings() {
   const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  // Default voice mismatch handling (batch TTS + single TTS "don't ask
+  // again" share this): stretch fits the clip to the text via playbackRate
+  // (prompter timing untouched), trim fits the text to the clip (part
+  // duration becomes the recorded length, downstream shifted), ask shows the
+  // mismatch dialog per generation.
+  const voiceMismatchPref = useAudioResizePreferenceStore((s) => s.preferences.voice)
+  // Spanish (foreign) voice for the Script batch: reference asset cloned for
+  // foreign-language blocks (Base voice-clone). English blocks always use the
+  // default voice. Saved locally, like the other batch defaults here.
+  const foreignReferenceAssetId = useTtsForeignVoiceStore((s) => s.referenceAssetId)
+  const foreignReferenceTranscript = useTtsForeignVoiceStore((s) => s.referenceTranscript)
+  const libraryAudioDefs = useAssetLibraryStore((s) => s.definitions)
+  const libraryLoaded = useAssetLibraryStore((s) => s.loaded)
+  const libraryLoading = useAssetLibraryStore((s) => s.loading)
+
+  useEffect(() => {
+    const store = useAssetLibraryStore.getState()
+    if (!store.loaded && !store.loading) void store.loadLibrary()
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -295,6 +317,102 @@ export function TtsGlobalSettings() {
             auto → mlx if available else sine
           </div>
         </label>
+      </div>
+      <label style={{ fontSize: 11 }}>
+        Default voice mismatch handling
+        <select
+          data-testid="tts-global-mismatch"
+          value={voiceMismatchPref ?? 'ask'}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === 'ask') useAudioResizePreferenceStore.getState().clearPreference('voice')
+            else if (v === 'stretch' || v === 'trim')
+              useAudioResizePreferenceStore.getState().setPreference('voice', v)
+          }}
+          style={{
+            width: '100%',
+            padding: '6px 8px',
+            background: '#1e1e1e',
+            border: '1px solid #444',
+            borderRadius: 4,
+            color: '#e0e0e0',
+            marginTop: 4,
+          }}
+        >
+          <option value="ask">Ask each time (mismatch dialog)</option>
+          <option value="stretch">Fit clip to text — stretch audio (playbackRate)</option>
+          <option value="trim">Fit text to clip — extend/shorten prompter + shift</option>
+        </select>
+        <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+          Used by single TTS when “Don&apos;t ask again” was chosen, and by the Script batch
+          “Generate TTS for all prompts” (no dialogs there — batch needs a saved default).
+        </div>
+      </label>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <label style={{ fontSize: 11 }}>
+          Spanish (foreign) voice for Script batch
+          <select
+            data-testid="tts-global-foreign-ref"
+            value={foreignReferenceAssetId ?? ''}
+            onChange={(e) =>
+              useTtsForeignVoiceStore
+                .getState()
+                .setReferenceAssetId(e.target.value === '' ? null : e.target.value)
+            }
+            style={{
+              width: '100%',
+              padding: '6px 8px',
+              background: '#1e1e1e',
+              border: '1px solid #444',
+              borderRadius: 4,
+              color: '#e0e0e0',
+              marginTop: 4,
+            }}
+          >
+            <option value="">— None (backend Spanish reference) —</option>
+            {(Array.isArray(libraryAudioDefs) ? libraryAudioDefs : [])
+              .filter(
+                (d) =>
+                  d.category === 'audio' ||
+                  d.mimeType?.startsWith('audio/') ||
+                  /\.(wav|mp3|mpeg|ogg|webm)$/i.test(d.original_filename),
+              )
+              .map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name} — {d.id.slice(0, 8)}
+                </option>
+              ))}
+          </select>
+        </label>
+        {foreignReferenceAssetId && (
+          <label style={{ fontSize: 11 }}>
+            Exact transcript of that recording (word-for-word)
+            <textarea
+              data-testid="tts-global-foreign-ref-transcript"
+              value={foreignReferenceTranscript}
+              onChange={(e) =>
+                useTtsForeignVoiceStore.getState().setReferenceTranscript(e.target.value)
+              }
+              placeholder="Type exactly what the Spanish recording says — cloning needs a word-for-word match"
+              style={{
+                width: '100%',
+                minHeight: 44,
+                padding: '6px 8px',
+                background: '#1e1e1e',
+                border: '1px solid #444',
+                borderRadius: 4,
+                color: '#e0e0e0',
+                marginTop: 4,
+                fontSize: 11,
+              }}
+            />
+          </label>
+        )}
+        <div style={{ fontSize: 10, color: '#888' }}>
+          {libraryLoaded || libraryLoading
+            ? 'Batch foreign blocks clone this voice; leave empty to use the backend Spanish reference (my_voice_es.wav). English blocks always use the default voice. Base voice-clone models only — CustomVoice models ignore reference audio.'
+            : 'Loading audio assets…'}
+        </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button
