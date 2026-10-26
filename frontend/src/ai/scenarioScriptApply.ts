@@ -26,11 +26,12 @@ import type { PlannerResult, PlannerSlide } from './scenarioPlanner'
  *
  * Three-step split: Step 1 (prompter) converges structure plus prompter
  * parts and durations but leaves board scripts untouched; Step 3 (board)
- * writes only `SetSlideAnimationScript` onto the slides Step 1 created,
- * snapshot live at click time. Step 2 (batch TTS) is independent of Step 3
- * once Step 1 has run. The legacy single-shot `applyScenarioScript`
- * (structure + prompter + board) is kept for tests/back-compat; the modal
- * now drives the three granular seams instead.
+ * rebuilds each step's board from the live prompter timing and re-runs it
+ * (see `ai/boardReapply.ts` — the modal drives that seam instead of the
+ * builders below, so re-applies follow actual TTS lengths). Step 2 (batch
+ * TTS) is independent of Step 3 once Step 1 has run. The legacy single-shot
+ * `applyScenarioScript` (structure + prompter + board) is kept for
+ * tests/back-compat; the modal now drives the three granular seams instead.
  *
  * Gating lives with the caller (the modal refuses without an accepted
  * snapshot and the Apply button stays disabled while the plan is blocked);
@@ -334,58 +335,6 @@ export function applyScenarioBoard(
     }
   }
   const { commands, targetSlideIds } = buildScenarioBoardApplyCommands(input)
-  const executed = executeTransaction(system, commands)
-  if (!executed.ok) return { ok: false, targetSlideIds: [], error: executed.error }
-  return { ok: true, targetSlideIds, historyEntryId: executed.historyEntryId }
-}
-
-/**
- * Per-step Step 3 builder: the board script for one plan position only,
- * mapped onto the live slide at the same position (snapshot live at click
- * time, so it targets the Step-1 slide with its current prompter timing).
- * Positions are 1-based. Empty commands when the position is out of range —
- * the applier below refuses those cases explicitly.
- */
-export function buildScenarioBoardStepCommands(
-  input: ScenarioScriptApplyInput,
-  position: number,
-): ScenarioScriptApplyPlan {
-  const draft = input.plan.slides[position - 1]
-  const existing = input.existingSlides[position - 1]
-  if (!draft || !existing) return { commands: [], targetSlideIds: [] }
-  return {
-    commands: [new SetSlideAnimationScriptCommand({ slideId: existing.id, source: draft.source })],
-    targetSlideIds: [existing.id],
-  }
-}
-
-/**
- * Per-step Step 3 execution: one slide's board script as one Transaction
- * with one History entry. Needs Step 1 to have created the slide at that
- * position; otherwise refuses with a Step-1-first error.
- */
-export function applyScenarioBoardStep(
-  system: ApplySystem,
-  input: ScenarioScriptApplyInput,
-  position: number,
-): ScenarioScriptApplyResult {
-  const refused = refuseBlockedOrEmpty(input.plan)
-  if (refused) return { ok: false, targetSlideIds: [], error: refused }
-  if (!Number.isInteger(position) || position < 1 || position > input.plan.slides.length) {
-    return {
-      ok: false,
-      targetSlideIds: [],
-      error: `No step ${position} in this draft — nothing executed.`,
-    }
-  }
-  if (input.existingSlides.length < position) {
-    return {
-      ok: false,
-      targetSlideIds: [],
-      error: `Step 1 has not been applied for step ${position} — apply prompter text first. Nothing executed.`,
-    }
-  }
-  const { commands, targetSlideIds } = buildScenarioBoardStepCommands(input, position)
   const executed = executeTransaction(system, commands)
   if (!executed.ok) return { ok: false, targetSlideIds: [], error: executed.error }
   return { ok: true, targetSlideIds, historyEntryId: executed.historyEntryId }

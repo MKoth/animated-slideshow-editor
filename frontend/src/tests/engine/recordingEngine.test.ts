@@ -18,8 +18,13 @@ import {
 } from '../../engine/prompter'
 import { getRecordingErrorInfo } from '../../audio/recording'
 
-function createEngine() { return createEngineInternal() }
-function dispatchOk(dispatcher: CommandDispatcher, cmd: Parameters<CommandDispatcher['dispatch']>[0]) {
+function createEngine() {
+  return createEngineInternal()
+}
+function dispatchOk(
+  dispatcher: CommandDispatcher,
+  cmd: Parameters<CommandDispatcher['dispatch']>[0],
+) {
   const r = dispatcher.dispatch(cmd)
   expect(r.ok).toBe(true)
   return r
@@ -36,9 +41,17 @@ describe('Spec 15.08 recording helpers', () => {
 
   it('getPrompterMismatchThreshold default and configurable', () => {
     expect(getPrompterMismatchThreshold({})).toEqual({ absolute: 0.3, relative: 0.05 })
-    expect(getPrompterMismatchThreshold({ prompter: { mismatchThreshold: { absolute: 0.5, relative: 0.1 } } })).toEqual({ absolute: 0.5, relative: 0.1 })
+    expect(
+      getPrompterMismatchThreshold({
+        prompter: { mismatchThreshold: { absolute: 0.5, relative: 0.1 } },
+      }),
+    ).toEqual({ absolute: 0.5, relative: 0.1 })
     // invalid falls back to default
-    expect(getPrompterMismatchThreshold({ prompter: { mismatchThreshold: { absolute: -1, relative: 'bad' as unknown as number } } })).toEqual({ absolute: 0.3, relative: 0.05 })
+    expect(
+      getPrompterMismatchThreshold({
+        prompter: { mismatchThreshold: { absolute: -1, relative: 'bad' as unknown as number } },
+      }),
+    ).toEqual({ absolute: 0.3, relative: 0.05 })
   })
 
   it('mismatch threshold max(0.3s, 5% planned) via helpers', () => {
@@ -57,7 +70,9 @@ describe('Spec 15.08 recording helpers', () => {
   it('configurable threshold via settings.prompter.mismatchThreshold', () => {
     const engine = createEngine()
     engine.createProject({ name: 'P' })
-    ;(engine.project as unknown as { settings: Record<string, unknown> }).settings = { prompter: { mismatchThreshold: { absolute: 0.1, relative: 0.2 } } }
+    ;(engine.project as unknown as { settings: Record<string, unknown> }).settings = {
+      prompter: { mismatchThreshold: { absolute: 0.1, relative: 0.2 } },
+    }
     const thr = getPrompterMismatchThreshold(engine.project!.settings)
     expect(thr).toEqual({ absolute: 0.1, relative: 0.2 })
     // planned 1s => max(0.1,0.2)=0.2 => diff 0.15 no, 0.25 yes
@@ -115,7 +130,15 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
     const base64 = btoa('fake-wav-bytes')
     const metadata = { duration: 2.5, sampleRate: 44100, channels: 1, waveformPeaks: [10, 20] }
     // Create asset
-    const assetRes = dispatchOk(dispatcher, new CreateAudioAssetCommand({ name: 'Recording Hello', data: base64, mimeType: 'audio/wav', metadata }))
+    const assetRes = dispatchOk(
+      dispatcher,
+      new CreateAudioAssetCommand({
+        name: 'Recording Hello',
+        data: base64,
+        mimeType: 'audio/wav',
+        metadata,
+      }),
+    )
     if (!assetRes.ok) throw assetRes.error
 
     const assetId = (assetRes.inverse as { assetId: string }).assetId
@@ -125,7 +148,16 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
     expect((asset!.metadata as Record<string, unknown>).duration).toBe(2.5)
     // Create clip at part.startTime
     const partStart = engine.getSlide(slideId).prompter!.parts[0].startTime
-    const clipRes = dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId, trackId: 'voice', timelineStart: partStart, sourceEnd: metadata.duration }))
+    const clipRes = dispatchOk(
+      dispatcher,
+      new CreateAudioClipCommand({
+        slideId,
+        assetId,
+        trackId: 'voice',
+        timelineStart: partStart,
+        sourceEnd: metadata.duration,
+      }),
+    )
     if (!clipRes.ok) throw clipRes.error
 
     const clipId = (clipRes.inverse as { clipId: string }).clipId
@@ -137,7 +169,15 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
     // Set stale first to verify clearing
     const partBefore = engine.getSlide(slideId).prompter!.parts[0]
     partBefore.status = 'stale'
-    dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: clipId, audioAssetId: assetId }))
+    dispatchOk(
+      dispatcher,
+      new SetPrompterPartAudioCommand({
+        slideId,
+        partId,
+        audioClipId: clipId,
+        audioAssetId: assetId,
+      }),
+    )
     const partAfter = engine.getSlide(slideId).prompter!.parts[0]
     expect(partAfter.audioClipId).toBe(clipId)
     expect(partAfter.audioAssetId).toBe(assetId)
@@ -146,28 +186,78 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
 
   it('replace-guard confirm if audio exists legacy retained', () => {
     const base64a = btoa('a')
-    const resA = dispatchOk(dispatcher, new CreateAudioAssetCommand({ name: 'a', data: base64a, mimeType: 'audio/wav', metadata: { duration: 1, sampleRate: 44100, channels: 1 } }))
+    const resA = dispatchOk(
+      dispatcher,
+      new CreateAudioAssetCommand({
+        name: 'a',
+        data: base64a,
+        mimeType: 'audio/wav',
+        metadata: { duration: 1, sampleRate: 44100, channels: 1 },
+      }),
+    )
     if (!resA.ok) throw resA.error
 
     const assetA = (resA.inverse as { assetId: string }).assetId
-    const clipResA = dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId: assetA, trackId: 'voice', timelineStart: 0, sourceEnd: 1 }))
+    const clipResA = dispatchOk(
+      dispatcher,
+      new CreateAudioClipCommand({
+        slideId,
+        assetId: assetA,
+        trackId: 'voice',
+        timelineStart: 0,
+        sourceEnd: 1,
+      }),
+    )
     if (!clipResA.ok) throw clipResA.error
 
     const clipA = (clipResA.inverse as { clipId: string }).clipId
-    dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: clipA, audioAssetId: assetA }))
+    dispatchOk(
+      dispatcher,
+      new SetPrompterPartAudioCommand({
+        slideId,
+        partId,
+        audioClipId: clipA,
+        audioAssetId: assetA,
+      }),
+    )
     // Create second recording — should delete old clip but keep old asset
     const base64b = btoa('b')
-    const resB = dispatchOk(dispatcher, new CreateAudioAssetCommand({ name: 'b', data: base64b, mimeType: 'audio/wav', metadata: { duration: 2, sampleRate: 44100, channels: 1 } }))
+    const resB = dispatchOk(
+      dispatcher,
+      new CreateAudioAssetCommand({
+        name: 'b',
+        data: base64b,
+        mimeType: 'audio/wav',
+        metadata: { duration: 2, sampleRate: 44100, channels: 1 },
+      }),
+    )
     if (!resB.ok) throw resB.error
 
     const assetB = (resB.inverse as { assetId: string }).assetId
     // simulate replace: delete old clip
     dispatchOk(dispatcher, new DeleteAudioClipCommand({ slideId, clipId: clipA }))
-    const clipResB = dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId: assetB, trackId: 'voice', timelineStart: 0, sourceEnd: 2 }))
+    const clipResB = dispatchOk(
+      dispatcher,
+      new CreateAudioClipCommand({
+        slideId,
+        assetId: assetB,
+        trackId: 'voice',
+        timelineStart: 0,
+        sourceEnd: 2,
+      }),
+    )
     if (!clipResB.ok) throw clipResB.error
 
     const clipB = (clipResB.inverse as { clipId: string }).clipId
-    dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: clipB, audioAssetId: assetB }))
+    dispatchOk(
+      dispatcher,
+      new SetPrompterPartAudioCommand({
+        slideId,
+        partId,
+        audioClipId: clipB,
+        audioAssetId: assetB,
+      }),
+    )
     // legacy asset still exists
     expect(engine.getEmbeddedAsset(assetA)).toBeDefined()
     expect(engine.getEmbeddedAsset(assetB)).toBeDefined()
@@ -190,15 +280,41 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
     // Need to reflow to set startTimes: p1 0-2, p2 2-4, p3 4-6
     // Create downstream clips at 3.5 and 5.5
     const base = btoa('x')
-    const ar = dispatchOk(dispatcher, new CreateAudioAssetCommand({ name: 'x', data: base, mimeType: 'audio/wav', metadata: { duration: 1, sampleRate: 44100, channels: 1 } }))
+    const ar = dispatchOk(
+      dispatcher,
+      new CreateAudioAssetCommand({
+        name: 'x',
+        data: base,
+        mimeType: 'audio/wav',
+        metadata: { duration: 1, sampleRate: 44100, channels: 1 },
+      }),
+    )
     if (!ar.ok) throw ar.error
 
     const assetId = (ar.inverse as { assetId: string }).assetId
-    const c1 = dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId, trackId: 'voice', timelineStart: 3.5, sourceEnd: 1 }))
+    const c1 = dispatchOk(
+      dispatcher,
+      new CreateAudioClipCommand({
+        slideId,
+        assetId,
+        trackId: 'voice',
+        timelineStart: 3.5,
+        sourceEnd: 1,
+      }),
+    )
     if (!c1.ok) throw c1.error
 
     const c1Id = (c1.inverse as { clipId: string }).clipId
-    const c2 = dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId, trackId: 'sfx', timelineStart: 5.5, sourceEnd: 1 }))
+    const c2 = dispatchOk(
+      dispatcher,
+      new CreateAudioClipCommand({
+        slideId,
+        assetId,
+        trackId: 'sfx',
+        timelineStart: 5.5,
+        sourceEnd: 1,
+      }),
+    )
     if (!c2.ok) throw c2.error
 
     const c2Id = (c2.inverse as { clipId: string }).clipId
@@ -211,16 +327,42 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
     const metadataLong = { duration: 3.0, sampleRate: 44100, channels: 1 }
     // Speed path
     {
-      const assetRes = dispatchOk(dispatcher, new CreateAudioAssetCommand({ name: 'rec', data: base64, mimeType: 'audio/wav', metadata: metadataLong }))
-    if (!assetRes.ok) throw assetRes.error
+      const assetRes = dispatchOk(
+        dispatcher,
+        new CreateAudioAssetCommand({
+          name: 'rec',
+          data: base64,
+          mimeType: 'audio/wav',
+          metadata: metadataLong,
+        }),
+      )
+      if (!assetRes.ok) throw assetRes.error
 
       const aId = (assetRes.inverse as { assetId: string }).assetId
       const rate = computePlaybackRate(2.0, 3.0)
-      const clipRes = dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId: aId, trackId: 'voice', timelineStart: 0, sourceEnd: 3.0, playbackRate: rate }))
-    if (!clipRes.ok) throw clipRes.error
+      const clipRes = dispatchOk(
+        dispatcher,
+        new CreateAudioClipCommand({
+          slideId,
+          assetId: aId,
+          trackId: 'voice',
+          timelineStart: 0,
+          sourceEnd: 3.0,
+          playbackRate: rate,
+        }),
+      )
+      if (!clipRes.ok) throw clipRes.error
 
       const clipId = (clipRes.inverse as { clipId: string }).clipId
-      dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: clipId, audioAssetId: aId }))
+      dispatchOk(
+        dispatcher,
+        new SetPrompterPartAudioCommand({
+          slideId,
+          partId,
+          audioClipId: clipId,
+          audioAssetId: aId,
+        }),
+      )
       // playbackRate non-destructive, original WAV untouched
       const clip = engine.getSlide(slideId).audio.clips.find((c) => c.id === clipId)!
       expect(clip.playbackRate).toBeCloseTo(3.0 / 2.0)
@@ -230,32 +372,70 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
       expect(engine.getSlide(slideId).prompter!.parts[1].startTime).toBe(2.0)
       // cleanup for next subtest: remove clip/link
       dispatchOk(dispatcher, new DeleteAudioClipCommand({ slideId, clipId }))
-      dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: null, audioAssetId: null }))
+      dispatchOk(
+        dispatcher,
+        new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: null, audioAssetId: null }),
+      )
     }
     // Extend with shift
     {
-      const assetRes = dispatchOk(dispatcher, new CreateAudioAssetCommand({ name: 'rec', data: base64, mimeType: 'audio/wav', metadata: metadataLong }))
-    if (!assetRes.ok) throw assetRes.error
+      const assetRes = dispatchOk(
+        dispatcher,
+        new CreateAudioAssetCommand({
+          name: 'rec',
+          data: base64,
+          mimeType: 'audio/wav',
+          metadata: metadataLong,
+        }),
+      )
+      if (!assetRes.ok) throw assetRes.error
 
       const aId = (assetRes.inverse as { assetId: string }).assetId
-      const clipRes = dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId: aId, trackId: 'voice', timelineStart: 0, sourceEnd: 3.0, playbackRate: 1 }))
-    if (!clipRes.ok) throw clipRes.error
+      const clipRes = dispatchOk(
+        dispatcher,
+        new CreateAudioClipCommand({
+          slideId,
+          assetId: aId,
+          trackId: 'voice',
+          timelineStart: 0,
+          sourceEnd: 3.0,
+          playbackRate: 1,
+        }),
+      )
+      if (!clipRes.ok) throw clipRes.error
 
       const clipId = (clipRes.inverse as { clipId: string }).clipId
-      dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: clipId, audioAssetId: aId }))
+      dispatchOk(
+        dispatcher,
+        new SetPrompterPartAudioCommand({
+          slideId,
+          partId,
+          audioClipId: clipId,
+          audioAssetId: aId,
+        }),
+      )
       // Extend: update part duration to recorded 3.0 with shift true -> downstream shift by +1
       const partBefore = engine.getSlide(slideId).prompter!.parts[0]
       expect(partBefore.duration).toBe(2.0)
       const oldEnd = partBefore.endTime
-      dispatchOk(dispatcher, new UpdatePrompterPartWithShiftCommand({ slideId, partId, duration: 3.0, shiftDownstream: true }))
+      dispatchOk(
+        dispatcher,
+        new UpdatePrompterPartWithShiftCommand({
+          slideId,
+          partId,
+          duration: 3.0,
+          shiftDownstream: true,
+        }),
+      )
       expect(engine.getSlide(slideId).prompter!.parts[0].duration).toBe(3.0)
       expect(engine.getSlide(slideId).prompter!.parts[1].startTime).toBeCloseTo(3.0)
       expect(engine.getSlide(slideId).prompter!.parts[2].startTime).toBeCloseTo(5.0)
-      // clips beyond oldEnd (2.0) should shift: c1 at 3.5 -> 4.5, c2 at 5.5 -> 6.5
+      // clips beyond oldEnd (2.0) shift voice-only: c1 (voice) at 3.5 -> 4.5,
+      // c2 (sfx, glued to board visuals) stays at 5.5.
       const afterC1 = engine.getSlide(slideId).audio.clips.find((c) => c.id === c1Id)!
       const afterC2 = engine.getSlide(slideId).audio.clips.find((c) => c.id === c2Id)!
       expect(afterC1.timelineStart).toBeCloseTo(4.5)
-      expect(afterC2.timelineStart).toBeCloseTo(6.5)
+      expect(afterC2.timelineStart).toBeCloseTo(5.5)
       void oldEnd
       // revert shift for next test: shift back without shift (reflow)
       // For simplicity reset engine
@@ -271,11 +451,28 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
     engine.createPrompterPart(slideId, { id: 'p1', text: 'First', duration: 2.0 })
     engine.createPrompterPart(slideId, { id: 'p2', text: 'Second', duration: 2.0 })
     engine.createPrompterPart(slideId, { id: 'p3', text: 'Third', duration: 2.0 })
-    const a2 = dispatchOk(dispatcher, new CreateAudioAssetCommand({ name: 'x', data: base, mimeType: 'audio/wav', metadata: { duration: 1, sampleRate: 44100, channels: 1 } }))
+    const a2 = dispatchOk(
+      dispatcher,
+      new CreateAudioAssetCommand({
+        name: 'x',
+        data: base,
+        mimeType: 'audio/wav',
+        metadata: { duration: 1, sampleRate: 44100, channels: 1 },
+      }),
+    )
     if (!a2.ok) throw a2.error
 
     const assetId2 = (a2.inverse as { assetId: string }).assetId
-    const cc1 = dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId: assetId2, trackId: 'voice', timelineStart: 3.5, sourceEnd: 1 }))
+    const cc1 = dispatchOk(
+      dispatcher,
+      new CreateAudioClipCommand({
+        slideId,
+        assetId: assetId2,
+        trackId: 'voice',
+        timelineStart: 3.5,
+        sourceEnd: 1,
+      }),
+    )
     if (!cc1.ok) throw cc1.error
 
     const cc1Id = (cc1.inverse as { clipId: string }).clipId
@@ -283,33 +480,95 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
     expect(getMismatchKind(1.0, 2.0, thr)).toBe('shorter')
     // Slow down (speed) with rate
     {
-      const assetRes = dispatchOk(dispatcher, new CreateAudioAssetCommand({ name: 'rec', data: base64, mimeType: 'audio/wav', metadata: { duration: 1.0, sampleRate: 44100, channels: 1 } }))
-    if (!assetRes.ok) throw assetRes.error
+      const assetRes = dispatchOk(
+        dispatcher,
+        new CreateAudioAssetCommand({
+          name: 'rec',
+          data: base64,
+          mimeType: 'audio/wav',
+          metadata: { duration: 1.0, sampleRate: 44100, channels: 1 },
+        }),
+      )
+      if (!assetRes.ok) throw assetRes.error
 
       const aId = (assetRes.inverse as { assetId: string }).assetId
       const rate = computePlaybackRate(2.0, 1.0) // 0.5
-      const clipRes = dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId: aId, trackId: 'voice', timelineStart: 0, sourceEnd: 1.0, playbackRate: rate }))
-    if (!clipRes.ok) throw clipRes.error
+      const clipRes = dispatchOk(
+        dispatcher,
+        new CreateAudioClipCommand({
+          slideId,
+          assetId: aId,
+          trackId: 'voice',
+          timelineStart: 0,
+          sourceEnd: 1.0,
+          playbackRate: rate,
+        }),
+      )
+      if (!clipRes.ok) throw clipRes.error
 
       const clipId = (clipRes.inverse as { clipId: string }).clipId
-      dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: clipId, audioAssetId: aId }))
+      dispatchOk(
+        dispatcher,
+        new SetPrompterPartAudioCommand({
+          slideId,
+          partId,
+          audioClipId: clipId,
+          audioAssetId: aId,
+        }),
+      )
       const clip = engine.getSlide(slideId).audio.clips.find((c) => c.id === clipId)!
       expect(clip.playbackRate).toBeCloseTo(0.5)
       dispatchOk(dispatcher, new DeleteAudioClipCommand({ slideId, clipId }))
-      dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: null, audioAssetId: null }))
+      dispatchOk(
+        dispatcher,
+        new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: null, audioAssetId: null }),
+      )
     }
     // Keep shorter with shift (shrink)
     {
-      const assetRes = dispatchOk(dispatcher, new CreateAudioAssetCommand({ name: 'rec', data: base64, mimeType: 'audio/wav', metadata: { duration: 1.0, sampleRate: 44100, channels: 1 } }))
-    if (!assetRes.ok) throw assetRes.error
+      const assetRes = dispatchOk(
+        dispatcher,
+        new CreateAudioAssetCommand({
+          name: 'rec',
+          data: base64,
+          mimeType: 'audio/wav',
+          metadata: { duration: 1.0, sampleRate: 44100, channels: 1 },
+        }),
+      )
+      if (!assetRes.ok) throw assetRes.error
 
       const aId = (assetRes.inverse as { assetId: string }).assetId
-      const clipRes = dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId: aId, trackId: 'voice', timelineStart: 0, sourceEnd: 1.0 }))
-    if (!clipRes.ok) throw clipRes.error
+      const clipRes = dispatchOk(
+        dispatcher,
+        new CreateAudioClipCommand({
+          slideId,
+          assetId: aId,
+          trackId: 'voice',
+          timelineStart: 0,
+          sourceEnd: 1.0,
+        }),
+      )
+      if (!clipRes.ok) throw clipRes.error
 
       const clipId = (clipRes.inverse as { clipId: string }).clipId
-      dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: clipId, audioAssetId: aId }))
-      dispatchOk(dispatcher, new UpdatePrompterPartWithShiftCommand({ slideId, partId, duration: 1.0, shiftDownstream: true }))
+      dispatchOk(
+        dispatcher,
+        new SetPrompterPartAudioCommand({
+          slideId,
+          partId,
+          audioClipId: clipId,
+          audioAssetId: aId,
+        }),
+      )
+      dispatchOk(
+        dispatcher,
+        new UpdatePrompterPartWithShiftCommand({
+          slideId,
+          partId,
+          duration: 1.0,
+          shiftDownstream: true,
+        }),
+      )
       expect(engine.getSlide(slideId).prompter!.parts[0].duration).toBe(1.0)
       expect(engine.getSlide(slideId).prompter!.parts[1].startTime).toBeCloseTo(1.0)
       expect(engine.getSlide(slideId).prompter!.parts[2].startTime).toBeCloseTo(3.0)
@@ -327,21 +586,71 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
       slideId = s.id
       engine.createPrompterPart(slideId, { id: 'p1', text: 'First', duration: 2.0 })
       engine.createPrompterPart(slideId, { id: 'p2', text: 'Second', duration: 2.0 })
-      const aX = dispatchOk(dispatcher, new CreateAudioAssetCommand({ name: 'x', data: base, mimeType: 'audio/wav', metadata: { duration: 1, sampleRate: 44100, channels: 1 } }))
-    if (!aX.ok) throw aX.error
+      const aX = dispatchOk(
+        dispatcher,
+        new CreateAudioAssetCommand({
+          name: 'x',
+          data: base,
+          mimeType: 'audio/wav',
+          metadata: { duration: 1, sampleRate: 44100, channels: 1 },
+        }),
+      )
+      if (!aX.ok) throw aX.error
 
       const aXid = (aX.inverse as { assetId: string }).assetId
-      dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId: aXid, trackId: 'voice', timelineStart: 3.5, sourceEnd: 1 }))
-      const assetRes = dispatchOk(dispatcher, new CreateAudioAssetCommand({ name: 'rec', data: base64, mimeType: 'audio/wav', metadata: { duration: 1.0, sampleRate: 44100, channels: 1 } }))
-    if (!assetRes.ok) throw assetRes.error
+      dispatchOk(
+        dispatcher,
+        new CreateAudioClipCommand({
+          slideId,
+          assetId: aXid,
+          trackId: 'voice',
+          timelineStart: 3.5,
+          sourceEnd: 1,
+        }),
+      )
+      const assetRes = dispatchOk(
+        dispatcher,
+        new CreateAudioAssetCommand({
+          name: 'rec',
+          data: base64,
+          mimeType: 'audio/wav',
+          metadata: { duration: 1.0, sampleRate: 44100, channels: 1 },
+        }),
+      )
+      if (!assetRes.ok) throw assetRes.error
 
       const aId = (assetRes.inverse as { assetId: string }).assetId
-      const clipRes = dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId: aId, trackId: 'voice', timelineStart: 0, sourceEnd: 1.0 }))
-    if (!clipRes.ok) throw clipRes.error
+      const clipRes = dispatchOk(
+        dispatcher,
+        new CreateAudioClipCommand({
+          slideId,
+          assetId: aId,
+          trackId: 'voice',
+          timelineStart: 0,
+          sourceEnd: 1.0,
+        }),
+      )
+      if (!clipRes.ok) throw clipRes.error
 
       const clipId = (clipRes.inverse as { clipId: string }).clipId
-      dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId: 'p1', audioClipId: clipId, audioAssetId: aId }))
-      dispatchOk(dispatcher, new UpdatePrompterPartWithShiftCommand({ slideId, partId: 'p1', duration: 1.0, shiftDownstream: false }))
+      dispatchOk(
+        dispatcher,
+        new SetPrompterPartAudioCommand({
+          slideId,
+          partId: 'p1',
+          audioClipId: clipId,
+          audioAssetId: aId,
+        }),
+      )
+      dispatchOk(
+        dispatcher,
+        new UpdatePrompterPartWithShiftCommand({
+          slideId,
+          partId: 'p1',
+          duration: 1.0,
+          shiftDownstream: false,
+        }),
+      )
       // without shift, free placement: gap preserved (p2 stays at 2), clips not moved
       expect(engine.getSlide(slideId).prompter!.parts[1].startTime).toBe(2.0)
       const clipAfter = engine.getSlide(slideId).audio.clips.find((c) => c.timelineStart === 3.5)
@@ -363,14 +672,30 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
     const slide = engine2.createSlide('S1')
     engine2.createPrompterPart(slide.id, { id: 'p1', text: 'Hello', duration: 2.0 })
     const base64 = btoa('orig-wav')
-    const res = disp.dispatch(new CreateAudioAssetCommand({ name: 'orig', data: base64, mimeType: 'audio/wav', metadata: { duration: 3.0, sampleRate: 44100, channels: 1 } }))
+    const res = disp.dispatch(
+      new CreateAudioAssetCommand({
+        name: 'orig',
+        data: base64,
+        mimeType: 'audio/wav',
+        metadata: { duration: 3.0, sampleRate: 44100, channels: 1 },
+      }),
+    )
     expect(res.ok).toBe(true)
     if (!res.ok) throw res.error
 
     const assetId = (res.inverse as { assetId: string }).assetId
     const origData = engine2.getEmbeddedAsset(assetId)!.data
     const rate = computePlaybackRate(2.0, 3.0)
-    const clipRes = disp.dispatch(new CreateAudioClipCommand({ slideId: slide.id, assetId, trackId: 'voice', timelineStart: 0, sourceEnd: 3.0, playbackRate: rate }))
+    const clipRes = disp.dispatch(
+      new CreateAudioClipCommand({
+        slideId: slide.id,
+        assetId,
+        trackId: 'voice',
+        timelineStart: 0,
+        sourceEnd: 3.0,
+        playbackRate: rate,
+      }),
+    )
     expect(clipRes.ok).toBe(true)
     // original bytes untouched
     expect(engine2.getEmbeddedAsset(assetId)!.data).toBe(origData)

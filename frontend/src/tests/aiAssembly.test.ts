@@ -139,6 +139,62 @@ describe('mergeSlidesIntoLesson (pure)', () => {
       mergeSlidesIntoLesson({ target, slides: [...target.slides], targetIndex: 99 }),
     ).toThrow(/targetIndex/)
   })
+
+  it('remaps animation-script footprint effect/sound ids alongside live records', () => {
+    const target = makeLesson('Middle', ['M1'])
+    const incoming = makeLesson('Intro', ['Step'])
+    const src = incoming.slides[0] as unknown as Record<string, unknown>
+    src.audio = {
+      clips: [
+        {
+          id: 'script-effect-clip:old-slide:0:0',
+          assetId: 'a1',
+          trackId: 'sfx',
+          timelineStart: 5,
+          sourceStart: 0,
+          sourceEnd: 0.5,
+          volume: 1,
+          muted: false,
+          playbackRate: 1,
+        },
+      ],
+    }
+    src.effects = [{ id: 'script-effect:old-slide:0' }]
+    src.animationScript = {
+      source: 'script "D" from 0',
+      lastCompiled: {
+        from: 0,
+        to: 1,
+        tracks: [],
+        placementParents: [],
+        instanceNodes: [],
+        entryVersions: {},
+        createdNodes: [],
+        createdDataSources: [],
+        effectIds: ['script-effect:old-slide:0'],
+        audioClipIds: ['script-effect-clip:old-slide:0:0'],
+      },
+    }
+    const merged = mergeSlidesIntoLesson({
+      target,
+      slides: [...incoming.slides] as SlideJSON[],
+      targetIndex: 1,
+    })
+    const mslide = merged.lesson.slides[1] as unknown as Record<string, unknown>
+    const mclipId = (mslide.audio as { clips: { id: string }[] }).clips[0]!.id
+    const meffectId = (mslide.effects as { id: string }[])[0]!.id
+    expect(mclipId).not.toBe('script-effect-clip:old-slide:0:0')
+    expect(meffectId).not.toBe('script-effect:old-slide:0')
+    // Footprint travels with the live records so a later re-run replaces
+    // the merged sounds/visuals instead of orphaning or duplicating them.
+    const fp = (
+      mslide.animationScript as {
+        lastCompiled: { audioClipIds: string[]; effectIds: string[] }
+      }
+    ).lastCompiled
+    expect(fp.audioClipIds).toEqual([mclipId])
+    expect(fp.effectIds).toEqual([meffectId])
+  })
 })
 
 describe('duplicateToAssemblyTarget and assembleLesson', () => {

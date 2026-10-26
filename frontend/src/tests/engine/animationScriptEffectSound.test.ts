@@ -257,6 +257,72 @@ describe('Animation Script effect sounds', () => {
     expect(system.engine.getSlide(slide.id).effects).toEqual(firstEffects)
   })
 
+  it('re-run deletes orphan effect-sound clips outside the footprint and preserves precious audio', () => {
+    const { system, slide, measure, makeAudio } = setup()
+    const assetId = makeAudio('Scratch', 0.5)
+    const source =
+      'script "Demo" from 0\nbind target = node("First")\nbind sfx = audio("Scratch")\nreveal(target, over: 1, visual: none, sound: sfx)'
+    system.dispatcher.dispatch(new SetSlideAnimationScriptCommand({ slideId: slide.id, source }))
+    const dispatchRun = () =>
+      runAnimationScript(
+        system.engine,
+        (command) => system.dispatcher.dispatch(command),
+        slide.id,
+        source,
+        { measure },
+      )
+    expect(dispatchRun().ran).toBe(true)
+    // Stale survivors a re-run must heal: an orphan effect-sound clip with
+    // the reserved prefix (pre-footprint lesson, lost footprint, or a
+    // timing-shifted survivor) displaced to the sentence end — plus precious
+    // voice, manual SFX and music clips that must survive untouched.
+    const orphan = system.dispatcher.dispatch(
+      new CreateAudioClipCommand({
+        id: 'script-effect-clip:stale-scope:7:0',
+        slideId: slide.id,
+        assetId,
+        trackId: 'sfx',
+        timelineStart: 99,
+        sourceEnd: 0.5,
+      }),
+    )
+    expect(orphan.ok).toBe(true)
+    for (const [trackId, timelineStart] of [
+      ['voice', 0],
+      ['sfx', 9],
+      ['music', 4],
+    ] as const) {
+      const res = system.dispatcher.dispatch(
+        new CreateAudioClipCommand({
+          slideId: slide.id,
+          assetId,
+          trackId,
+          timelineStart,
+          sourceEnd: 0.5,
+        }),
+      )
+      expect(res.ok).toBe(true)
+    }
+    expect(dispatchRun().ran).toBe(true)
+    const clips = system.engine.getSlide(slide.id).audio.clips
+    // Exactly the fresh footprint set, re-placed at the visual times; the
+    // displaced orphan is gone, not duplicated.
+    expect(
+      clips
+        .filter((c) => c.id.startsWith('script-effect-clip:'))
+        .map((c) => c.timelineStart)
+        .sort((a, b) => a - b),
+    ).toEqual([0, 0.5])
+    expect(clips.some((c) => c.timelineStart === 99)).toBe(false)
+    // Precious lanes untouched.
+    expect(clips.filter((c) => c.trackId === 'voice').map((c) => c.timelineStart)).toEqual([0])
+    expect(clips.filter((c) => c.trackId === 'music').map((c) => c.timelineStart)).toEqual([4])
+    const manualSfx = clips.filter(
+      (c) => c.trackId === 'sfx' && !c.id.startsWith('script-effect-clip:'),
+    )
+    expect(manualSfx.map((c) => c.timelineStart)).toEqual([9])
+  })
+
   it('persists generated placement and trimming through save/load', () => {
     const { system, slide, measure, makeAudio } = setup()
     makeAudio('Scratch', 0.4)

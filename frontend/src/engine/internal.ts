@@ -470,7 +470,11 @@ export class Engine {
     // Capture downstream parts and clips before mutation to preserve gaps (shift, not reflow)
     const downstreamParts = previous.slice(insertIndex)
     const shiftedClips: { id: string; oldTimelineStart: number }[] = []
+    // Voice-only: SFX/music lanes are anchored to board visuals (absolute
+    // slide time), not prompter windows — shifting them here would split
+    // effect sounds away from their visuals on every TTS trim.
     for (const clip of slide.audio.clips) {
+      if (clip.trackId !== 'voice') continue
       if (clip.timelineStart >= insertionTime - 1e-6) {
         shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
       }
@@ -548,7 +552,9 @@ export class Engine {
         .reduce((sum, p) => sum + p.duration, 0)
       const totalDuration = newPartsRaw.reduce((sum, p) => sum + p.duration, 0)
       const shiftedClips: { id: string; oldTimelineStart: number }[] = []
+      // Voice-only (see createPrompterPart): SFX/music stay glued to board visuals.
       for (const clip of slide.audio.clips) {
+        if (clip.trackId !== 'voice') continue
         if (clip.timelineStart >= insertionTime - 1e-6) {
           shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
         }
@@ -1045,6 +1051,8 @@ export class Engine {
             })
           }
           for (const clip of slide.audio.clips) {
+            // Voice-only: effect SFX stay glued to their board visuals.
+            if (clip.trackId !== 'voice') continue
             if (clip.timelineStart > oldEndTime - 1e-6) {
               shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
             }
@@ -1081,6 +1089,8 @@ export class Engine {
           })
         }
         for (const clip of slide.audio.clips) {
+          // Voice-only: effect SFX stay glued to their board visuals.
+          if (clip.trackId !== 'voice') continue
           if (clip.timelineStart > oldEndTime - 1e-6) {
             shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
           }
@@ -1164,9 +1174,11 @@ export class Engine {
       shiftedParts.push({ id: p.id, oldStartTime: p.startTime, oldEndTime: p.endTime })
     }
     // Capture downstream clips before mutation (excluding those to be deleted)
+    // Voice-only: SFX/music stay glued to board visuals on part deletion.
     const shiftedClips: { id: string; oldTimelineStart: number }[] = []
     for (const clip of slide.audio.clips) {
       if (clipIdsToDelete.has(clip.id)) continue
+      if (clip.trackId !== 'voice') continue
       if (clip.timelineStart > deletedEnd - 1e-6) {
         shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
       }

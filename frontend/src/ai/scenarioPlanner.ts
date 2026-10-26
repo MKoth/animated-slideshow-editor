@@ -67,7 +67,7 @@ import {
   parseScenarioMarkdown,
   splitTableCells,
 } from '../engine/scenarioMarkdown'
-import type { ParsedScenario } from '../engine/scenarioMarkdown'
+import type { ParsedScenario, ScenarioStep } from '../engine/scenarioMarkdown'
 import { markNameForPart } from './board'
 import { estimatePartDuration } from './narration'
 import { DEFAULT_PROMPTER_SPLIT_CHARS } from '../engine/prompter'
@@ -367,15 +367,14 @@ function planFromParsed(
       }
       return slug
     }
-    const built = buildBoardSource({
+    const built = relayoutBoardSource({
       slideName,
-      prompterDuration,
       step,
       position,
       basePromptBlockId,
       subBlockIds,
       subMarkNames,
-      partEstimates: estimates,
+      partDurations: estimates,
       assetNameForPlaced,
       stepIndex: step.index,
       html: options.html,
@@ -479,6 +478,44 @@ function tableChunksOf(step: {
   if (fromBlocks.length > 0) return fromBlocks
   if (step.table !== undefined) return [step.table]
   return []
+}
+
+export interface BoardRelayoutInput {
+  readonly slideName: string
+  readonly step: ScenarioStep
+  readonly position: number
+  readonly basePromptBlockId: string
+  readonly subBlockIds: readonly string[]
+  readonly subMarkNames: readonly string[]
+  /**
+   * Per-block voice windows. Estimates at plan time; live actuals (TTS
+   * lengths) at board re-apply — the layout is a pure function of these
+   * windows, so re-running it reconstructs the choreography for the
+   * situation as it is now.
+   */
+  readonly partDurations: readonly number[]
+  readonly assetNameForPlaced: (slug: string) => string
+  readonly stepIndex: number
+  readonly html?: string
+}
+
+/**
+ * Rebuild one slide's board source for explicit per-block durations.
+ * Plan-time calls pass estimates (identical output to the draft); board
+ * re-apply passes the live prompter part durations so marks, effect
+ * anchors and the slide total follow the actual voice, not the stale
+ * estimate. Pure: reads only the input, never the engine.
+ */
+export function relayoutBoardSource(input: BoardRelayoutInput): {
+  source: string
+  fractions: readonly PlannerFraction[]
+  boardCost: number
+  totalDuration: number
+  padded: boolean
+  partDurations: readonly number[]
+} {
+  const prompterDuration = input.partDurations.reduce((sum, value) => sum + value, 0)
+  return buildBoardSource({ ...input, prompterDuration, partEstimates: input.partDurations })
 }
 
 function buildBoardSource(input: {

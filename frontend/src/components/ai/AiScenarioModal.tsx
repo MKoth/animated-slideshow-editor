@@ -21,16 +21,22 @@ import {
   buildScenarioPortablePack,
   encodeScenarioPortableZip,
 } from '../../engine/scenarioPortableZip'
-import { parseScenarioMarkdown } from '../../engine/scenarioMarkdown'
+import { normalizeAssetKey, parseScenarioMarkdown } from '../../engine/scenarioMarkdown'
 import { planScenarioDraft } from '../../ai/scenarioPlanner'
 import { resolveForeignWords } from '../../ai/scenarioPromptSplit'
 import {
-  applyScenarioBoardStep,
   applyScenarioPrompter,
   snapshotScenarioScriptSlides,
   type ScenarioScriptApplyDispatcher,
 } from '../../ai/scenarioScriptApply'
+import { applyBoardReapply, planBoardReapply } from '../../ai/boardReapply'
+import { runAnimationScript, runAnimationScriptAsync } from '../../engine/animationScriptRun'
+import type { DispatchCommand } from '../../engine/commands/dispatcher'
+import { captureAssetSnapshot, captureAudioSnapshot } from '../../app/assetSnapshot'
+import { captureMaterialSnapshot, captureShaderSnapshot } from '../../app/definitionSnapshot'
+import { ensureMaterialLibrariesLoaded } from '../../app/materialLibraries'
 import { runScenarioTtsBatch } from '../../ai/scenarioTtsBatch'
+import { collectGlobalAudioForRepair, repairSlideEffectSounds } from '../../ai/effectSoundRepair'
 import { useTtsForeignVoiceStore } from '../../stores/ttsForeignVoiceStore'
 import {
   buildScriptWorkflowFingerprint,
@@ -46,8 +52,10 @@ import { getPrompterSecondsPerCharacter, getPrompterSplitChars } from '../../eng
 import { imageBytesToDataUrl, resolveScenarioImageBytes } from '../../engine/scenarioImageBytes'
 import { AiScenarioDocComments } from './AiScenarioDocComments'
 import type { ScenarioDocComment } from '../../engine/scenarioDocComments'
+import type { EnginePublic } from '../../engine/engine'
 import { useAiStore } from '../../stores/aiStore'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
+import { measuredNodeSize } from '../../pixi/renderer/nodeMeasurement'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { AiScenarioChecklist } from './AiScenarioChecklist'
 import { AiScenarioHistory } from './AiScenarioHistory'
@@ -98,6 +106,39 @@ interface AiScenarioModalProps {
   projectId: string
   conversationId: string | null
   context?: unknown
+}
+
+/**
+ * Re-run a rebuilt board source: the fast sync run first (everything is
+ * embedded on a re-apply), falling back to the async run with library
+ * capture when meshes or unembedded assets need preparation. Returns loud
+ * failure instead of a silent no-op.
+ */
+async function runRebuiltBoardSource(
+  engineValue: EnginePublic,
+  dispatchRun: DispatchCommand,
+  slideId: string,
+  source: string,
+): Promise<{ ran: boolean; error: string | null }> {
+  const globals = collectGlobalAudioForRepair(useAssetLibraryStore.getState().allDefinitions)
+  const syncResult = runAnimationScript(engineValue, dispatchRun, slideId, source, {
+    measure: measuredNodeSize,
+    globalAudioAssets: globals,
+  })
+  if (syncResult.ran) return { ran: true, error: null }
+  await ensureMaterialLibrariesLoaded()
+  const asyncResult = await runAnimationScriptAsync(engineValue, dispatchRun, slideId, source, {
+    measure: measuredNodeSize,
+    globalAudioAssets: globals,
+    captureAsset: (definitionId) => captureAssetSnapshot(engineValue, definitionId),
+    captureAudio: (assetId) => captureAudioSnapshot(engineValue, assetId),
+    captureMaterial: (definitionId) => {
+      if (!captureMaterialSnapshot(engineValue, definitionId)) return false
+      const shaderId = engineValue.getMaterialDefinition(definitionId).shaderId
+      return shaderId === null || captureShaderSnapshot(engineValue, shaderId)
+    },
+  })
+  return { ran: asyncResult.ran, error: asyncResult.error }
 }
 
 /**
@@ -175,6 +216,10 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const [ttsErrorByStep, setTtsErrorByStep] = useState<Record<number, string | null>>({})
   const [boardApplyingPosition, setBoardApplyingPosition] = useState<number | null>(null)
   const [boardErrorByStep, setBoardErrorByStep] = useState<Record<number, string | null>>({})
+  const [soundRepairPosition, setSoundRepairPosition] = useState<number | null>(null)
+  const [soundErrorByStep, setSoundErrorByStep] = useState<Record<number, string | null>>({})
+  const [soundNoteByStep, setSoundNoteByStep] = useState<Record<number, string | null>>({})
+  const [boardNoteByStep, setBoardNoteByStep] = useState<Record<number, string | null>>({})
 
   // Legacy Action Scenario data stays loadable for the in-modal editor and
   // Stage B reconciliation (which still reads the accepted scenario row).
@@ -658,7 +703,10 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     ? { acceptedVersionId: activeWorkflow.acceptedVersionId, plan: activeWorkflow.plan }
     : null
   const scriptStepsBusy =
-    scriptPrompterApplying || ttsApplyingPosition !== null || boardApplyingPosition !== null
+    scriptPrompterApplying ||
+    ttsApplyingPosition !== null ||
+    boardApplyingPosition !== null ||
+    soundRepairPosition !== null
 
   const handleGenerateScript = () => {
     const engineValue = engine
@@ -667,6 +715,9 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     setTtsErrorByStep({})
     setTtsProgressByStep({})
     setBoardErrorByStep({})
+    setSoundErrorByStep({})
+    setSoundNoteByStep({})
+    setBoardNoteByStep({})
     const secondsPerCharacter = getPrompterSecondsPerCharacter(engineValue.project.settings)
     const splitChars = getPrompterSplitChars(engineValue.project.settings)
     // Foreign vocabulary for block splitting comes from the stored chalk
@@ -727,6 +778,8 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     setScriptPrompterError(null)
     setTtsErrorByStep({})
     setBoardErrorByStep({})
+    setSoundErrorByStep({})
+    setBoardNoteByStep({})
     if (useAiStore.getState().scenarioTab === 'script') {
       store.setScenarioTab('doc')
     }
@@ -902,29 +955,197 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
       return
     }
     const { engineValue, applyDispatcher } = system
+    const project = engineValue.project!
+    const planSlide = scriptPreview.plan.slides[position - 1]
+    if (!planSlide) {
+      const message = `No step ${position} in this draft — nothing executed.`
+      setBoardErrorByStep((prev) => ({ ...prev, [position]: message }))
+      useNotificationStore.getState().notify(message)
+      return
+    }
+    const slide = project.slides[position - 1]
+    if (!slide) {
+      const message = `Step 1 has not been applied for step ${position} — apply prompter text first.`
+      setBoardErrorByStep((prev) => ({ ...prev, [position]: message }))
+      useNotificationStore.getState().notify(message)
+      return
+    }
+    const liveParts = slide.prompter?.parts ?? []
+    if (liveParts.length === 0) {
+      const message = `Step ${position} has no prompter parts — apply prompter text first.`
+      setBoardErrorByStep((prev) => ({ ...prev, [position]: message }))
+      useNotificationStore.getState().notify(message)
+      return
+    }
+    if (acceptedContent === undefined) {
+      const message = 'No accepted scenario content — re-generate script first.'
+      setBoardErrorByStep((prev) => ({ ...prev, [position]: message }))
+      useNotificationStore.getState().notify(message)
+      return
+    }
     setBoardApplyingPosition(position)
     setBoardErrorByStep((prev) => ({ ...prev, [position]: null }))
+    setBoardNoteByStep((prev) => ({ ...prev, [position]: null }))
+    void (async () => {
+      try {
+        // Reconstruct from the situation as it is NOW: re-parse the accepted
+        // doc for this step's actions and re-lay the board onto the live
+        // prompter windows (actual TTS lengths), not the stale estimates.
+        const parsedStep = parseScenarioMarkdown(acceptedContent).steps.find(
+          (entry) => entry.index === planSlide.stepIndex,
+        )
+        if (!parsedStep) {
+          const message = `Step ${planSlide.stepIndex} changed since Generate — re-generate script first.`
+          setBoardErrorByStep((prev) => ({ ...prev, [position]: message }))
+          useNotificationStore.getState().notify(message)
+          return
+        }
+        const scenarioSection = engineValue.project!.scenario
+        const assetNames: Record<string, string> = {}
+        for (const embedded of engineValue.embeddedAssets ?? []) {
+          if (assetNames[embedded.id] === undefined) assetNames[embedded.id] = embedded.name
+        }
+        for (const def of [...definitions, ...allDefinitions]) {
+          if (assetNames[def.id] === undefined) assetNames[def.id] = def.name
+        }
+        const assetNameForPlaced = (slug: string): string => {
+          const boundId = scenarioSection?.bindings?.[normalizeAssetKey(slug)]
+          if (boundId !== undefined) {
+            const name = assetNames[boundId]
+            if (name !== undefined && name !== '') return name
+          }
+          return slug
+        }
+        const previousLength = slide.duration
+        const planned = planBoardReapply({
+          planSlide,
+          step: parsedStep,
+          liveParts: liveParts.map((part) => ({
+            duration: part.duration,
+            startTime: part.startTime,
+            endTime: part.endTime,
+          })),
+          assetNameForPlaced,
+          ...(scenarioSection?.lastHtml !== undefined ? { html: scenarioSection.lastHtml } : {}),
+        })
+        if (!planned.ok) {
+          setBoardErrorByStep((prev) => ({ ...prev, [position]: planned.error }))
+          useNotificationStore.getState().notify(planned.error)
+          return
+        }
+        const applied = await applyBoardReapply(
+          { dispatcher: applyDispatcher, undoStack: undoStack! },
+          engineValue,
+          slide.id,
+          planned.plan,
+          (id, source) =>
+            runRebuiltBoardSource(
+              engineValue,
+              (command) => applyDispatcher.dispatch(command),
+              id,
+              source,
+            ),
+        )
+        if (!applied.ok) {
+          setBoardErrorByStep((prev) => ({ ...prev, [position]: applied.error }))
+          useNotificationStore.getState().notify(applied.error)
+          return
+        }
+        // Keep the Preview tab truthful: the stored draft now carries the
+        // rebuilt source, fractions and total.
+        useScenarioScriptWorkflowStore.getState().savePreview(projectId, {
+          ...activeWorkflow,
+          plan: {
+            ...activeWorkflow.plan,
+            slides: activeWorkflow.plan.slides.map((entry, index) =>
+              index === position - 1
+                ? {
+                    ...entry,
+                    source: planned.plan.source,
+                    fractions: [...planned.plan.fractions],
+                    duration: planned.plan.slideDuration,
+                    boardCost: planned.plan.boardCost,
+                    padded: planned.plan.padded,
+                  }
+                : entry,
+            ),
+          },
+        })
+        useScenarioScriptWorkflowStore.getState().markBoardDone(projectId, position)
+        const fmt = (value: number) => `${value.toFixed(2)}s`
+        const extras = [
+          ...(planned.plan.padded ? ['board outruns the voice — padded'] : []),
+          ...(planned.plan.gapsCollapsed
+            ? ['prompter gaps are not preserved in board timing']
+            : []),
+        ]
+        const writeNote =
+          `Step ${position}: board rebuilt from live prompts (${fmt(planned.plan.livePromptsEnd)} + 1s tail) — ` +
+          `length ${fmt(previousLength)} → ${fmt(planned.plan.slideDuration)}` +
+          (extras.length > 0 ? ` (${extras.join('; ')})` : '')
+        if (!applied.runRan) {
+          const message =
+            `${writeNote}. Source and length applied, but the re-run failed: ${applied.runError} ` +
+            `Open the Script panel and press Run.`
+          setBoardNoteByStep((prev) => ({ ...prev, [position]: writeNote + '.' }))
+          setBoardErrorByStep((prev) => ({ ...prev, [position]: message }))
+          useNotificationStore.getState().notify(message)
+          return
+        }
+        const done = `${writeNote}, re-run ok. Two undo steps.`
+        setBoardNoteByStep((prev) => ({ ...prev, [position]: done }))
+        useNotificationStore.getState().notify(done)
+      } finally {
+        setBoardApplyingPosition(null)
+      }
+    })()
+  }
+
+  const handleRepairSoundsStep = (position: number) => {
+    if (!scriptPreview || !activeWorkflow || scriptStepsBusy) return
+    const system = getApplySystem()
+    if (!system.ok) {
+      if (system.error !== 'No preview.') {
+        setSoundErrorByStep((prev) => ({ ...prev, [position]: system.error }))
+      }
+      return
+    }
+    const { engineValue, applyDispatcher } = system
+    const project = engineValue.project!
+    const slide = project.slides[position - 1]
+    if (!slide) {
+      const message = `Step 1 has not been applied for step ${position} — apply prompter text first.`
+      setSoundErrorByStep((prev) => ({ ...prev, [position]: message }))
+      useNotificationStore.getState().notify(message)
+      return
+    }
+    setSoundRepairPosition(position)
+    setSoundErrorByStep((prev) => ({ ...prev, [position]: null }))
+    setSoundNoteByStep((prev) => ({ ...prev, [position]: null }))
     try {
-      // Snapshot live at click time: the step targets the Step-1 slide at
-      // this position with its current prompter start/end times.
-      const result = applyScenarioBoardStep(
+      // Repair compiles the slide's live board source: connected effect
+      // sounds are deleted and re-placed at the visual times, everything
+      // else is preserved. A board script that no longer compiles reports
+      // its errors here instead of silently doing nothing.
+      const globals = collectGlobalAudioForRepair(useAssetLibraryStore.getState().allDefinitions)
+      const result = repairSlideEffectSounds(
         { dispatcher: applyDispatcher, undoStack: undoStack! },
-        {
-          plan: scriptPreview.plan,
-          existingSlides: snapshotScenarioScriptSlides(engineValue.project!.slides),
-        },
-        position,
+        engineValue,
+        slide.id,
+        { measure: measuredNodeSize, globalAudioAssets: globals },
       )
       if (!result.ok) {
-        setBoardErrorByStep((prev) => ({ ...prev, [position]: result.error ?? 'Apply failed.' }))
-        useNotificationStore.getState().notify(result.error ?? 'Apply failed.')
+        setSoundErrorByStep((prev) => ({ ...prev, [position]: result.error }))
+        useNotificationStore.getState().notify(result.error)
         return
       }
-      useScenarioScriptWorkflowStore.getState().markBoardDone(projectId, position)
-      const done = `Applied board script for step ${position} — one undo step.`
+      const done = result.noop
+        ? `Step ${position}: effect sounds already in place — nothing to do.`
+        : `Step ${position}: repaired effect sounds (removed ${result.deleted}, placed ${result.created}) — voice and manual audio untouched, one undo step.`
+      setSoundNoteByStep((prev) => ({ ...prev, [position]: done }))
       useNotificationStore.getState().notify(done)
     } finally {
-      setBoardApplyingPosition(null)
+      setSoundRepairPosition(null)
     }
   }
 
@@ -1173,9 +1394,14 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                         ? 'done'
                         : 'idle',
                   boardError: boardErrorByStep[slide.position] ?? null,
+                  boardNote: boardNoteByStep[slide.position] ?? null,
+                  soundStatus: soundRepairPosition === slide.position ? 'applying' : 'idle',
+                  soundError: soundErrorByStep[slide.position] ?? null,
+                  soundNote: soundNoteByStep[slide.position] ?? null,
                 }))}
                 onGenerateTtsStep={handleGenerateTtsStep}
                 onApplyBoardStep={handleApplyBoardStep}
+                onRepairSoundsStep={handleRepairSoundsStep}
                 onClose={closeScriptPreview}
               />
             ) : (

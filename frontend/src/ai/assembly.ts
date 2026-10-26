@@ -712,11 +712,18 @@ export function mergeSlidesIntoLesson(input: MergeSlidesInput): MergeSlidesOutpu
         }
       }
     }
-    // Scene effects: fresh effect ids + node-id remap.
+    // Scene effects: fresh effect ids + node-id remap. The old→fresh map
+    // travels into the footprint below so a later re-run replaces the
+    // merged output instead of duplicating it (same for effect sounds).
+    const effectIdMap = new Map<string, string>()
     const effects = copy.effects as Record<string, unknown>[] | undefined
     if (Array.isArray(effects)) {
       for (const effect of effects) {
-        if (typeof effect.id === 'string' && effect.id) effect.id = freshId('scene-effect')
+        if (typeof effect.id === 'string' && effect.id) {
+          const nextEffectId = freshId('scene-effect')
+          effectIdMap.set(effect.id, nextEffectId)
+          effect.id = nextEffectId
+        }
         for (const key of ['scopeNodeIds', 'nodeIds'] as const) {
           const list = effect[key] as unknown
           if (Array.isArray(list)) {
@@ -728,6 +735,30 @@ export function mergeSlidesIntoLesson(input: MergeSlidesInput): MergeSlidesOutpu
         const visual = effect.visual as Record<string, unknown> | undefined
         if (visual && typeof visual.nodeId === 'string') {
           visual.nodeId = tables.node.get(visual.nodeId) ?? visual.nodeId
+        }
+      }
+    }
+    // Effect output ids travel through the same id maps as the live
+    // records: audio clips via the shared audio-clip map, effects via the
+    // map built above. Without this a merged slide's footprint points at
+    // pre-merge ids, so a later re-run can neither delete the merged sounds
+    // (stale reveal/wipe audio survives at its old time) nor replace the
+    // merged visuals (they duplicate). Unmapped ids (hand-deleted clips)
+    // are kept verbatim — the clear path tolerates missing targets.
+    if (animationScript && typeof animationScript === 'object') {
+      const compiled = animationScript.lastCompiled as Record<string, unknown> | undefined
+      if (compiled && typeof compiled === 'object') {
+        const footprintAudioIds = compiled.audioClipIds as unknown
+        if (Array.isArray(footprintAudioIds)) {
+          compiled.audioClipIds = footprintAudioIds.map((entry) =>
+            typeof entry === 'string' ? (audioClipIdMap.get(entry) ?? entry) : entry,
+          )
+        }
+        const footprintEffectIds = compiled.effectIds as unknown
+        if (Array.isArray(footprintEffectIds)) {
+          compiled.effectIds = footprintEffectIds.map((entry) =>
+            typeof entry === 'string' ? (effectIdMap.get(entry) ?? entry) : entry,
+          )
         }
       }
     }

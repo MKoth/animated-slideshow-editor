@@ -7,6 +7,7 @@ import type {
 } from './animationScriptParser'
 import type { AnimationScriptBoundsRead } from './animationScriptReads'
 import type { PlannedEffectAudioClip } from './animationScriptCompiler'
+import { SCRIPT_EFFECT_CLIP_ID_PREFIX } from './animationScriptCompiler'
 import type { SceneEffect, SweepDirection, WobbleRange } from './sceneEffect'
 import { SWEEP_DIRECTIONS } from './sceneEffect'
 import { sampleAnimationScriptRevealTarget } from './animationScriptRevealTarget'
@@ -389,7 +390,7 @@ export function compileAnimationScriptReveal(
     const remaining = duration - index * sound.duration
     const sourceEnd = context.roundTime(Math.min(sound.duration, remaining))
     return {
-      id: `script-effect-clip:${context.slideScope}:${context.effectIndex}:${index}`,
+      id: `${SCRIPT_EFFECT_CLIP_ID_PREFIX}${context.slideScope}:${context.effectIndex}:${index}`,
       assetId: sound.assetId,
       timelineStart,
       sourceStart: 0,

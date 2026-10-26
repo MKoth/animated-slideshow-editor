@@ -14,6 +14,7 @@ import { CreateAudioClipCommand } from '../engine/commands/createAudioClipComman
 import { DeleteAudioClipCommand } from '../engine/commands/deleteAudioClipCommand'
 import { animationScriptClearCommands } from '../engine/animationScriptClear'
 import { checkAnimationScript } from '../engine/animationScriptCheck'
+import { SCRIPT_EFFECT_CLIP_ID_PREFIX } from '../engine/animationScriptCompiler'
 import { compiledFootprintToJSON } from '../engine/compiledFootprint'
 import { computeProjectFingerprint } from './proposals'
 
@@ -562,6 +563,16 @@ export function applyAnimationBatch(
       ...(previousFootprint?.audioClipIds ?? []),
       ...(compiled.footprint.audioClipIds ?? []),
     ])
+    // Orphan sweep (same contract as the Run path): compiler-reserved
+    // effect-sound clips missing from the fresh footprint are stale output —
+    // delete exactly those so a re-apply heals displaced sounds while
+    // voice/manual/music are preserved.
+    const freshAudioClipIds = new Set(compiled.footprint.audioClipIds ?? [])
+    for (const clip of system.engine.getSlide(slideId).audio.clips) {
+      if (!clip.id.startsWith(SCRIPT_EFFECT_CLIP_ID_PREFIX)) continue
+      if (freshAudioClipIds.has(clip.id)) continue
+      replacedAudioClipIds.add(clip.id)
+    }
     const existingClipIds = new Set(
       system.engine.getSlide(slideId).audio.clips.map((clip) => clip.id),
     )

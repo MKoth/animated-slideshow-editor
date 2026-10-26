@@ -9,6 +9,7 @@ import {
 } from '../../engine/commands/unitePrompterPartsCommand'
 import { UpdatePrompterPartWithShiftCommand } from '../../engine/commands/updatePrompterPartWithShiftCommand'
 import { UpdatePrompterPartCommand } from '../../engine/commands/updatePrompterPartCommand'
+import { CommitTtsCommand } from '../../engine/commands/commitTtsCommand'
 import {
   DEFAULT_PROMPTER_SECONDS_PER_CHARACTER,
   getPrompterSecondsPerCharacter,
@@ -330,6 +331,86 @@ describe('Prompter Authoring 15.02', () => {
     }
   })
 
+  it('prompter trim shifts downstream voice only — SFX/music stay glued to board visuals', () => {
+    engine.createPrompterPart(slideId, { id: 'p1', text: 'First', duration: 2.0 })
+    engine.createPrompterPart(slideId, { id: 'p2', text: 'Second', duration: 2.0 })
+    const voice = engine.createAudioClip(slideId, {
+      assetId: 'a',
+      trackId: 'voice',
+      timelineStart: 3.5,
+      sourceEnd: 1,
+    })
+    const sfx = engine.createAudioClip(slideId, {
+      assetId: 'a',
+      trackId: 'sfx',
+      timelineStart: 2.5,
+      sourceEnd: 1,
+    })
+    const music = engine.createAudioClip(slideId, {
+      assetId: 'a',
+      trackId: 'music',
+      timelineStart: 2.5,
+      sourceEnd: 1,
+    })
+    // Trim path batch TTS takes on duration mismatch: extend p1 with shift.
+    dispatchOk(
+      dispatcher,
+      new UpdatePrompterPartWithShiftCommand({
+        slideId,
+        partId: 'p1',
+        duration: 3.0,
+        shiftDownstream: true,
+      }),
+    )
+    const clips = engine.getSlide(slideId).audio.clips
+    // Voice follows its prompter window gap-free; effect/music lanes are
+    // anchored to board visuals (absolute slide time) and must not move.
+    expect(clips.find((c) => c.id === voice.id)!.timelineStart).toBeCloseTo(4.5)
+    expect(clips.find((c) => c.id === sfx.id)!.timelineStart).toBeCloseTo(2.5)
+    expect(clips.find((c) => c.id === music.id)!.timelineStart).toBeCloseTo(2.5)
+  })
+
+  it('CommitTts fitTextToClip keeps effect SFX at its visual while downstream voice shifts', () => {
+    engine.createPrompterPart(slideId, { id: 'p1', text: 'First', duration: 2.0 })
+    engine.createPrompterPart(slideId, { id: 'p2', text: 'Second', duration: 2.0 })
+    const voiceDownstream = engine.createAudioClip(slideId, {
+      assetId: 'a',
+      trackId: 'voice',
+      timelineStart: 3.5,
+      sourceEnd: 1,
+    })
+    const wipeSfx = engine.createAudioClip(slideId, {
+      assetId: 'sfx-asset',
+      trackId: 'sfx',
+      timelineStart: 2.5,
+      sourceEnd: 1,
+    })
+    dispatchOk(
+      dispatcher,
+      new CommitTtsCommand({
+        slideId,
+        partId: 'p1',
+        asset: {
+          id: 'tts-asset',
+          name: 'TTS First',
+          data: btoa('tts'),
+          mimeType: 'audio/wav',
+          metadata: { duration: 3.0 },
+        },
+        trackId: 'voice',
+        timelineStart: 0,
+        sourceEnd: 3.0,
+        playbackRate: 1,
+        fitTextToClip: { duration: 3.0, shiftDownstream: true },
+      }),
+    )
+    const clips = engine.getSlide(slideId).audio.clips
+    expect(engine.getSlide(slideId).prompter!.parts[1].startTime).toBeCloseTo(3.0)
+    expect(clips.find((c) => c.id === voiceDownstream.id)!.timelineStart).toBeCloseTo(4.5)
+    // The wipe sound stays at the visual wipe time, not pushed to the side.
+    expect(clips.find((c) => c.id === wipeSfx.id)!.timelineStart).toBeCloseTo(2.5)
+  })
+
   it('LessonJSON prompter round-trip & duplicate-id/gap validation', () => {
     dispatchOk(dispatcher, new ImportPrompterCommand({ slideId, rawText: 'Hello. World' }))
     const json = engine.toJSON()
@@ -351,9 +432,17 @@ describe('Prompter Authoring 15.02', () => {
     const gapJson = JSON.parse(JSON.stringify(json)) as unknown as LessonJSON
     if (
       gapJson.slides[0].prompter &&
-      (gapJson.slides[0].prompter as unknown as { parts: { startTime: number; endTime: number; duration: number }[] }).parts.length >= 2
+      (
+        gapJson.slides[0].prompter as unknown as {
+          parts: { startTime: number; endTime: number; duration: number }[]
+        }
+      ).parts.length >= 2
     ) {
-      const p1 = (gapJson.slides[0].prompter as unknown as { parts: { startTime: number; endTime: number; duration: number }[] }).parts[1]
+      const p1 = (
+        gapJson.slides[0].prompter as unknown as {
+          parts: { startTime: number; endTime: number; duration: number }[]
+        }
+      ).parts[1]
       p1.startTime = 999
       p1.endTime = 999 + p1.duration
     }
@@ -363,9 +452,17 @@ describe('Prompter Authoring 15.02', () => {
     const overlapJson = JSON.parse(JSON.stringify(json)) as unknown as LessonJSON
     if (
       overlapJson.slides[0].prompter &&
-      (overlapJson.slides[0].prompter as unknown as { parts: { startTime: number; endTime: number; duration: number }[] }).parts.length >= 2
+      (
+        overlapJson.slides[0].prompter as unknown as {
+          parts: { startTime: number; endTime: number; duration: number }[]
+        }
+      ).parts.length >= 2
     ) {
-      const o1 = (overlapJson.slides[0].prompter as unknown as { parts: { startTime: number; endTime: number; duration: number }[] }).parts[1]
+      const o1 = (
+        overlapJson.slides[0].prompter as unknown as {
+          parts: { startTime: number; endTime: number; duration: number }[]
+        }
+      ).parts[1]
       o1.startTime = 0.1
       o1.endTime = 0.1 + o1.duration
     }

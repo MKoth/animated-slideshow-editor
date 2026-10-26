@@ -21,6 +21,10 @@ export interface ScenarioScriptStepUiState {
   readonly ttsError: string | null
   readonly boardStatus: ScenarioScriptStepStatus
   readonly boardError: string | null
+  readonly boardNote: string | null
+  readonly soundStatus: ScenarioScriptStepStatus
+  readonly soundError: string | null
+  readonly soundNote: string | null
 }
 
 interface AiScenarioScriptPanelProps {
@@ -33,6 +37,7 @@ interface AiScenarioScriptPanelProps {
   readonly steps: readonly ScenarioScriptStepUiState[]
   readonly onGenerateTtsStep: (position: number) => void
   readonly onApplyBoardStep: (position: number) => void
+  readonly onRepairSoundsStep: (position: number) => void
   readonly onClose: () => void
 }
 
@@ -87,11 +92,16 @@ export function promptBlockColor(block: string): string {
  * Three-step apply with persisted per-step states: (1) prompter text writes
  * slides + prompter parts + durations; (2) per-step TTS synthesizes that
  * step's prompter blocks sequentially with the saved TTS defaults; (3)
- * per-step board buttons write animation sources onto the Step-1 slides.
- * Steps 2 and 3 need Step 1 first but are otherwise independent; completed
- * buttons flip to Regenerate. Hard errors block all steps; a preview
- * computed against a superseded accepted snapshot is stale and cannot apply
- * until re-generated.
+ * per-step board buttons rebuild the step's board from the live prompter
+ * timing (estimate-free: marks, effect anchors and the slide total follow
+ * the actual TTS lengths, slide length = prompts end + 1s tail) and re-run
+ * it — source, length, visuals and sounds. Steps 2 and 3 need Step 1 first but are otherwise independent; completed
+ * buttons flip to Regenerate. A per-step Repair sounds button heals effect
+ * audio against the slide's live board source (delete exactly the connected
+ * sounds, re-place at the visual times, preserve everything else) and
+ * reports the script errors when the source no longer compiles. Hard errors
+ * block all steps; a preview computed against a superseded accepted snapshot
+ * is stale and cannot apply until re-generated.
  */
 export function AiScenarioScriptPanel({
   preview,
@@ -103,6 +113,7 @@ export function AiScenarioScriptPanel({
   steps,
   onGenerateTtsStep,
   onApplyBoardStep,
+  onRepairSoundsStep,
   onClose,
 }: AiScenarioScriptPanelProps) {
   const stale = currentAcceptedVersionId !== preview.acceptedVersionId
@@ -110,7 +121,10 @@ export function AiScenarioScriptPanel({
   const stepsBlocked = blocked || stale
   const busy =
     prompterApplying ||
-    steps.some((s) => s.ttsStatus === 'applying' || s.boardStatus === 'applying')
+    steps.some(
+      (s) =>
+        s.ttsStatus === 'applying' || s.boardStatus === 'applying' || s.soundStatus === 'applying',
+    )
   return (
     <div data-testid="ai-scenario-script-preview">
       <div data-testid="ai-scenario-script-preview-summary">
@@ -366,7 +380,7 @@ export function AiScenarioScriptPanel({
                         ? 'Blocked — fix the reported errors in the accepted scenario first'
                         : stale
                           ? 'Stale — the accepted snapshot changed, re-run Generate Script'
-                          : 'Write this step’s board script in one undoable step'
+                          : 'Rebuild this step’s board from the live prompter timing and re-run it: source, length (prompts end + 1s), visuals and sounds'
                     }
                     onClick={() => onApplyBoardStep(step.position)}
                   >
@@ -375,6 +389,16 @@ export function AiScenarioScriptPanel({
                       : step.boardStatus === 'done'
                         ? `Re-apply board — Step ${step.position}`
                         : `3. Apply board — Step ${step.position}`}
+                  </button>
+                  <button
+                    data-testid={`ai-scenario-script-repair-sounds-${step.position}`}
+                    disabled={boardDisabled || step.soundStatus === 'applying'}
+                    title="Delete exactly the script-connected effect sounds and re-place them at the visual wipe/reveal times — voice and manual audio are never touched. Reports the board script errors when it cannot compile."
+                    onClick={() => onRepairSoundsStep(step.position)}
+                  >
+                    {step.soundStatus === 'applying'
+                      ? 'Repairing sounds…'
+                      : `Repair sounds — Step ${step.position}`}
                   </button>
                 </div>
                 {step.ttsProgress && (
@@ -406,6 +430,21 @@ export function AiScenarioScriptPanel({
                 {step.boardError && (
                   <div data-testid={`ai-scenario-script-board-error-${step.position}`}>
                     {step.boardError}
+                  </div>
+                )}
+                {step.boardNote && (
+                  <div data-testid={`ai-scenario-script-board-note-${step.position}`}>
+                    {step.boardNote}
+                  </div>
+                )}
+                {step.soundNote && (
+                  <div data-testid={`ai-scenario-script-sound-note-${step.position}`}>
+                    {step.soundNote}
+                  </div>
+                )}
+                {step.soundError && (
+                  <div data-testid={`ai-scenario-script-sound-error-${step.position}`}>
+                    {step.soundError}
                   </div>
                 )}
               </li>

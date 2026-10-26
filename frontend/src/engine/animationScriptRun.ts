@@ -14,6 +14,7 @@ import type {
   AnimationScriptCompileResult,
   AnimationScriptMeshRequest,
 } from './animationScriptCompiler'
+import { SCRIPT_EFFECT_CLIP_ID_PREFIX } from './animationScriptCompiler'
 import { SCRIPT_MESH_PARAMETER_SPECS } from './animationScriptCompiler'
 import { compiledFootprintToJSON } from './compiledFootprint'
 import { loadImageDataFromAsset, hasTransparentPixels } from './imageDataLoader'
@@ -322,10 +323,22 @@ function dispatchCompiled(
   // Rerun deletes the previous and new footprint ids first (tolerating
   // hand-deleted clips), then recreates the planned placements, so edits
   // replace without duplication and unrelated/manual audio is preserved.
+  // Orphan sweep: clips carrying the compiler-reserved effect-sound prefix
+  // but missing from the fresh footprint are stale script output
+  // (pre-footprint lesson, lost footprint, timing-shifted survivor) — a
+  // re-run deletes exactly those too and re-places them at the compiled
+  // times, so a displaced reveal/wipe sound is healed while voice, manual
+  // SFX and music (never carrying the prefix) are untouched.
   const replacedAudioClipIds = new Set([
     ...(previousFootprint?.audioClipIds ?? []),
     ...(compiled.footprint.audioClipIds ?? []),
   ])
+  const freshAudioClipIds = new Set(compiled.footprint.audioClipIds ?? [])
+  for (const clip of engine.getSlide(slideId).audio.clips) {
+    if (!clip.id.startsWith(SCRIPT_EFFECT_CLIP_ID_PREFIX)) continue
+    if (freshAudioClipIds.has(clip.id)) continue
+    replacedAudioClipIds.add(clip.id)
+  }
   const existingClipIds = new Set(engine.getSlide(slideId).audio.clips.map((clip) => clip.id))
   const deleteAudioCommands: Command<unknown>[] = []
   for (const clipId of replacedAudioClipIds) {

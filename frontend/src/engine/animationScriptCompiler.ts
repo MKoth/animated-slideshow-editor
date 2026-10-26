@@ -357,6 +357,14 @@ export interface PlannedEffectAudioClip {
 }
 
 /**
+ * Reserved id prefix for effect-`sound:` audio clips. Only the compiler
+ * mints it, so a re-run can treat any slide clip carrying it (but missing
+ * from the fresh footprint) as stale script output: delete exactly those,
+ * preserve everything else.
+ */
+export const SCRIPT_EFFECT_CLIP_ID_PREFIX = 'script-effect-clip:'
+
+/**
  * The slide state the compiler reads: node names and kinds plus pre-run
  * evaluated values. Pure and read-only — a Check against this context never
  * touches engine state. The compiler plans every write as a fresh keyframe:

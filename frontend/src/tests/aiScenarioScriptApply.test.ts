@@ -4,11 +4,9 @@ import { CommandDispatcher, UndoStack } from '../engine/commands'
 import { planScenarioDraft } from '../ai/scenarioPlanner'
 import {
   applyScenarioBoard,
-  applyScenarioBoardStep,
   applyScenarioPrompter,
   applyScenarioScript,
   buildScenarioBoardApplyCommands,
-  buildScenarioBoardStepCommands,
   buildScenarioPrompterApplyCommands,
   buildScenarioScriptApplyCommands,
 } from '../ai/scenarioScriptApply'
@@ -296,72 +294,6 @@ describe('Scenario script three-step split (prompter / board)', () => {
     expect(commands.every((c) => c.type === 'SetSlideAnimationScript')).toBe(true)
     expect(commands[0]!.parameters.slideId).toBe('live-1')
     expect(commands[1]!.parameters.slideId).toBe('live-2')
-  })
-
-  it('per-step board writes one slide script; refuses before step 1', () => {
-    const plan = planScenarioDraft(TWO_STEP_DOC, 0.1, [])
-    // Step builder targets one position only.
-    const { commands, targetSlideIds } = buildScenarioBoardStepCommands(
-      {
-        plan,
-        existingSlides: [
-          { id: 'live-1', name: plan.slides[0]!.slideName, partIds: [] },
-          { id: 'live-2', name: plan.slides[1]!.slideName, partIds: [] },
-        ],
-      },
-      2,
-    )
-    expect(targetSlideIds).toEqual(['live-2'])
-    expect(commands).toHaveLength(1)
-    expect(commands[0]!.type).toBe('SetSlideAnimationScript')
-    expect(commands[0]!.parameters).toMatchObject({ slideId: 'live-2' })
-
-    // Out-of-range positions build nothing and refuse on apply.
-    expect(
-      buildScenarioBoardStepCommands(
-        { plan, existingSlides: [{ id: 'live-1', name: 'x', partIds: [] }] },
-        9,
-      ).commands,
-    ).toHaveLength(0)
-
-    const { engine, undoStack, system } = setupEngine()
-    engine.createSlide('Only')
-    const missing = applyScenarioBoardStep(
-      system,
-      {
-        plan,
-        existingSlides: snapshotSlides(engine),
-      },
-      2,
-    )
-    expect(missing.ok).toBe(false)
-    expect(missing.error).toMatch(/Step 1/)
-    expect(undoStack.entries.length).toBe(0)
-
-    // Applies one slide's script in one Transaction, leaving others alone.
-    const { engine: engine2, undoStack: undo2, system: system2 } = setupEngine()
-    engine2.createSlide('Old A')
-    engine2.createSlide('Old B')
-    const promoted = applyScenarioPrompter(system2, {
-      plan,
-      existingSlides: snapshotSlides(engine2),
-    })
-    expect(promoted.ok).toBe(true)
-    const before = undo2.entries.length
-    const step = applyScenarioBoardStep(
-      system2,
-      {
-        plan,
-        existingSlides: snapshotSlides(engine2),
-      },
-      1,
-    )
-    expect(step.ok).toBe(true)
-    expect(step.targetSlideIds).toHaveLength(1)
-    expect(undo2.entries.length).toBe(before + 1)
-    const slides = engine2.project!.slides
-    expect(slides[0]!.animationScript?.source).toContain(`script "${slides[0]!.name}"`)
-    expect(slides[1]!.animationScript).toBeNull()
   })
 
   it('prompter then board round-trips; board refuses before step 1', () => {
