@@ -20,6 +20,7 @@ import {
   MoveAudioClipCommand,
   MovePrompterPartCommand,
   SetAudioClipPlaybackRateCommand,
+  SetSlideAnimationScriptCommand,
   SplitAudioClipCommand,
   SplitPrompterWordsCommand,
   TransactionCommand,
@@ -43,6 +44,17 @@ import {
 import { snapAudioTime } from '../../engine/timelineSnapping'
 import { ASSET_DEFINITION_MIME, AUDIO_ASSET_MIME } from '../../pixi/renderer/dropPlacement'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { checkAnimationScript } from '../../engine/animationScriptCheck'
+import { runAnimationScriptAsync } from '../../engine/animationScriptRun'
+import {
+  findTopLevelMarkDefinitions,
+  moveScriptMark,
+  renameScriptMark,
+} from '../../engine/scriptMarks'
+import { ensureMaterialLibrariesLoaded } from '../../app/materialLibraries'
+import { measuredNodeSize } from '../../pixi/renderer/nodeMeasurement'
+import { captureAssetSnapshot } from '../../app/assetSnapshot'
+import { captureMaterialSnapshot, captureShaderSnapshot } from '../../app/definitionSnapshot'
 import { useAudioClipSelectionStore } from '../../stores/audioClipSelectionStore'
 import { useAudioPlaybackStore } from '../../stores/audioPlaybackStore'
 import { getActivePrompterPartId } from '../../engine/audioSync'
@@ -60,6 +72,7 @@ import { TtsGlobalSettings } from '../settings/TtsGlobalSettings'
 
 const PROMPTER_STRIP_HEIGHT = 42
 const AUDIO_LANE_HEIGHT = 56
+const MARKS_STRIP_HEIGHT = 26
 
 /** Exported for tests: compute nudge delta from rulerTickStep */
 // eslint-disable-next-line react-refresh/only-export-components
@@ -209,6 +222,18 @@ export function AudioTimelineBody({
     width: number
   } | null>(null)
 
+  // Script marks lane state (point-in-time mark("...") labels)
+  const markMoveRef = useRef<{
+    key: string
+    name: string
+    occurrence: number
+    startX: number
+    startTime: number
+  } | null>(null)
+  const [markMovePreview, setMarkMovePreview] = useState<{ key: string; time: number } | null>(null)
+  const [editingMarkKey, setEditingMarkKey] = useState<string | null>(null)
+  const [editingMarkText, setEditingMarkText] = useState('')
+  const [markBusy, setMarkBusy] = useState(false)
   // Word-level selection for TTS replacement (Spec 15.10)
   const [wordSelection, setWordSelection] = useState<{
     partId: string
@@ -262,6 +287,146 @@ export function AudioTimelineBody({
     },
     [slide.prompter],
   )
+
+  // Script marks lane: point-in-time mark("...") labels from the slide script.
+  // Times come from a Check compile (marks are compile-time only, never stored).
+  const scriptMarks = useMemo(() => {
+    const source = slide.animationScript?.source
+    if (!source) return []
+    try {
+      const marks = checkAnimationScript(engine, slide.id, source).marks
+      const seen = new Map<string, number>()
+      return marks.map((mark) => {
+        const occurrence = seen.get(mark.name) ?? 0
+        seen.set(mark.name, occurrence + 1)
+        return { ...mark, occurrence, key: `${mark.name}#${occurrence}` }
+      })
+    } catch {
+      return []
+    }
+  }, [engine, slide.id, slide.animationScript?.source])
+
+  const collectGlobalAudioAssets = useCallback((): readonly {
+    id: string
+    name: string
+    duration: number
+  }[] => {
+    const out: { id: string; name: string; duration: number }[] = []
+    for (const definition of useAssetLibraryStore.getState().allDefinitions) {
+      const isAudio =
+        definition.category === 'audio' ||
+        definition.mimeType?.startsWith('audio/') === true ||
+        /\.(wav|mp3|mpeg|ogg|webm)$/i.test(definition.original_filename ?? '')
+      if (!isAudio) continue
+      const raw = (definition.metadata as Record<string, unknown> | undefined)?.duration
+      out.push({
+        id: definition.id,
+        name: definition.name,
+        duration: typeof raw === 'number' ? raw : Number.NaN,
+      })
+    }
+    return out
+  }, [])
+
+  /** Save a rewritten script source, then re-run it so the board reflects the new mark timing. */
+  const commitScriptSourceAndRun = useCallback(
+    async (nextSource: string) => {
+      const result = dispatch(
+        new SetSlideAnimationScriptCommand({ slideId: slide.id, source: nextSource }),
+      )
+      if (!result.ok) {
+        useNotificationStore.getState().notify(result.error.message)
+        return
+      }
+      setMarkBusy(true)
+      try {
+        await ensureMaterialLibrariesLoaded()
+        const runResult = await runAnimationScriptAsync(engine, dispatch, slide.id, nextSource, {
+          measure: measuredNodeSize,
+          globalAudioAssets: collectGlobalAudioAssets(),
+          captureAsset: (definitionId) => captureAssetSnapshot(engine, definitionId),
+          captureAudio: (assetId) => captureAudioSnapshot(engine, assetId),
+          captureMaterial: (definitionId) => {
+            if (!captureMaterialSnapshot(engine, definitionId)) return false
+            const shaderId = engine.getMaterialDefinition(definitionId).shaderId
+            return shaderId === null || captureShaderSnapshot(engine, shaderId)
+          },
+        })
+        if (!runResult.ran) {
+          const first =
+            runResult.diagnostics.find((d) => d.severity === 'error') ?? runResult.diagnostics[0]
+          useNotificationStore.getState().notify(first?.message ?? 'Script did not run')
+        } else if (runResult.error) {
+          useNotificationStore.getState().notify(runResult.error)
+        }
+      } catch (error) {
+        useNotificationStore
+          .getState()
+          .notify(error instanceof Error ? error.message : String(error))
+      } finally {
+        setMarkBusy(false)
+      }
+    },
+    [dispatch, engine, slide.id, collectGlobalAudioAssets],
+  )
+
+  const onMarkMovePointerDown = (
+    e: React.PointerEvent,
+    key: string,
+    name: string,
+    occurrence: number,
+    startTime: number,
+  ) => {
+    if (e.button !== 0) return
+    if (editingMarkKey === key || markBusy) return
+    e.preventDefault()
+    e.stopPropagation()
+    markMoveRef.current = { key, name, occurrence, startX: e.clientX, startTime }
+    const target = e.currentTarget as HTMLElement
+    target.setPointerCapture?.(e.pointerId)
+    const onMove = (ev: PointerEvent) => {
+      if (!markMoveRef.current) return
+      const p = pixelsPerSecond(useTimelineViewStore.getState().zoomLevel)
+      const dt = (ev.clientX - markMoveRef.current.startX) / p
+      const snapped = computeSnappedTime(Math.max(0, markMoveRef.current.startTime + dt))
+      setMarkMovePreview({ key, time: snapped })
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      if (!markMoveRef.current) return
+      const p = pixelsPerSecond(useTimelineViewStore.getState().zoomLevel)
+      const dt = (ev.clientX - markMoveRef.current.startX) / p
+      const snapped = computeSnappedTime(Math.max(0, markMoveRef.current.startTime + dt))
+      const { name: markName, occurrence: markOccurrence } = markMoveRef.current
+      markMoveRef.current = null
+      setMarkMovePreview(null)
+      if (Math.abs(snapped - startTime) <= 1e-6) return
+      const source = engine.getSlide(slide.id).animationScript?.source
+      if (!source) return
+      const next = moveScriptMark(source, markName, snapped, markOccurrence)
+      if (next === null || next === source) return
+      void commitScriptSourceAndRun(next)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const commitMarkRename = (name: string, rawText: string) => {
+    const newName = rawText.trim()
+    setEditingMarkKey(null)
+    setEditingMarkText('')
+    if (!newName || newName === name) return
+    const source = engine.getSlide(slide.id).animationScript?.source
+    if (!source) return
+    if (findTopLevelMarkDefinitions(source).some((def) => def.name === newName)) {
+      useNotificationStore.getState().notify(`Mark "${newName}" already exists`)
+      return
+    }
+    const next = renameScriptMark(source, name, newName)
+    if (next === null || next === source) return
+    void commitScriptSourceAndRun(next)
+  }
 
   const handleAudioDragOver = (event: React.DragEvent) => {
     const hasAudio = event.dataTransfer.types.includes(AUDIO_ASSET_MIME)
@@ -523,6 +688,7 @@ export function AudioTimelineBody({
       if (
         target.closest('[data-clip-id]') ||
         target.closest('[data-prompter-id]') ||
+        target.closest('[data-script-mark]') ||
         target.closest('.timeline-ruler') ||
         target.closest('.audio-clip__handle')
       ) {
@@ -1469,6 +1635,22 @@ export function AudioTimelineBody({
       >
         <ul className="timeline-tracks__list" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
           <li className="timeline-tracks__ruler-spacer" aria-hidden="true" style={{ height: 22 }} />
+          {scriptMarks.length > 0 && (
+            <li
+              className="audio-tracks__marks-label"
+              style={{
+                height: MARKS_STRIP_HEIGHT,
+                display: 'flex',
+                alignItems: 'center',
+                padding: '0 4px',
+                fontSize: 10,
+                color: 'var(--color-text-muted)',
+                borderBottom: '1px solid var(--color-border)',
+              }}
+            >
+              <span>Marks</span>
+            </li>
+          )}
           <li
             className="audio-tracks__prompter-label"
             style={{
@@ -1714,6 +1896,104 @@ export function AudioTimelineBody({
             )}
 
             <div style={{ position: 'relative', width: contentWidth, overflow: 'visible' }}>
+              {scriptMarks.length > 0 && (
+                <div
+                  className="audio-marks-strip"
+                  data-testid="audio-marks-strip"
+                  style={{
+                    height: MARKS_STRIP_HEIGHT,
+                    position: 'relative',
+                    overflow: 'visible',
+                    borderBottom: '1px solid var(--color-border)',
+                    background: 'var(--color-bg-panel)',
+                    zIndex: 10,
+                  }}
+                >
+                  {scriptMarks.map((mark) => {
+                    const isMovePreview = markMovePreview?.key === mark.key
+                    const displayTime = isMovePreview ? markMovePreview!.time : mark.time
+                    const isEditing = editingMarkKey === mark.key
+                    return (
+                      <div
+                        key={mark.key}
+                        role="button"
+                        tabIndex={markBusy ? -1 : 0}
+                        data-testid="script-mark"
+                        data-script-mark={mark.name}
+                        aria-label={`Script mark ${mark.name} at ${displayTime.toFixed(2)} seconds`}
+                        title={`${mark.name} @ ${displayTime.toFixed(2)}s`}
+                        onPointerDown={(e) => {
+                          if (isEditing) return
+                          onMarkMovePointerDown(e, mark.key, mark.name, mark.occurrence, mark.time)
+                        }}
+                        onDoubleClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          if (markBusy) return
+                          setEditingMarkKey(mark.key)
+                          setEditingMarkText(mark.name)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && editingMarkKey !== mark.key) {
+                            e.preventDefault()
+                            if (!markBusy) {
+                              setEditingMarkKey(mark.key)
+                              setEditingMarkText(mark.name)
+                            }
+                          }
+                        }}
+                        style={{
+                          position: 'absolute',
+                          left: displayTime * pps - 6,
+                          top: (MARKS_STRIP_HEIGHT - 12) / 2,
+                          width: 12,
+                          height: 12,
+                          borderRadius: '50%',
+                          background: '#e8a33d',
+                          border: '1px solid #9a6714',
+                          cursor: markBusy ? 'default' : 'grab',
+                          opacity: markBusy ? 0.5 : 1,
+                          pointerEvents: markBusy ? 'none' : 'auto',
+                          zIndex: isMovePreview ? 12 : 11,
+                        }}
+                      >
+                        {isEditing && (
+                          <input
+                            data-testid="script-mark-rename-input"
+                            value={editingMarkText}
+                            autoFocus
+                            onFocus={(ev) => ev.target.select()}
+                            onChange={(ev) => setEditingMarkText(ev.target.value)}
+                            onPointerDown={(ev) => ev.stopPropagation()}
+                            onDoubleClick={(ev) => ev.stopPropagation()}
+                            onKeyDown={(ev) => {
+                              if (ev.key === 'Enter') {
+                                ev.preventDefault()
+                                commitMarkRename(mark.name, editingMarkText)
+                              } else if (ev.key === 'Escape') {
+                                ev.preventDefault()
+                                setEditingMarkKey(null)
+                                setEditingMarkText('')
+                              }
+                              ev.stopPropagation()
+                            }}
+                            onBlur={() => commitMarkRename(mark.name, editingMarkText)}
+                            style={{
+                              position: 'absolute',
+                              left: 14,
+                              top: '50%',
+                              transform: 'translateY(-50%)',
+                              width: 120,
+                              fontSize: 11,
+                              zIndex: 13,
+                            }}
+                          />
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
               <div
                 className="audio-prompter-strip"
                 data-testid="audio-prompter-strip"

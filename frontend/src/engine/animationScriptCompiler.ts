@@ -480,10 +480,18 @@ export interface AnimationScriptSummary {
   readonly createdDataSourceCount: number
 }
 
+export interface AnimationScriptMark {
+  readonly name: string
+  /** Compiled slide-second of the mark label. */
+  readonly time: number
+}
+
 export interface AnimationScriptCompileResult {
   readonly diagnostics: readonly AnimationScriptDiagnostic[]
   /** False when any error diagnostic blocks a prospective run. */
   readonly runnable: boolean
+  /** Best-effort mark labels in source order (present even when not runnable). */
+  readonly marks: readonly AnimationScriptMark[]
   readonly commands: readonly Command<unknown>[]
   /** The source order of each command, parallel to `commands`. */
   readonly commandOrders: readonly number[]
@@ -1013,6 +1021,7 @@ class Compiler {
     return {
       diagnostics,
       runnable: !errors,
+      marks: [...this.#markers].map(([name, time]) => ({ name, time })),
       commands: materialized.commands,
       commandOrders: materialized.orders,
       creations: {
