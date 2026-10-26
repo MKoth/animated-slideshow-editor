@@ -1704,7 +1704,9 @@ export function applyUndo(
       const partId = inv.partId as string
       const oldIndex = inv.oldIndex as number | undefined
       const shiftedClips = inv.shiftedClips as
-        readonly { id: string; oldTimelineStart: number }[] | undefined
+        readonly { id: string; oldTimelineStart: number; oldTrackId?: unknown }[] | undefined
+      const shiftedParts = inv.shiftedParts as
+        readonly { id: string; oldStartTime: number; oldEndTime: number }[] | undefined
       const slide = engine.getSlide(slideId)
       if (oldIndex !== undefined) {
         const curIdx = slide.prompter!.parts.findIndex((p) => p.id === partId)
@@ -1723,10 +1725,25 @@ export function applyUndo(
           // Free placement — do not reflow, preserve gaps as user placed
         }
       }
+      if (shiftedParts) {
+        for (const sp of shiftedParts) {
+          const p = slide.prompter?.parts.find((x) => x.id === sp.id)
+          if (p) {
+            p.startTime = sp.oldStartTime
+            p.endTime = sp.oldEndTime
+          }
+        }
+        slide.prompter!.parts.sort((a, b) => a.startTime - b.startTime)
+      }
       if (shiftedClips) {
         for (const sc of shiftedClips) {
           const clip = slide.audio.clips.find((c) => c.id === sc.id)
-          if (clip) clip.timelineStart = sc.oldTimelineStart
+          if (clip) {
+            clip.timelineStart = sc.oldTimelineStart
+            if (sc.oldTrackId === 'voice' || sc.oldTrackId === 'sfx' || sc.oldTrackId === 'music') {
+              clip.trackId = sc.oldTrackId
+            }
+          }
         }
       }
       return
@@ -1828,10 +1845,36 @@ export function applyUndo(
       const clipId = inv.clipId as string
       const oldTimelineStart = inv.oldTimelineStart as number
       const oldTrackId = inv.oldTrackId as import('../audioClip').AudioTrackId
-      const clip = engine.getSlide(slideId).audio.clips.find((c) => c.id === clipId)
+      const shiftedParts = inv.shiftedParts as
+        readonly { id: string; oldStartTime: number; oldEndTime: number }[] | undefined
+      const shiftedClips = inv.shiftedClips as
+        readonly { id: string; oldTimelineStart: number; oldTrackId?: unknown }[] | undefined
+      const slide = engine.getSlide(slideId)
+      const clip = slide.audio.clips.find((c) => c.id === clipId)
       if (clip) {
         clip.timelineStart = oldTimelineStart
         clip.trackId = oldTrackId
+      }
+      if (shiftedParts) {
+        for (const sp of shiftedParts) {
+          const p = slide.prompter?.parts.find((x) => x.id === sp.id)
+          if (p) {
+            p.startTime = sp.oldStartTime
+            p.endTime = sp.oldEndTime
+          }
+        }
+        slide.prompter?.parts.sort((a, b) => a.startTime - b.startTime)
+      }
+      if (shiftedClips) {
+        for (const sc of shiftedClips) {
+          const c = slide.audio.clips.find((x) => x.id === sc.id)
+          if (c) {
+            c.timelineStart = sc.oldTimelineStart
+            if (sc.oldTrackId === 'voice' || sc.oldTrackId === 'sfx' || sc.oldTrackId === 'music') {
+              c.trackId = sc.oldTrackId
+            }
+          }
+        }
       }
       return
     }
@@ -3956,6 +3999,7 @@ export function applyRedo(
           params.slideId as string,
           params.partId as string,
           params.newStartTime as number,
+          { push: params.push as boolean | undefined },
         )
       return
     case 'SetPrompterPartAudio':
@@ -4028,10 +4072,15 @@ export function applyRedo(
       return
     }
     case 'MoveAudioClip':
-      engine.moveAudioClip(params.slideId as string, params.clipId as string, {
-        timelineStart: params.timelineStart as number,
-        trackId: params.trackId as import('../audioClip').AudioTrackId | undefined,
-      })
+      engine.moveAudioClip(
+        params.slideId as string,
+        params.clipId as string,
+        {
+          timelineStart: params.timelineStart as number,
+          trackId: params.trackId as import('../audioClip').AudioTrackId | undefined,
+        },
+        { push: params.push as boolean | undefined },
+      )
       return
     case 'TrimAudioClip':
       engine.trimAudioClip(params.slideId as string, params.clipId as string, {

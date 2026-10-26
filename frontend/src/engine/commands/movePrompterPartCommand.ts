@@ -8,6 +8,7 @@ export interface MovePrompterPartParameters {
   readonly newStartTime: number
   // Legacy newIndex still accepted for reorder-only callers
   readonly newIndex?: number
+  readonly push?: boolean
 }
 
 export interface MovePrompterPartInverse {
@@ -16,7 +17,12 @@ export interface MovePrompterPartInverse {
   readonly oldStartTime: number
   readonly oldEndTime: number
   readonly oldIndex?: number
-  readonly shiftedClips?: readonly { id: string; oldTimelineStart: number }[]
+  readonly shiftedClips?: readonly {
+    id: string
+    oldTimelineStart: number
+    oldTrackId?: unknown
+  }[]
+  readonly shiftedParts?: readonly { id: string; oldStartTime: number; oldEndTime: number }[]
 }
 
 export class MovePrompterPartCommand implements Command<MovePrompterPartInverse> {
@@ -26,17 +32,20 @@ export class MovePrompterPartCommand implements Command<MovePrompterPartInverse>
   readonly #partId: string
   readonly #newStartTime: number | undefined
   readonly #newIndex: number | undefined
+  readonly #push: boolean | undefined
 
   constructor(input: MovePrompterPartParameters) {
     this.#slideId = input.slideId
     this.#partId = input.partId
     this.#newStartTime = input.newStartTime
     this.#newIndex = input.newIndex
+    this.#push = input.push
     this.parameters = {
       slideId: input.slideId,
       partId: input.partId,
       ...(input.newStartTime !== undefined ? { newStartTime: input.newStartTime } : {}),
       ...(input.newIndex !== undefined ? { newIndex: input.newIndex } : {}),
+      ...(input.push !== undefined ? { push: input.push } : {}),
     }
   }
 
@@ -46,11 +55,19 @@ export class MovePrompterPartCommand implements Command<MovePrompterPartInverse>
     const part = slide.prompter.parts.find((p) => p.id === this.#partId)
     if (!part) throw new Error(`PrompterPart not found: ${this.#partId}`)
     if (this.#newStartTime !== undefined) {
-      if (typeof this.#newStartTime !== 'number' || !Number.isFinite(this.#newStartTime) || this.#newStartTime < 0) {
+      if (
+        typeof this.#newStartTime !== 'number' ||
+        !Number.isFinite(this.#newStartTime) ||
+        this.#newStartTime < 0
+      ) {
         throw new Error('newStartTime must be a non-negative finite number')
       }
     } else if (this.#newIndex !== undefined) {
-      if (!Number.isInteger(this.#newIndex) || this.#newIndex < 0 || this.#newIndex >= slide.prompter.parts.length) {
+      if (
+        !Number.isInteger(this.#newIndex) ||
+        this.#newIndex < 0 ||
+        this.#newIndex >= slide.prompter.parts.length
+      ) {
         throw new Error(`newIndex out of bounds: ${this.#newIndex}`)
       }
     } else {
@@ -60,12 +77,33 @@ export class MovePrompterPartCommand implements Command<MovePrompterPartInverse>
 
   execute(engine: Engine): MovePrompterPartInverse {
     if (this.#newStartTime !== undefined) {
-      const { oldStartTime, oldEndTime, shiftedClips } = engine.movePrompterPartToTime(this.#slideId, this.#partId, this.#newStartTime)
-      return { slideId: this.#slideId, partId: this.#partId, oldStartTime, oldEndTime, shiftedClips }
+      const { oldStartTime, oldEndTime, shiftedClips, shiftedParts } =
+        engine.movePrompterPartToTime(this.#slideId, this.#partId, this.#newStartTime, {
+          push: this.#push,
+        })
+      return {
+        slideId: this.#slideId,
+        partId: this.#partId,
+        oldStartTime,
+        oldEndTime,
+        shiftedClips,
+        shiftedParts,
+      }
     }
-    const { oldIndex, shiftedClips } = engine.movePrompterPart(this.#slideId, this.#partId, this.#newIndex!)
+    const { oldIndex, shiftedClips } = engine.movePrompterPart(
+      this.#slideId,
+      this.#partId,
+      this.#newIndex!,
+    )
     const part = engine.getSlide(this.#slideId).prompter!.parts.find((p) => p.id === this.#partId)!
-    return { slideId: this.#slideId, partId: this.#partId, oldStartTime: part.startTime, oldEndTime: part.endTime, oldIndex, shiftedClips }
+    return {
+      slideId: this.#slideId,
+      partId: this.#partId,
+      oldStartTime: part.startTime,
+      oldEndTime: part.endTime,
+      oldIndex,
+      shiftedClips,
+    }
   }
 
   toJSON(): Readonly<Record<string, unknown>> {

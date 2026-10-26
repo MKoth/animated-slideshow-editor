@@ -646,6 +646,7 @@ export function AudioTimelineBody({
             clipId,
             timelineStart: snapped,
             trackId: finalTrack,
+            push: true,
           }),
         )
         if (!result.ok) useNotificationStore.getState().notify(result.error.message)
@@ -846,6 +847,7 @@ export function AudioTimelineBody({
               slideId: slide.id,
               partId,
               newStartTime: snapped,
+              push: true,
             } as never),
           )
           if (!result.ok) useNotificationStore.getState().notify(result.error.message)
