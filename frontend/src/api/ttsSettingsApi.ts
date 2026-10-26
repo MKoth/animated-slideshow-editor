@@ -22,6 +22,7 @@ export interface TtsModelsResponse {
   defaults?: { provider: string; modelId: string }
   downloaded?: Record<string, boolean>
   modelsStatus?: Array<{ id: string; downloaded: boolean }>
+  mlxAvailable?: boolean
 }
 
 export interface TtsCapabilitiesResponse {
@@ -37,6 +38,7 @@ export interface TtsCapabilitiesResponse {
   defaults: { provider: string; modelId: string }
   downloaded?: Record<string, boolean>
   modelsStatus?: Array<{ id: string; downloaded: boolean }>
+  mlxAvailable?: boolean
 }
 
 export interface TtsSettings {
@@ -47,6 +49,7 @@ export interface TtsSettings {
   tts_model_id?: string
   downloaded?: Record<string, boolean>
   modelsStatus?: Array<{ id: string; downloaded: boolean }>
+  mlxAvailable?: boolean
 }
 
 export class TtsSettingsApi {
@@ -70,5 +73,14 @@ export class TtsSettingsApi {
 
   async updateSettings(input: { provider?: string; modelId?: string }): Promise<TtsSettings> {
     return this.client.put<TtsSettings>('/api/tts/settings', JSON.stringify(input))
+  }
+
+  async downloadModel(
+    modelId: string,
+  ): Promise<{ modelId: string; downloaded: boolean; path: string }> {
+    return this.client.post<{ modelId: string; downloaded: boolean; path: string }>(
+      '/api/tts/models/download',
+      JSON.stringify({ modelId }),
+    )
   }
 }

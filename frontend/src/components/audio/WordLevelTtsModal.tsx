@@ -82,8 +82,17 @@ export function WordLevelTtsModal({
   const [hasEditedModel, setHasEditedModel] = useState(false)
   const [hasEditedProvider, setHasEditedProvider] = useState(false)
   const [downloadedMap, setDownloadedMap] = useState<Record<string, boolean>>({})
+  const [downloadingModel, setDownloadingModel] = useState(false)
   const [capabilitiesMap, setCapabilitiesMap] = useState<
-    Record<string, { speakers: string[]; speakerHints?: Record<string, string>; speakerMeta?: Record<string, { description: string; nativeLanguage: string }>; mode?: string }>
+    Record<
+      string,
+      {
+        speakers: string[]
+        speakerHints?: Record<string, string>
+        speakerMeta?: Record<string, { description: string; nativeLanguage: string }>
+        mode?: string
+      }
+    >
   >({})
   const [ttsVoiceWarning, setTtsVoiceWarning] = useState<string | null>(null)
   const [formVoiceWarning, setFormVoiceWarning] = useState<string | null>(null)
@@ -100,10 +109,14 @@ export function WordLevelTtsModal({
   const [formVoiceReference, setFormVoiceReference] = useState('')
   const [formParams, setFormParams] = useState('')
   const [formPreset, setFormPreset] = useState<string>('Balanced')
-  const [formTemperature, setFormTemperature] = useState<number>(TTS_PARAM_RANGES.temperature.default)
+  const [formTemperature, setFormTemperature] = useState<number>(
+    TTS_PARAM_RANGES.temperature.default,
+  )
   const [formTopK, setFormTopK] = useState<number>(TTS_PARAM_RANGES.top_k.default)
   const [formTopP, setFormTopP] = useState<number>(TTS_PARAM_RANGES.top_p.default)
-  const [formRepetition, setFormRepetition] = useState<number>(TTS_PARAM_RANGES.repetition_penalty.default)
+  const [formRepetition, setFormRepetition] = useState<number>(
+    TTS_PARAM_RANGES.repetition_penalty.default,
+  )
   const [formMaxTokens, setFormMaxTokens] = useState<number>(TTS_PARAM_RANGES.max_tokens.default)
   const [formShowAdvanced, setFormShowAdvanced] = useState(false)
   const [formModelId, setFormModelId] = useState('')
@@ -135,12 +148,20 @@ export function WordLevelTtsModal({
       try {
         const data = await ttsSettingsApi.getModels()
         if (cancelled) return
-        const fetchedModels = Array.isArray(data.models) && data.models.length ? data.models : [...SUPPORTED_MODELS]
-        const fetchedProviders = Array.isArray(data.providers) && data.providers.length ? data.providers : [...SUPPORTED_PROVIDERS]
+        const fetchedModels =
+          Array.isArray(data.models) && data.models.length ? data.models : [...SUPPORTED_MODELS]
+        const fetchedProviders =
+          Array.isArray(data.providers) && data.providers.length
+            ? data.providers
+            : [...SUPPORTED_PROVIDERS]
         setModels(fetchedModels)
         setProviders(fetchedProviders)
-        const defModel = (data.defaultModel || (data as unknown as { default_model_id?: string }).default_model_id || DEFAULT_MODEL_ID) as string
-        const defProv = (data.defaultProvider || (data as unknown as { default_provider?: string }).default_provider || DEFAULT_PROVIDER) as string
+        const defModel = (data.defaultModel ||
+          (data as unknown as { default_model_id?: string }).default_model_id ||
+          DEFAULT_MODEL_ID) as string
+        const defProv = (data.defaultProvider ||
+          (data as unknown as { default_provider?: string }).default_provider ||
+          DEFAULT_PROVIDER) as string
         if (!hasEditedModel && !ttsModel && defModel) setTtsModel(defModel)
         else if (!ttsModel && defModel) setTtsModel(defModel)
         if (!hasEditedProvider && !ttsProviderId && defProv) setTtsProviderId(defProv)
@@ -148,24 +169,78 @@ export function WordLevelTtsModal({
         const dl: Record<string, boolean> = {}
         if ((data as unknown as { downloaded?: Record<string, boolean> }).downloaded) {
           Object.assign(dl, (data as unknown as { downloaded: Record<string, boolean> }).downloaded)
-        } else if ((data as unknown as { modelsStatus?: Array<{ id: string; downloaded: boolean }> }).modelsStatus) {
-          for (const s of (data as unknown as { modelsStatus: Array<{ id: string; downloaded: boolean }> }).modelsStatus) dl[s.id] = s.downloaded
-        } else if ((data as unknown as { capabilities?: Record<string, { downloaded?: boolean }> }).capabilities) {
-          for (const [k, v] of Object.entries((data as unknown as { capabilities: Record<string, { downloaded?: boolean }> }).capabilities)) dl[k] = Boolean(v.downloaded)
+        } else if (
+          (data as unknown as { modelsStatus?: Array<{ id: string; downloaded: boolean }> })
+            .modelsStatus
+        ) {
+          for (const s of (
+            data as unknown as { modelsStatus: Array<{ id: string; downloaded: boolean }> }
+          ).modelsStatus)
+            dl[s.id] = s.downloaded
+        } else if (
+          (data as unknown as { capabilities?: Record<string, { downloaded?: boolean }> })
+            .capabilities
+        ) {
+          for (const [k, v] of Object.entries(
+            (data as unknown as { capabilities: Record<string, { downloaded?: boolean }> })
+              .capabilities,
+          ))
+            dl[k] = Boolean(v.downloaded)
         }
         setDownloadedMap(dl)
-        const capsSource = ((data as unknown as { capabilities?: Record<string, { speakers?: string[]; speakerHints?: Record<string, string>; speakerMeta?: Record<string, { description: string; nativeLanguage: string }>; mode?: string }>; perModel?: Record<string, { speakers?: string[]; speakerHints?: Record<string, string>; speakerMeta?: Record<string, { description: string; nativeLanguage: string }>; mode?: string }> }).capabilities ??
+        const capsSource = ((
+          data as unknown as {
+            capabilities?: Record<
+              string,
+              {
+                speakers?: string[]
+                speakerHints?: Record<string, string>
+                speakerMeta?: Record<string, { description: string; nativeLanguage: string }>
+                mode?: string
+              }
+            >
+            perModel?: Record<
+              string,
+              {
+                speakers?: string[]
+                speakerHints?: Record<string, string>
+                speakerMeta?: Record<string, { description: string; nativeLanguage: string }>
+                mode?: string
+              }
+            >
+          }
+        ).capabilities ??
           (data as unknown as { perModel?: Record<string, { speakers?: string[] }> }).perModel) as
-          | Record<string, { speakers?: string[]; speakerHints?: Record<string, string>; speakerMeta?: Record<string, { description: string; nativeLanguage: string }>; mode?: string }>
+          | Record<
+              string,
+              {
+                speakers?: string[]
+                speakerHints?: Record<string, string>
+                speakerMeta?: Record<string, { description: string; nativeLanguage: string }>
+                mode?: string
+              }
+            >
           | undefined
         if (capsSource && typeof capsSource === 'object') {
-          const caps: Record<string, { speakers: string[]; speakerHints?: Record<string, string>; speakerMeta?: Record<string, { description: string; nativeLanguage: string }>; mode?: string }> = {}
+          const caps: Record<
+            string,
+            {
+              speakers: string[]
+              speakerHints?: Record<string, string>
+              speakerMeta?: Record<string, { description: string; nativeLanguage: string }>
+              mode?: string
+            }
+          > = {}
           for (const [k, v] of Object.entries(capsSource)) {
             if (v && Array.isArray((v as { speakers?: string[] }).speakers)) {
               caps[k] = {
                 speakers: (v as { speakers: string[] }).speakers,
                 speakerHints: (v as { speakerHints?: Record<string, string> }).speakerHints,
-                speakerMeta: (v as { speakerMeta?: Record<string, { description: string; nativeLanguage: string }> }).speakerMeta,
+                speakerMeta: (
+                  v as {
+                    speakerMeta?: Record<string, { description: string; nativeLanguage: string }>
+                  }
+                ).speakerMeta,
                 mode: (v as { mode?: string }).mode,
               }
             }
@@ -219,7 +294,10 @@ export function WordLevelTtsModal({
   const ttsInstructionSupported = useMemo(() => {
     const eff = ttsModel || DEFAULT_MODEL_ID
     const caps = capabilitiesMap[eff]
-    if (caps && typeof (caps as { instructionSupported?: boolean }).instructionSupported === 'boolean')
+    if (
+      caps &&
+      typeof (caps as { instructionSupported?: boolean }).instructionSupported === 'boolean'
+    )
       return (caps as { instructionSupported?: boolean }).instructionSupported!
     return getFallbackCapabilities(eff).instructionSupported
   }, [ttsModel, capabilitiesMap])
@@ -227,22 +305,32 @@ export function WordLevelTtsModal({
   const formInstructionSupported = useMemo(() => {
     const eff = formModelId || ttsModel || DEFAULT_MODEL_ID
     const caps = capabilitiesMap[eff]
-    if (caps && typeof (caps as { instructionSupported?: boolean }).instructionSupported === 'boolean')
+    if (
+      caps &&
+      typeof (caps as { instructionSupported?: boolean }).instructionSupported === 'boolean'
+    )
       return (caps as { instructionSupported?: boolean }).instructionSupported!
     return getFallbackCapabilities(eff).instructionSupported
   }, [formModelId, ttsModel, capabilitiesMap])
 
   const globalAudioDefs = useAssetLibraryStore((s) => s.definitions)
-  const embeddedAudioAssets = useMemo(() => engine.embeddedAssets.filter((a) => a.mimeType.startsWith('audio/')), [engine])
+  const embeddedAudioAssets = useMemo(
+    () => engine.embeddedAssets.filter((a) => a.mimeType.startsWith('audio/')),
+    [engine],
+  )
   const referenceOptions = useMemo(() => {
     const byId = new Map<string, { id: string; label: string }>()
     for (const d of globalAudioDefs) {
-      const isAudio = (d.category === 'audio' || d.mimeType?.startsWith('audio/') || /\.(wav|mp3|mpeg|ogg|webm)$/i.test(d.original_filename))
+      const isAudio =
+        d.category === 'audio' ||
+        d.mimeType?.startsWith('audio/') ||
+        /\.(wav|mp3|mpeg|ogg|webm)$/i.test(d.original_filename)
       if (!isAudio) continue
       byId.set(d.id, { id: d.id, label: `${d.name} — ${d.id.slice(0, 8)}` })
     }
     for (const a of embeddedAudioAssets) {
-      if (!byId.has(a.id)) byId.set(a.id, { id: a.id, label: `${a.name} — ${a.id.slice(0, 8)} (embedded)` })
+      if (!byId.has(a.id))
+        byId.set(a.id, { id: a.id, label: `${a.name} — ${a.id.slice(0, 8)} (embedded)` })
     }
     return [...byId.values()]
   }, [globalAudioDefs, embeddedAudioAssets])
@@ -276,14 +364,22 @@ export function WordLevelTtsModal({
         if (migrated.value) setLanguage(migrated.value)
       }
       if (!voice && selected.voice) {
-        const promptModel = (selected as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
-        const backendSpeakers = capabilitiesMap[promptModel]?.speakers ?? getFallbackSpeakersForModel(promptModel)
-        const mig = migrateStoredVoice(selected.voice, promptModel, selected.language, backendSpeakers)
+        const promptModel =
+          (selected as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
+        const backendSpeakers =
+          capabilitiesMap[promptModel]?.speakers ?? getFallbackSpeakersForModel(promptModel)
+        const mig = migrateStoredVoice(
+          selected.voice,
+          promptModel,
+          selected.language,
+          backendSpeakers,
+        )
         setVoice(mig.value)
       }
       if (!instruction && selected.instruction) setInstruction(selected.instruction)
       if (!voiceReference) {
-        const ref = (selected.params as unknown as { referenceAssetId?: string } | null)?.referenceAssetId
+        const ref = (selected.params as unknown as { referenceAssetId?: string } | null)
+          ?.referenceAssetId
         if (typeof ref === 'string' && ref) setVoiceReference(ref)
       }
       const pm = (selected as unknown as { modelId?: string }).modelId
@@ -291,15 +387,26 @@ export function WordLevelTtsModal({
       if (pm) setTtsModel(pm)
       if (pp) setTtsProviderId(pp)
     }
-  }, [selectedPromptId, prompts, language, voice, instruction, voiceReference, ttsModel, capabilitiesMap])
+  }, [
+    selectedPromptId,
+    prompts,
+    language,
+    voice,
+    instruction,
+    voiceReference,
+    ttsModel,
+    capabilitiesMap,
+  ])
 
   const ttsPromptVoiceWarning = useMemo(() => {
     if (!selectedPromptId) return null
     if (voice) return null
     const sel = prompts.find((p) => p.id === selectedPromptId)
     if (!sel?.voice) return null
-    const promptModel = (sel as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
-    const backendSpeakers = capabilitiesMap[promptModel]?.speakers ?? getFallbackSpeakersForModel(promptModel)
+    const promptModel =
+      (sel as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
+    const backendSpeakers =
+      capabilitiesMap[promptModel]?.speakers ?? getFallbackSpeakersForModel(promptModel)
     const mig = migrateStoredVoice(sel.voice, promptModel, sel.language, backendSpeakers)
     return mig.isUnknown ? mig.warning : null
   }, [selectedPromptId, prompts, voice, ttsModel, capabilitiesMap])
@@ -348,6 +455,7 @@ export function WordLevelTtsModal({
         language: language || undefined,
         voice: voice || undefined,
         instruction: instruction || undefined,
+        referenceAssetId: voiceReference || undefined,
         modelId: ttsModel || undefined,
         provider: ttsProviderId || undefined,
       })
@@ -385,6 +493,7 @@ export function WordLevelTtsModal({
     language,
     voice,
     instruction,
+    voiceReference,
     ttsModel,
     ttsProviderId,
     provider,
@@ -428,7 +537,8 @@ export function WordLevelTtsModal({
     setFormInstruction(p.instruction)
     setFormLanguage(migrateStoredLanguage(p.language).value)
     const pmRaw = (p as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
-    const backendSpeakersForForm = capabilitiesMap[pmRaw]?.speakers ?? getFallbackSpeakersForModel(pmRaw)
+    const backendSpeakersForForm =
+      capabilitiesMap[pmRaw]?.speakers ?? getFallbackSpeakersForModel(pmRaw)
     const mig = migrateStoredVoice(p.voice ?? null, pmRaw, p.language, backendSpeakersForForm)
     if (mig.isUnknown) {
       setFormVoice('')
@@ -437,7 +547,8 @@ export function WordLevelTtsModal({
       setFormVoice(mig.value)
       setFormVoiceWarning(null)
     }
-    const refFromParams = (p.params as unknown as { referenceAssetId?: string } | null)?.referenceAssetId
+    const refFromParams = (p.params as unknown as { referenceAssetId?: string } | null)
+      ?.referenceAssetId
     setFormVoiceReference(typeof refFromParams === 'string' ? refFromParams : '')
     const extracted = extractTtsParams(p.params as Record<string, unknown> | null)
     setFormTemperature(extracted.temperature)
@@ -503,7 +614,9 @@ export function WordLevelTtsModal({
         const matched = paramsMatchPreset(parsed as Record<string, unknown>)
         setFormPreset(matched ?? 'Custom')
       }
-    } catch {}
+    } catch {
+      // Invalid JSON is reported on save; keep sliders unchanged here.
+    }
   }
 
   useEffect(() => {
@@ -576,16 +689,21 @@ export function WordLevelTtsModal({
       repetition_penalty: formRepetition,
       max_tokens: formMaxTokens,
     }
-    mergedParams = mergeTtsParams(mergedParams, sliderTts as Partial<Record<keyof typeof TTS_PARAM_RANGES, number>>)
+    mergedParams = mergeTtsParams(
+      mergedParams,
+      sliderTts as Partial<Record<keyof typeof TTS_PARAM_RANGES, number>>,
+    )
     if (isFormReferenceEnabled) {
       if (formVoiceReference) {
         mergedParams = { ...(mergedParams ?? {}), referenceAssetId: formVoiceReference }
       } else if (mergedParams && 'referenceAssetId' in mergedParams) {
         const { referenceAssetId: _omit, ...rest } = mergedParams as Record<string, unknown>
+        void _omit
         mergedParams = Object.keys(rest).length ? rest : undefined
       }
     } else if (mergedParams && 'referenceAssetId' in mergedParams) {
       const { referenceAssetId: _omit, ...rest } = mergedParams as Record<string, unknown>
+      void _omit
       mergedParams = Object.keys(rest).length ? rest : undefined
     }
     setFormSaving(true)
@@ -714,7 +832,11 @@ export function WordLevelTtsModal({
                 value={formInstruction}
                 disabled={!formInstructionSupported}
                 onChange={(e) => setFormInstruction(e.target.value)}
-                placeholder={formInstructionSupported ? '' : 'Instructions require 1.7B CustomVoice/VoiceDesign'}
+                placeholder={
+                  formInstructionSupported
+                    ? ''
+                    : 'Instructions require 1.7B CustomVoice/VoiceDesign'
+                }
                 style={{
                   width: '100%',
                   minHeight: 60,
@@ -727,8 +849,12 @@ export function WordLevelTtsModal({
                 }}
               />
               {!formInstructionSupported && formInstruction.trim() !== '' && (
-                <div data-testid="voice-prompt-instruction-warning" style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}>
-                  Instructions require 1.7B CustomVoice/VoiceDesign — will be ignored for { (formModelId || ttsModel || DEFAULT_MODEL_ID).split('/').pop() }
+                <div
+                  data-testid="voice-prompt-instruction-warning"
+                  style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
+                >
+                  Instructions require 1.7B CustomVoice/VoiceDesign — will be ignored for{' '}
+                  {(formModelId || ttsModel || DEFAULT_MODEL_ID).split('/').pop()}
                 </div>
               )}
               {!formInstructionSupported && (
@@ -772,7 +898,12 @@ export function WordLevelTtsModal({
               )}
             </label>
             <label style={{ fontSize: 11, opacity: isFormVoiceEnabled ? 1 : 0.5 }}>
-              Voice (optional) {formMode === 'voice_clone' ? '(disabled for Base)' : formMode === 'voice_design' ? '(disabled for VoiceDesign)' : ''}
+              Voice (optional){' '}
+              {formMode === 'voice_clone'
+                ? '(disabled for Base)'
+                : formMode === 'voice_design'
+                  ? '(disabled for VoiceDesign)'
+                  : ''}
               <select
                 data-testid="voice-prompt-voice"
                 value={formVoice}
@@ -802,7 +933,9 @@ export function WordLevelTtsModal({
                 })}
               </select>
               <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-                {isFormVoiceEnabled ? '9 canonical voices — any language' : 'Voice not applicable for this model'}
+                {isFormVoiceEnabled
+                  ? '9 canonical voices — any language'
+                  : 'Voice not applicable for this model'}
               </div>
               {formVoiceWarning && (
                 <div
@@ -812,20 +945,26 @@ export function WordLevelTtsModal({
                   {formVoiceWarning}
                 </div>
               )}
-              {editingPrompt && (() => {
-                const mig = migrateStoredVoice(editingPrompt.voice ?? null, formModelId || ttsModel || DEFAULT_MODEL_ID, editingPrompt.language, formSpeakers)
-                if (mig.isUnknown && !formVoiceWarning) {
-                  return (
-                    <div
-                      data-testid="voice-prompt-voice-warning"
-                      style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
-                    >
-                      {mig.warning}
-                    </div>
+              {editingPrompt &&
+                (() => {
+                  const mig = migrateStoredVoice(
+                    editingPrompt.voice ?? null,
+                    formModelId || ttsModel || DEFAULT_MODEL_ID,
+                    editingPrompt.language,
+                    formSpeakers,
                   )
-                }
-                return null
-              })()}
+                  if (mig.isUnknown && !formVoiceWarning) {
+                    return (
+                      <div
+                        data-testid="voice-prompt-voice-warning"
+                        style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
+                      >
+                        {mig.warning}
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
             </label>
             <label style={{ fontSize: 11, opacity: isFormReferenceEnabled ? 1 : 0.5 }}>
               Voice reference (Base only)
@@ -852,7 +991,9 @@ export function WordLevelTtsModal({
                 ))}
               </select>
               <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-                {isFormReferenceEnabled ? 'Reference audio for voice_clone' : 'Only for Base models'}
+                {isFormReferenceEnabled
+                  ? 'Reference audio for voice_clone'
+                  : 'Only for Base models'}
               </div>
             </label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -879,7 +1020,9 @@ export function WordLevelTtsModal({
                   ))}
                 </select>
                 {formModelId && downloadedMap[formModelId] === false && (
-                  <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>↓ Needs download</div>
+                  <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>
+                    ↓ Needs download
+                  </div>
                 )}
                 {formModelId && downloadedMap[formModelId] === true && (
                   <div style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}>✓ Downloaded</div>
@@ -909,8 +1052,21 @@ export function WordLevelTtsModal({
                 </select>
               </label>
             </div>
-            <div style={{ fontSize: 10, color: '#888' }}>Stored model/provider recalled next time this Voice Prompt is selected. Per-generation dropdown overrides it.</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 8, background: '#1e1e1e', border: '1px solid #333', borderRadius: 4 }}>
+            <div style={{ fontSize: 10, color: '#888' }}>
+              Stored model/provider recalled next time this Voice Prompt is selected. Per-generation
+              dropdown overrides it.
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                padding: 8,
+                background: '#1e1e1e',
+                border: '1px solid #333',
+                borderRadius: 4,
+              }}
+            >
               <label style={{ fontSize: 11 }}>
                 Params preset
                 <select
@@ -937,7 +1093,12 @@ export function WordLevelTtsModal({
               </label>
               <div style={{ display: 'grid', gap: 6 }}>
                 <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span>temperature {formTemperature.toFixed(2)} <span style={{ color: '#888' }}>({TTS_PARAM_RANGES.temperature.min}–{TTS_PARAM_RANGES.temperature.max})</span></span>
+                  <span>
+                    temperature {formTemperature.toFixed(2)}{' '}
+                    <span style={{ color: '#888' }}>
+                      ({TTS_PARAM_RANGES.temperature.min}–{TTS_PARAM_RANGES.temperature.max})
+                    </span>
+                  </span>
                   <input
                     data-testid="voice-prompt-temperature"
                     type="range"
@@ -945,11 +1106,18 @@ export function WordLevelTtsModal({
                     max={TTS_PARAM_RANGES.temperature.max}
                     step={TTS_PARAM_RANGES.temperature.step}
                     value={formTemperature}
-                    onChange={(e) => handleTtsSliderChange('temperature', parseFloat(e.target.value))}
+                    onChange={(e) =>
+                      handleTtsSliderChange('temperature', parseFloat(e.target.value))
+                    }
                   />
                 </label>
                 <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span>top_k {formTopK} <span style={{ color: '#888' }}>({TTS_PARAM_RANGES.top_k.min}–{TTS_PARAM_RANGES.top_k.max})</span></span>
+                  <span>
+                    top_k {formTopK}{' '}
+                    <span style={{ color: '#888' }}>
+                      ({TTS_PARAM_RANGES.top_k.min}–{TTS_PARAM_RANGES.top_k.max})
+                    </span>
+                  </span>
                   <input
                     data-testid="voice-prompt-top-k"
                     type="range"
@@ -961,7 +1129,12 @@ export function WordLevelTtsModal({
                   />
                 </label>
                 <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span>top_p {formTopP.toFixed(2)} <span style={{ color: '#888' }}>({TTS_PARAM_RANGES.top_p.min}–{TTS_PARAM_RANGES.top_p.max})</span></span>
+                  <span>
+                    top_p {formTopP.toFixed(2)}{' '}
+                    <span style={{ color: '#888' }}>
+                      ({TTS_PARAM_RANGES.top_p.min}–{TTS_PARAM_RANGES.top_p.max})
+                    </span>
+                  </span>
                   <input
                     data-testid="voice-prompt-top-p"
                     type="range"
@@ -973,7 +1146,13 @@ export function WordLevelTtsModal({
                   />
                 </label>
                 <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span>repetition_penalty {formRepetition.toFixed(2)} <span style={{ color: '#888' }}>({TTS_PARAM_RANGES.repetition_penalty.min}–{TTS_PARAM_RANGES.repetition_penalty.max})</span></span>
+                  <span>
+                    repetition_penalty {formRepetition.toFixed(2)}{' '}
+                    <span style={{ color: '#888' }}>
+                      ({TTS_PARAM_RANGES.repetition_penalty.min}–
+                      {TTS_PARAM_RANGES.repetition_penalty.max})
+                    </span>
+                  </span>
                   <input
                     data-testid="voice-prompt-repetition-penalty"
                     type="range"
@@ -981,11 +1160,18 @@ export function WordLevelTtsModal({
                     max={TTS_PARAM_RANGES.repetition_penalty.max}
                     step={TTS_PARAM_RANGES.repetition_penalty.step}
                     value={formRepetition}
-                    onChange={(e) => handleTtsSliderChange('repetition_penalty', parseFloat(e.target.value))}
+                    onChange={(e) =>
+                      handleTtsSliderChange('repetition_penalty', parseFloat(e.target.value))
+                    }
                   />
                 </label>
                 <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span>max_tokens {formMaxTokens} <span style={{ color: '#888' }}>({TTS_PARAM_RANGES.max_tokens.min}–{TTS_PARAM_RANGES.max_tokens.max})</span></span>
+                  <span>
+                    max_tokens {formMaxTokens}{' '}
+                    <span style={{ color: '#888' }}>
+                      ({TTS_PARAM_RANGES.max_tokens.min}–{TTS_PARAM_RANGES.max_tokens.max})
+                    </span>
+                  </span>
                   <input
                     data-testid="voice-prompt-max-tokens"
                     type="range"
@@ -993,7 +1179,9 @@ export function WordLevelTtsModal({
                     max={TTS_PARAM_RANGES.max_tokens.max}
                     step={TTS_PARAM_RANGES.max_tokens.step}
                     value={formMaxTokens}
-                    onChange={(e) => handleTtsSliderChange('max_tokens', parseInt(e.target.value, 10))}
+                    onChange={(e) =>
+                      handleTtsSliderChange('max_tokens', parseInt(e.target.value, 10))
+                    }
                   />
                 </label>
               </div>
@@ -1035,7 +1223,10 @@ export function WordLevelTtsModal({
                       fontSize: 11,
                     }}
                   />
-                  <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>Arbitrary keys allowed, validated as JSON object. Sliders override TTS keys on save.</div>
+                  <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+                    Arbitrary keys allowed, validated as JSON object. Sliders override TTS keys on
+                    save.
+                  </div>
                 </label>
               )}
               {!formShowAdvanced && (
@@ -1261,14 +1452,58 @@ export function WordLevelTtsModal({
                 </option>
               ))}
             </select>
-            <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>Per-generation override; stored prompt model is fallback</div>
+            <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+              Per-generation override; stored prompt model is fallback
+            </div>
             {ttsModel && downloadedMap[ttsModel] === false && (
-              <div data-testid="tts-model-download-warning" style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>
-                ↓ Not yet downloaded — will be fetched on first generation (1–4 GB, may take a few minutes)
+              <div
+                data-testid="tts-model-download-warning"
+                style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}
+              >
+                ↓ Not yet downloaded — press Download below (1–4 GB, may take a few minutes) or
+                generate to fetch on demand
               </div>
             )}
+            {ttsModel && downloadedMap[ttsModel] === false && (
+              <button
+                data-testid="tts-model-download"
+                onClick={() =>
+                  void (async () => {
+                    if (!ttsModel || downloadingModel) return
+                    setDownloadingModel(true)
+                    setError(null)
+                    try {
+                      const res = await ttsSettingsApi.downloadModel(ttsModel)
+                      setDownloadedMap((prev) => ({ ...prev, [ttsModel]: res.downloaded }))
+                    } catch (e) {
+                      const msg = e instanceof Error ? e.message : String(e)
+                      const detail = (e as { detail?: string })?.detail ?? msg
+                      setError(detail)
+                    } finally {
+                      setDownloadingModel(false)
+                    }
+                  })()
+                }
+                disabled={downloadingModel}
+                style={{
+                  marginTop: 6,
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid #7c5cff',
+                  background: downloadingModel ? '#444' : 'transparent',
+                  color: '#fff',
+                  cursor: downloadingModel ? 'not-allowed' : 'pointer',
+                  width: '100%',
+                }}
+              >
+                {downloadingModel ? 'Downloading… (do not close)' : 'Download model'}
+              </button>
+            )}
             {ttsModel && downloadedMap[ttsModel] === true && (
-              <div data-testid="tts-model-download-ok" style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}>
+              <div
+                data-testid="tts-model-download-ok"
+                style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}
+              >
                 ✓ Cached locally — ready to use
               </div>
             )}
@@ -1329,7 +1564,12 @@ export function WordLevelTtsModal({
             </div>
           </label>
           <label style={{ fontSize: 11, opacity: isTtsVoiceEnabled ? 1 : 0.5 }}>
-            Voice override {ttsMode === 'voice_clone' ? '(disabled for Base)' : ttsMode === 'voice_design' ? '(disabled for VoiceDesign)' : ''}
+            Voice override{' '}
+            {ttsMode === 'voice_clone'
+              ? '(disabled for Base)'
+              : ttsMode === 'voice_design'
+                ? '(disabled for VoiceDesign)'
+                : ''}
             <select
               data-testid="tts-voice"
               value={voice}
@@ -1359,7 +1599,9 @@ export function WordLevelTtsModal({
               })}
             </select>
             <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-              {isTtsVoiceEnabled ? '9 canonical voices — any language' : 'Voice not applicable for this model'}
+              {isTtsVoiceEnabled
+                ? '9 canonical voices — any language'
+                : 'Voice not applicable for this model'}
             </div>
             {effectiveTtsVoiceWarning && (
               <div
@@ -1389,7 +1631,7 @@ export function WordLevelTtsModal({
                 marginTop: 4,
               }}
             >
-              <option value="">— None (default) —</option>
+              <option value="">— None (default recording) —</option>
               {referenceOptions.map((opt) => (
                 <option key={opt.id} value={opt.id}>
                   {opt.label}
@@ -1397,7 +1639,9 @@ export function WordLevelTtsModal({
               ))}
             </select>
             <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-              {isTtsReferenceEnabled ? 'Reference audio from assets (Base clones this voice)' : 'Reference only for Base voice_clone'}
+              {isTtsReferenceEnabled
+                ? 'Reference audio from assets (Base clones this voice) — empty uses your default recording'
+                : 'Reference only for Base voice_clone'}
             </div>
           </label>
         </div>
@@ -1409,7 +1653,11 @@ export function WordLevelTtsModal({
               value={instruction}
               disabled={!ttsInstructionSupported}
               onChange={(e) => setInstruction(e.target.value)}
-              placeholder={ttsInstructionSupported ? 'Override prompt instruction for this generation' : 'Instructions require 1.7B CustomVoice/VoiceDesign'}
+              placeholder={
+                ttsInstructionSupported
+                  ? 'Override prompt instruction for this generation'
+                  : 'Instructions require 1.7B CustomVoice/VoiceDesign'
+              }
               style={{
                 width: '100%',
                 minHeight: 50,
@@ -1424,22 +1672,29 @@ export function WordLevelTtsModal({
             />
             {!ttsInstructionSupported && (
               <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}>
-                Instructions require 1.7B CustomVoice/VoiceDesign — will be ignored for { (ttsModel || DEFAULT_MODEL_ID).split('/').pop() }
+                Instructions require 1.7B CustomVoice/VoiceDesign — will be ignored for{' '}
+                {(ttsModel || DEFAULT_MODEL_ID).split('/').pop()}
               </div>
             )}
-            {ttsInstructionSupported === false && selectedPromptId && (() => {
-              const sel = prompts.find((p) => p.id === selectedPromptId)
-              const hasInstr = sel?.instruction && sel.instruction.trim() !== ''
-              const overriding = instruction.trim() !== ''
-              if (hasInstr && !overriding) {
-                return (
-                  <div data-testid="tts-instruction-warning" style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}>
-                    Stored prompt “{sel?.title}” has instruction but will be ignored for 0.6B — switch to 1.7B or override
-                  </div>
-                )
-              }
-              return null
-            })()}
+            {ttsInstructionSupported === false &&
+              selectedPromptId &&
+              (() => {
+                const sel = prompts.find((p) => p.id === selectedPromptId)
+                const hasInstr = sel?.instruction && sel.instruction.trim() !== ''
+                const overriding = instruction.trim() !== ''
+                if (hasInstr && !overriding) {
+                  return (
+                    <div
+                      data-testid="tts-instruction-warning"
+                      style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
+                    >
+                      Stored prompt “{sel?.title}” has instruction but will be ignored for 0.6B —
+                      switch to 1.7B or override
+                    </div>
+                  )
+                }
+                return null
+              })()}
           </label>
         </div>
 

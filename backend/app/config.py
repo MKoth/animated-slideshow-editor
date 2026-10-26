@@ -326,6 +326,8 @@ class Settings:
     max_upload_bytes: int
     tts_provider: str = "auto"
     tts_model_id: str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
+    tts_ref_audio: str | None = None
+    tts_ref_text: str | None = None
     opencode_base_url: str = DEFAULT_ZEN_URL
     ai_fallback_models: tuple[str, ...] = DEFAULT_FALLBACK_MODELS
     ai_context_budget: int = DEFAULT_CONTEXT_BUDGET
@@ -354,6 +356,44 @@ def _load_environment_file(path: Path) -> None:
     load_dotenv(path, override=False)
 
 
+def _default_tts_ref_audio() -> str | None:
+    """Default voice-clone reference audio: backend/my_voice.wav if present."""
+    candidate = Path(__file__).resolve().parents[1] / "my_voice.wav"
+    try:
+        if candidate.is_file():
+            return str(candidate)
+    except OSError:
+        return None
+    return None
+
+
+def _load_tts_ref_text() -> str | None:
+    """Default voice-clone transcript, re-read so edits to the file apply.
+
+    Precedence: TTS_REF_TEXT env > TTS_REF_TEXT_FILE env > backend/audio_ref_script.txt.
+    """
+    direct = os.getenv("TTS_REF_TEXT")
+    if direct is not None and direct.strip():
+        return direct.strip()
+    file_env = os.getenv("TTS_REF_TEXT_FILE")
+    if file_env is not None and file_env.strip():
+        try:
+            text = Path(file_env.strip()).expanduser().read_text(encoding="utf-8").strip()
+            if text:
+                return text
+        except OSError:
+            pass
+    candidate = Path(__file__).resolve().parents[1] / "audio_ref_script.txt"
+    try:
+        if candidate.is_file():
+            text = candidate.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+    except OSError:
+        pass
+    return None
+
+
 def load_settings() -> Settings:
     # Load backend/.env for local development; variables exported by the
     # process/container take precedence over values in the file.
@@ -361,6 +401,11 @@ def load_settings() -> Settings:
     data_dir = Path(os.getenv("DATA_DIR", str(DEFAULT_DATA_DIR)))
     secret_raw = os.getenv("AI_SECRET_KEY")
     secret = secret_raw.strip() if secret_raw and secret_raw.strip() else None
+    ref_audio_env = os.getenv("TTS_REF_AUDIO")
+    if ref_audio_env is not None and ref_audio_env.strip():
+        tts_ref_audio: str | None = ref_audio_env.strip()
+    else:
+        tts_ref_audio = _default_tts_ref_audio()
     return Settings(
         frontend_url=os.getenv("FRONTEND_URL", "http://localhost:5173"),
         development_mode=os.getenv("DEVELOPMENT_MODE", "true").lower() in {"1", "true", "yes"},
@@ -371,6 +416,8 @@ def load_settings() -> Settings:
         tts_model_id=os.getenv(
             "TTS_MODEL_ID", "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
         ).strip(),
+        tts_ref_audio=tts_ref_audio,
+        tts_ref_text=_load_tts_ref_text(),
         opencode_base_url=os.getenv("OPENCODE_BASE_URL", DEFAULT_ZEN_URL).strip()
         or DEFAULT_ZEN_URL,
         ai_fallback_models=_parse_fallback_models(os.getenv("AI_FALLBACK_MODELS_OPENCODE")),

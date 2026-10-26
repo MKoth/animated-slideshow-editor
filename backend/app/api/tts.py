@@ -17,12 +17,62 @@ router = APIRouter()
 _tts_lock = asyncio.Lock()
 
 
+def _resolve_reference_asset_path(request: Request, asset_id: str) -> str:
+    """Map an asset-library audio id to its on-disk file path."""
+    from app.assets.library import AssetNotFoundError
+
+    asset_library = getattr(request.app.state, "asset_library", None)
+    settings = getattr(request.app.state, "settings", None)
+    if asset_library is None or settings is None:
+        raise HTTPException(status_code=500, detail="asset library unavailable")
+    try:
+        definition = asset_library.get(asset_id)
+    except AssetNotFoundError as e:
+        raise HTTPException(
+            status_code=404, detail=f"reference audio asset not found: {asset_id}"
+        ) from e
+    except KeyError as e:
+        raise HTTPException(
+            status_code=404, detail=f"reference audio asset not found: {asset_id}"
+        ) from e
+    data_dir = getattr(settings, "data_dir", None)
+    if data_dir is None:
+        raise HTTPException(status_code=500, detail="data directory unavailable")
+    from pathlib import Path
+
+    path = Path(data_dir) / definition.original_path
+    try:
+        if not path.is_file():
+            raise HTTPException(status_code=422, detail=f"reference audio file missing: {asset_id}")
+    except OSError as e:
+        raise HTTPException(
+            status_code=422, detail=f"reference audio unreadable: {asset_id}: {e}"
+        ) from e
+    return str(path)
+
+
+def _get_reference_status() -> dict[str, Any]:
+    try:
+        from app.tts.engine import get_reference_status as _status
+
+        status = _status()
+        return dict(status)
+    except Exception:
+        return {"audioConfigured": False, "textConfigured": False}
+
+
 class TTSGenerateRequest(BaseModel):
     text: str = Field(description="text to synthesize")
     promptId: str | None = Field(default=None, description="voice prompt id")
     language: str | None = None
     voice: str | None = None
     instruction: str | None = None
+    referenceAssetId: str | None = Field(
+        default=None, description="asset library audio id used as Base voice-clone reference"
+    )
+    refText: str | None = Field(
+        default=None, description="transcript override for the voice-clone reference audio"
+    )
     modelId: str | None = Field(
         default=None, alias="modelId", description="HuggingFace model id override"
     )
@@ -245,6 +295,8 @@ def get_tts_models(request: Request) -> dict[str, Any]:
         "defaults": {"provider": provider, "modelId": model_id},
         "downloaded": download_statuses,
         "modelsStatus": [{"id": m, "downloaded": download_statuses.get(m, False)} for m in models],
+        "reference": _get_reference_status(),
+        "mlxAvailable": _is_mlx_available(),
     }
 
 
@@ -291,7 +343,68 @@ def get_tts_capabilities(request: Request) -> dict[str, Any]:
         "defaults": {"provider": provider, "modelId": model_id},
         "downloaded": download_statuses,
         "modelsStatus": [{"id": m, "downloaded": download_statuses.get(m, False)} for m in models],
+        "reference": _get_reference_status(),
+        "mlxAvailable": _is_mlx_available(),
     }
+
+
+def _is_mlx_available() -> bool:
+    try:
+        from app.tts.engine import _is_mlx_importable as _check
+
+        return bool(_check())
+    except Exception:
+        return False
+
+
+class TtsModelDownloadRequest(BaseModel):
+    modelId: str = Field(description="HuggingFace model id to download")
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("modelId", mode="before")
+    @classmethod
+    def validate_model_id(cls, v: str | None) -> str | None:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("modelId must be a non-empty string")
+        try:
+            from app.tts.registry import normalize_model_id
+
+            return normalize_model_id(v)
+        except ValueError as e:
+            raise ValueError(str(e)) from e
+
+
+def _snapshot_download_model(model_id: str) -> str:
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as e:
+        raise HTTPException(status_code=503, detail=f"huggingface_hub not installed: {e}") from e
+    return snapshot_download(repo_id=model_id)
+
+
+@router.post("/tts/models/download")
+async def download_tts_model(body: TtsModelDownloadRequest) -> dict[str, Any]:
+    """Pre-download a TTS model's weights so selection takes effect immediately.
+
+    Without this, the weights are fetched implicitly inside the first
+    /tts/generate call (blocking it for minutes with no progress feedback).
+    """
+    model_id = (body.modelId or "").strip()
+    async with _tts_lock:
+        try:
+            path: str = await asyncio.to_thread(_snapshot_download_model, model_id)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"model download failed: {e}") from e
+    try:
+        from app.tts.registry import is_model_downloaded
+
+        downloaded = is_model_downloaded(model_id)
+    except Exception:
+        downloaded = True
+    return {"modelId": model_id, "downloaded": downloaded, "path": path}
 
 
 @router.get("/tts/settings")
@@ -309,6 +422,8 @@ def get_tts_settings(request: Request) -> dict[str, Any]:
         "providers": providers,
         "downloaded": download_statuses,
         "modelsStatus": [{"id": m, "downloaded": download_statuses.get(m, False)} for m in models],
+        "reference": _get_reference_status(),
+        "mlxAvailable": _is_mlx_available(),
     }
 
 
@@ -502,6 +617,42 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception:
         pass
+
+    # Resolve Base voice-clone reference: per-request asset > prompt stored asset > defaults.
+    # Engine falls back to TTS_REF_AUDIO / backend/my_voice.wav + transcript when
+    # no explicit reference is given, so Base works out of the box.
+    try:
+        from app.tts.registry import get_model_mode as _mode_for_ref
+
+        _needs_ref = _mode_for_ref(effective_model_id) == "voice_clone"
+    except Exception:
+        _needs_ref = False
+    if _needs_ref:
+        ref_asset_id: str | None = None
+        if isinstance(body.referenceAssetId, str) and body.referenceAssetId.strip():
+            ref_asset_id = body.referenceAssetId.strip()
+        elif isinstance(effective_params, dict):
+            maybe_ref = effective_params.get("referenceAssetId")
+            if isinstance(maybe_ref, str) and maybe_ref.strip():
+                ref_asset_id = maybe_ref.strip()
+        ref_text_override: str | None = None
+        if isinstance(body.refText, str) and body.refText.strip():
+            ref_text_override = body.refText.strip()
+        elif isinstance(effective_params, dict):
+            for _k in ("ref_text", "refText", "referenceText"):
+                _v = effective_params.get(_k)
+                if isinstance(_v, str) and _v.strip():
+                    ref_text_override = _v.strip()
+                    break
+        merged: dict[str, Any] = (
+            dict(effective_params) if isinstance(effective_params, dict) else {}
+        )
+        if ref_asset_id is not None:
+            merged["ref_audio"] = _resolve_reference_asset_path(request, ref_asset_id)
+            merged["referenceAssetId"] = ref_asset_id
+        if ref_text_override is not None:
+            merged["ref_text"] = ref_text_override
+        effective_params = merged or None
 
     # Resolve engine: always use singleton factory with effective values (handles reload)
     provider_for_engine = effective_provider

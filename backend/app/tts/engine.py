@@ -305,18 +305,117 @@ class SineTtsEngine:
         return _wav_bytes_for_text_sine(text, None, language, voice, instruction)
 
 
-class MlxQwenTtsEngine:
-    """MLX Qwen3-TTS 0.6B CustomVoice via mlx-audio.
+def _default_ref_audio_path() -> str | None:
+    """Default Base voice-clone reference audio (re-resolved per call)."""
+    import os
+    from pathlib import Path
 
-    Loads `mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16` once.
-    Thread-safe, blocking. Caller must serialize via asyncio.Lock.
+    env = os.getenv("TTS_REF_AUDIO")
+    if env is not None and env.strip():
+        return env.strip()
+    candidate = Path(__file__).resolve().parents[2] / "my_voice.wav"
+    try:
+        if candidate.is_file():
+            return str(candidate)
+    except OSError:
+        return None
+    return None
+
+
+def _default_ref_text() -> str | None:
+    """Default Base voice-clone transcript (re-read per call so edits apply)."""
+    import os
+    from pathlib import Path
+
+    direct = os.getenv("TTS_REF_TEXT")
+    if direct is not None and direct.strip():
+        return direct.strip()
+    file_env = os.getenv("TTS_REF_TEXT_FILE")
+    if file_env is not None and file_env.strip():
+        try:
+            text = Path(file_env.strip()).expanduser().read_text(encoding="utf-8").strip()
+            if text:
+                return text
+        except OSError:
+            pass
+    candidate = Path(__file__).resolve().parents[2] / "audio_ref_script.txt"
+    try:
+        if candidate.is_file():
+            text = candidate.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+    except OSError:
+        pass
+    return None
+
+
+def _params_str(params: dict[str, object] | None, *keys: str) -> str | None:
+    if not isinstance(params, dict):
+        return None
+    for key in keys:
+        value = params.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+try:
+    from app.tts.registry import get_model_mode as _registry_model_mode
+except Exception:
+    _registry_model_mode = None  # type: ignore[assignment]
+
+
+def _model_mode(model_id: str) -> str:
+    """Model routing mode with safe fallback to custom_voice."""
+    if _registry_model_mode is not None:
+        try:
+            return _registry_model_mode(model_id)
+        except Exception:
+            pass
+    return "custom_voice"
+
+
+def get_reference_status(
+    ref_audio: str | None = None, ref_text: str | None = None
+) -> dict[str, object]:
+    """Report whether the Base voice-clone reference is configured."""
+    from pathlib import Path
+
+    audio = ref_audio if ref_audio is not None else _default_ref_audio_path()
+    text = ref_text if ref_text is not None else _default_ref_text()
+    audio_exists = False
+    if audio:
+        try:
+            audio_exists = Path(audio).is_file()
+        except OSError:
+            audio_exists = False
+    return {
+        "audioConfigured": bool(audio) and audio_exists,
+        "textConfigured": bool(text),
+        "audioPath": audio,
+        "textLength": len(text) if text else 0,
+    }
+
+
+class MlxQwenTtsEngine:
+    """MLX Qwen3-TTS via mlx-audio (CustomVoice / Base voice-clone / VoiceDesign).
+
+    Loads the configured model once. Thread-safe, blocking.
+    Caller must serialize via asyncio.Lock.
     """
 
-    def __init__(self, model_id: str) -> None:
+    def __init__(
+        self,
+        model_id: str,
+        ref_audio: str | None = None,
+        ref_text: str | None = None,
+    ) -> None:
         self._model_id = model_id
         self._model: Any | None = None
         self._load_lock = threading.Lock()
         self._sample_rate = 24000
+        self._ref_audio_override = ref_audio
+        self._ref_text_override = ref_text
 
     def _ensure_model(self) -> Any:
         if self._model is not None:
@@ -372,11 +471,76 @@ class MlxQwenTtsEngine:
                 if k in params:
                     gen_kwargs[k] = params[k]
 
-        # Call mlx-audio generate_custom_voice
+        # Route by model mode: CustomVoice / Base voice-clone / VoiceDesign
+        mode = _model_mode(self._model_id)
+
+        # Call mlx-audio generation entrypoint per mode
         try:
-            # Prefer generate_custom_voice for CustomVoice models
-            # fallback to generic generate if needed
-            if hasattr(model, "generate_custom_voice"):
+            if mode == "voice_clone":
+                # Base models clone via ref_audio + exact ref_text; no speaker.
+                ref_audio = (
+                    _params_str(params, "ref_audio", "refAudio", "referenceAudio")
+                    or self._ref_audio_override
+                    or _default_ref_audio_path()
+                )
+                ref_text = (
+                    _params_str(params, "ref_text", "refText", "referenceText", "ref_transcript")
+                    or self._ref_text_override
+                    or _default_ref_text()
+                )
+                if not ref_audio or not ref_text:
+                    raise TtsModelLoadError(
+                        "Base voice_clone requires a voice reference: set TTS_REF_AUDIO "
+                        "to your recording (e.g. backend/my_voice.wav) and TTS_REF_TEXT / "
+                        "TTS_REF_TEXT_FILE to its exact transcript "
+                        "(e.g. backend/audio_ref_script.txt)"
+                    )
+                from pathlib import Path as _Path
+
+                try:
+                    if not _Path(ref_audio).is_file():
+                        raise TtsModelLoadError(f"voice reference audio not found: {ref_audio}")
+                except OSError as e:
+                    raise TtsModelLoadError(
+                        f"voice reference audio not readable: {ref_audio}: {e}"
+                    ) from e
+                # Base generate() takes text + ref pair; language may not be
+                # accepted on all versions, so retry without it on TypeError.
+                try:
+                    gen = model.generate(
+                        text=text,
+                        ref_audio=ref_audio,
+                        ref_text=ref_text,
+                        language=qwen_lang,
+                        **gen_kwargs,
+                    )
+                    results = list(gen)
+                except TypeError as te:
+                    if "language" not in str(te) and "unexpected" not in str(te).lower():
+                        raise
+                    gen = model.generate(
+                        text=text,
+                        ref_audio=ref_audio,
+                        ref_text=ref_text,
+                        **gen_kwargs,
+                    )
+                    results = list(gen)
+            elif mode == "voice_design":
+                if not hasattr(model, "generate_voice_design"):
+                    raise TtsInferenceError(f"model {self._model_id} does not support voice design")
+                design_instruct = instruct or _params_str(params, "voice_description")
+                if not design_instruct:
+                    raise TtsInferenceError(
+                        "VoiceDesign requires an instruction describing the voice"
+                    )
+                gen = model.generate_voice_design(
+                    text=text,
+                    language=qwen_lang,
+                    instruct=design_instruct,
+                    **gen_kwargs,
+                )
+                results = list(gen)
+            elif hasattr(model, "generate_custom_voice"):
                 gen = model.generate_custom_voice(
                     text=text,
                     speaker=qwen_speaker,
@@ -384,6 +548,7 @@ class MlxQwenTtsEngine:
                     instruct=instruct,
                     **gen_kwargs,
                 )
+                results = list(gen)
             else:
                 gen = model.generate(
                     text=text,
@@ -392,7 +557,9 @@ class MlxQwenTtsEngine:
                     lang_code=qwen_lang.lower(),
                     **gen_kwargs,
                 )
-            results = list(gen)
+                results = list(gen)
+        except (TtsModelLoadError, TtsInferenceError):
+            raise
         except Exception as e:
             raise TtsInferenceError(f"TTS inference failed: {e}") from e
 

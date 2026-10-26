@@ -17,8 +17,10 @@ export function TtsGlobalSettings() {
   const [models, setModels] = useState<string[]>([...SUPPORTED_MODELS])
   const [providers, setProviders] = useState<string[]>([...SUPPORTED_PROVIDERS])
   const [downloadedMap, setDownloadedMap] = useState<Record<string, boolean>>({})
+  const [mlxAvailable, setMlxAvailable] = useState<boolean | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
@@ -35,23 +37,37 @@ export function TtsGlobalSettings() {
         ])
         if (cancelled) return
         if (modelsData) {
-          if (Array.isArray(modelsData.models) && modelsData.models.length) setModels(modelsData.models)
-          if (Array.isArray(modelsData.providers) && modelsData.providers.length) setProviders(modelsData.providers)
+          if (Array.isArray(modelsData.models) && modelsData.models.length)
+            setModels(modelsData.models)
+          if (Array.isArray(modelsData.providers) && modelsData.providers.length)
+            setProviders(modelsData.providers)
           const dl: Record<string, boolean> = {}
-          const md = modelsData as unknown as { downloaded?: Record<string, boolean>; modelsStatus?: Array<{ id: string; downloaded: boolean }>; capabilities?: Record<string, { downloaded?: boolean }> }
+          const md = modelsData as unknown as {
+            downloaded?: Record<string, boolean>
+            modelsStatus?: Array<{ id: string; downloaded: boolean }>
+            capabilities?: Record<string, { downloaded?: boolean }>
+          }
           if (md.downloaded) Object.assign(dl, md.downloaded)
           else if (md.modelsStatus) for (const s of md.modelsStatus) dl[s.id] = s.downloaded
-          else if (md.capabilities) for (const [k, v] of Object.entries(md.capabilities)) dl[k] = Boolean(v.downloaded)
+          else if (md.capabilities)
+            for (const [k, v] of Object.entries(md.capabilities)) dl[k] = Boolean(v.downloaded)
           if (Object.keys(dl).length) setDownloadedMap(dl)
+          const mlx = (modelsData as unknown as { mlxAvailable?: boolean }).mlxAvailable
+          if (typeof mlx === 'boolean') setMlxAvailable(mlx)
         }
         if (settingsData) {
-          const sd = settingsData as unknown as { downloaded?: Record<string, boolean>; modelsStatus?: Array<{ id: string; downloaded: boolean }> }
+          const sd = settingsData as unknown as {
+            downloaded?: Record<string, boolean>
+            modelsStatus?: Array<{ id: string; downloaded: boolean }>
+            mlxAvailable?: boolean
+          }
           if (sd.downloaded) setDownloadedMap((prev) => ({ ...prev, ...sd.downloaded }))
           else if (sd.modelsStatus) {
             const dl: Record<string, boolean> = {}
             for (const s of sd.modelsStatus) dl[s.id] = s.downloaded
             setDownloadedMap((prev) => ({ ...prev, ...dl }))
           }
+          if (typeof sd.mlxAvailable === 'boolean') setMlxAvailable(sd.mlxAvailable)
         }
         // Prefer settings endpoint for defaults, fallback to models endpoint
         const defModel =
@@ -90,7 +106,9 @@ export function TtsGlobalSettings() {
       const newProv = (res.provider || res.tts_provider || provider) as string
       setModelId(newModel)
       setProvider(newProv)
-      setSuccess(`Saved. Engine will use ${shortModelLabel(newModel)} with provider ${newProv} on next generation. Fallback to sine if mlx missing.`)
+      setSuccess(
+        `Saved. Engine will use ${shortModelLabel(newModel)} with provider ${newProv} on next generation. Fallback to sine if mlx missing.`,
+      )
       // Clear success after 3s
       setTimeout(() => setSuccess(null), 3000)
     } catch (e) {
@@ -102,23 +120,92 @@ export function TtsGlobalSettings() {
     }
   }
 
+  const handleDownload = async () => {
+    if (!modelId || downloading) return
+    setDownloading(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      const res = await api.downloadModel(modelId)
+      setDownloadedMap((prev) => ({ ...prev, [modelId]: res.downloaded }))
+      setSuccess(
+        res.downloaded
+          ? `Downloaded ${shortModelLabel(modelId)} — ready to use.`
+          : `Download finished but weights still incomplete for ${shortModelLabel(modelId)}.`,
+      )
+      setTimeout(() => setSuccess(null), 5000)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      const detail = (e as { detail?: string })?.detail ?? msg
+      setError(detail)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   if (loading) {
-    return <div data-testid="tts-global-settings-loading" style={{ fontSize: 11, color: '#888' }}>Loading TTS settings…</div>
+    return (
+      <div data-testid="tts-global-settings-loading" style={{ fontSize: 11, color: '#888' }}>
+        Loading TTS settings…
+      </div>
+    )
   }
 
   return (
-    <div data-testid="tts-global-settings" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div
+      data-testid="tts-global-settings"
+      style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+    >
       <h3 style={{ margin: 0, fontSize: 13 }}>TTS Global Settings</h3>
       <p style={{ fontSize: 11, color: '#888', margin: 0 }}>
-        Default model/provider used for new generations when no per-generation override is chosen. Changing here triggers engine singleton reload; next generation uses new id (fallback to sine on missing mlx).
+        Default model/provider used for new generations when no per-generation override is chosen.
+        Changing here triggers engine singleton reload; next generation uses new id (fallback to
+        sine on missing mlx).
       </p>
+      {mlxAvailable === false && (
+        <div
+          data-testid="tts-global-mlx-warning"
+          style={{
+            padding: 8,
+            background: '#3a2a1a',
+            border: '1px solid #5a4a22',
+            borderRadius: 4,
+            fontSize: 11,
+            color: '#ffb74d',
+          }}
+        >
+          Backend TTS engine (mlx-audio) is not installed — all models fall back to sine beeps and
+          selection does nothing. Install it with: <code>uv sync --extra tts</code> in{' '}
+          <code>backend/</code>, then restart the backend.
+        </div>
+      )}
       {error && (
-        <div data-testid="tts-global-error" style={{ padding: 8, background: '#3a1a1a', border: '1px solid #5a2222', borderRadius: 4, fontSize: 11, color: '#ff6b6b' }}>
+        <div
+          data-testid="tts-global-error"
+          style={{
+            padding: 8,
+            background: '#3a1a1a',
+            border: '1px solid #5a2222',
+            borderRadius: 4,
+            fontSize: 11,
+            color: '#ff6b6b',
+          }}
+        >
           {error}
         </div>
       )}
       {success && (
-        <div data-testid="tts-global-success" style={{ padding: 8, background: '#1a3a1a', border: '1px solid #2a5a2a', borderRadius: 4, fontSize: 11, color: '#6bff6b' }}>
+        <div
+          data-testid="tts-global-success"
+          style={{
+            padding: 8,
+            background: '#1a3a1a',
+            border: '1px solid #2a5a2a',
+            borderRadius: 4,
+            fontSize: 11,
+            color: '#6bff6b',
+          }}
+        >
           {success}
         </div>
       )}
@@ -147,12 +234,37 @@ export function TtsGlobalSettings() {
           </select>
           <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>{modelId}</div>
           {modelId && downloadedMap[modelId] === false && (
-            <div data-testid="tts-global-model-warning" style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>
-              ↓ Not downloaded — will be fetched on next generation (1–4 GB)
+            <div
+              data-testid="tts-global-model-warning"
+              style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}
+            >
+              ↓ Not downloaded — press Download (1–4 GB, may take a few minutes) or generate to
+              fetch on demand
             </div>
           )}
+          {modelId && downloadedMap[modelId] === false && (
+            <button
+              data-testid="tts-global-download"
+              onClick={() => void handleDownload()}
+              disabled={downloading}
+              style={{
+                marginTop: 6,
+                padding: '6px 12px',
+                borderRadius: 4,
+                border: '1px solid #7c5cff',
+                background: downloading ? '#444' : 'transparent',
+                color: '#fff',
+                cursor: downloading ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {downloading ? 'Downloading… (do not close)' : 'Download model'}
+            </button>
+          )}
           {modelId && downloadedMap[modelId] === true && (
-            <div data-testid="tts-global-model-ok" style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}>
+            <div
+              data-testid="tts-global-model-ok"
+              style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}
+            >
               ✓ Cached locally — ready to use
             </div>
           )}
@@ -179,7 +291,9 @@ export function TtsGlobalSettings() {
               </option>
             ))}
           </select>
-          <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>auto → mlx if available else sine</div>
+          <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+            auto → mlx if available else sine
+          </div>
         </label>
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>

@@ -8,6 +8,8 @@ export interface TTSRequest {
   readonly language?: string
   readonly voice?: string
   readonly instruction?: string
+  readonly referenceAssetId?: string
+  readonly refText?: string
   readonly modelId?: string
   readonly provider?: string
 }
@@ -22,7 +24,15 @@ function arrayBufferToBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-export function parseWavHeader(bytes: Uint8Array): { sampleRate: number; channels: number; byteRate: number; dataSize: number; duration: number } | null {
+export function parseWavHeader(
+  bytes: Uint8Array,
+): {
+  sampleRate: number
+  channels: number
+  byteRate: number
+  dataSize: number
+  duration: number
+} | null {
   if (bytes.length < 12) return null
   try {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
@@ -39,7 +49,12 @@ export function parseWavHeader(bytes: Uint8Array): { sampleRate: number; channel
     let bitsPerSample: number | null = null
 
     while (offset + 8 <= bytes.length) {
-      const chunkId = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
+      const chunkId = String.fromCharCode(
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+      )
       const chunkSize = view.getUint32(offset + 4, true)
       // Guard against insane size
       if (chunkSize > bytes.length) break
@@ -89,15 +104,16 @@ export class TtsApi implements TTSProvider {
   }
 
   async generate(request: TTSRequest): Promise<EmbeddedAsset> {
-    if (!request.text || request.text.trim() === '') throw new Error('TTSRequest text must be a non-empty string')
+    if (!request.text || request.text.trim() === '')
+      throw new Error('TTSRequest text must be a non-empty string')
     const body = JSON.stringify(request)
     const bytes = await this.client.postForWav('/api/tts/generate', body)
     const base64 = arrayBufferToBase64(bytes)
     // Try to decode duration from WAV header; fallback to 1s per 15 chars heuristic
     const parsedHeader = parseWavHeader(bytes)
     const headerDuration = parsedHeader?.duration ?? null
-    let sampleRate = parsedHeader?.sampleRate ?? 24000
-    let channels = parsedHeader?.channels ?? 1
+    const sampleRate = parsedHeader?.sampleRate ?? 24000
+    const channels = parsedHeader?.channels ?? 1
     let waveformPeaks: number[] | undefined
     const duration = headerDuration ?? Math.max(0.5, request.text.length * 0.06 + 0.35)
     // waveformPeaks could be computed via decode, but keep undefined for now (RecordModal computes)
@@ -136,12 +152,19 @@ export function validateVoicePrompt(value: unknown): string[] {
     return errors
   }
   const v = value as Record<string, unknown>
-  if (typeof v.id !== 'string' || v.id === '') errors.push('VoicePrompt id must be a non-empty string')
-  if (typeof v.title !== 'string' || v.title === '') errors.push('VoicePrompt title must be a non-empty string')
-  if (typeof v.instruction !== 'string' || v.instruction === '') errors.push('VoicePrompt instruction must be a non-empty string')
-  if (v.language !== undefined && typeof v.language !== 'string') errors.push('VoicePrompt language must be a string')
-  if (v.voice !== undefined && typeof v.voice !== 'string') errors.push('VoicePrompt voice must be a string')
-  if (v.modelId !== undefined && typeof v.modelId !== 'string') errors.push('VoicePrompt modelId must be a string')
-  if (v.provider !== undefined && typeof v.provider !== 'string') errors.push('VoicePrompt provider must be a string')
+  if (typeof v.id !== 'string' || v.id === '')
+    errors.push('VoicePrompt id must be a non-empty string')
+  if (typeof v.title !== 'string' || v.title === '')
+    errors.push('VoicePrompt title must be a non-empty string')
+  if (typeof v.instruction !== 'string' || v.instruction === '')
+    errors.push('VoicePrompt instruction must be a non-empty string')
+  if (v.language !== undefined && typeof v.language !== 'string')
+    errors.push('VoicePrompt language must be a string')
+  if (v.voice !== undefined && typeof v.voice !== 'string')
+    errors.push('VoicePrompt voice must be a string')
+  if (v.modelId !== undefined && typeof v.modelId !== 'string')
+    errors.push('VoicePrompt modelId must be a string')
+  if (v.provider !== undefined && typeof v.provider !== 'string')
+    errors.push('VoicePrompt provider must be a string')
   return errors
 }

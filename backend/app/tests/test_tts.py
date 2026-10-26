@@ -37,6 +37,24 @@ def test_tts_generate_validation(client: TestClient) -> None:
     assert r3.status_code == 404
 
 
+def test_tts_model_download_rejects_unknown_model(client: TestClient) -> None:
+    r = client.post("/api/tts/models/download", json={"modelId": "unknown/model"})
+    assert r.status_code == 422
+    r2 = client.post("/api/tts/models/download", json={"modelId": ""})
+    assert r2.status_code == 422
+
+
+def test_tts_settings_reports_mlx_and_reference(client: TestClient) -> None:
+    r = client.get("/api/tts/settings")
+    assert r.status_code == 200
+    body = r.json()
+    assert "mlxAvailable" in body
+    assert "reference" in body
+    r2 = client.get("/api/tts/models")
+    assert r2.status_code == 200
+    assert "mlxAvailable" in r2.json()
+
+
 def test_tts_generate_serialized_queue(client: TestClient) -> None:
     # The backend uses asyncio.Lock to serialize concurrent TTS generation.
     # Verify that two rapid requests both succeed (queued, not rejected).
