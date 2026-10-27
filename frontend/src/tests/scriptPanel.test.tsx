@@ -181,7 +181,7 @@ describe('Script tab shell', () => {
     expect(caution).toHaveTextContent(/ignore rotation/)
   })
 
-  it('shows a read-only highlighted preview of the draft', async () => {
+  it('edits directly in the highlighted view with scroll-synced layers', async () => {
     const user = userEvent.setup()
     const { engine } = renderPanel()
     setupProject(engine)
@@ -190,10 +190,20 @@ describe('Script tab shell', () => {
     const editor = screen.getByLabelText('Animation Script source')
     await user.type(editor, 'script "Hi" from 0')
 
+    // One editable surface: the textarea sits over the highlight layer.
     const highlighted = screen.getByTestId('script-highlight-source')
     expect(highlighted.innerHTML).toContain('anim-token')
     expect(highlighted.innerHTML).toContain('anim-keyword')
     expect(highlighted.innerHTML).toContain('anim-string')
+    expect(highlighted).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.queryByTestId('script-highlight')).not.toBeInTheDocument()
+
+    editor.scrollTop = 40
+    editor.scrollLeft = 12
+    fireEvent.scroll(editor)
+    expect(screen.getByTestId('script-line-numbers').scrollTop).toBe(40)
+    expect(highlighted.scrollTop).toBe(40)
+    expect(highlighted.scrollLeft).toBe(12)
   })
 
   it('follows the active slide, hiding the tab again for slides without a script', async () => {

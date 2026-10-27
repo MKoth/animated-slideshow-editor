@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type UIEvent } from 'react'
 import { useEngine } from '../../app/useEngine'
 import { checkAnimationScript } from '../../engine/animationScriptCheck'
 import { runAnimationScriptAsync } from '../../engine/animationScriptRun'
@@ -64,6 +64,7 @@ export function ScriptPanel({
   const openLibraryBrowser = useClipLibraryStore((state) => state.openLibraryBrowser)
   const gutterRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<HTMLTextAreaElement>(null)
+  const highlightRef = useRef<HTMLPreElement>(null)
   const [draft, setDraft] = useState(source)
   const [syncedFrom, setSyncedFrom] = useState({ slideId, source })
   const [outcome, setOutcome] = useState<ScriptOutcome | null>(null)
@@ -80,6 +81,34 @@ export function ScriptPanel({
 
   const dirty = draft !== source
   const lineCount = draft.split('\n').length
+
+  // Single editable surface: the transparent textarea sits over a highlighted
+  // <pre> with identical metrics, so what you edit is what is highlighted.
+  const highlighted = useMemo(() => highlightAnimationScript(draft), [draft])
+  // A trailing newline collapses in <pre>; keep a space so its scrollHeight
+  // matches the textarea's exactly.
+  const displayHtml = draft.endsWith('\n') ? `${highlighted} ` : highlighted
+
+  // Typing at the bottom auto-scrolls the textarea natively; mirror it so
+  // the highlight layer never drifts out of alignment between scroll events.
+  useEffect(() => {
+    const editor = editorRef.current
+    const highlight = highlightRef.current
+    if (!editor || !highlight) return
+    highlight.scrollTop = editor.scrollTop
+    highlight.scrollLeft = editor.scrollLeft
+  }, [draft])
+
+  const syncScroll = (event: UIEvent<HTMLTextAreaElement>) => {
+    const target = event.currentTarget
+    if (gutterRef.current) {
+      gutterRef.current.scrollTop = target.scrollTop
+    }
+    if (highlightRef.current) {
+      highlightRef.current.scrollTop = target.scrollTop
+      highlightRef.current.scrollLeft = target.scrollLeft
+    }
+  }
 
   // Library-version drift: recorded entry versions from the last Run versus
   // the live project entries. Computed on every render (the parent re-renders
@@ -332,74 +361,65 @@ export function ScriptPanel({
             <div key={index}>{index + 1}</div>
           ))}
         </div>
-        <textarea
-          ref={editorRef}
-          aria-label="Animation Script source"
-          value={draft}
-          onChange={(event) => editDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-              event.preventDefault()
-              commit()
-            }
-          }}
-          onScroll={(event) => {
-            if (gutterRef.current) {
-              gutterRef.current.scrollTop = event.currentTarget.scrollTop
-            }
-          }}
-          spellCheck={false}
-          style={{
-            flex: 1,
-            minHeight: 0,
-            padding: '8px 8px',
-            border: 'none',
-            outline: 'none',
-            resize: 'none',
-            background: 'transparent',
-            color: 'var(--color-text)',
-            fontFamily: 'inherit',
-            fontSize: 'inherit',
-            lineHeight: 'inherit',
-            whiteSpace: 'pre',
-            overflowWrap: 'normal',
-            overflow: 'auto',
-          }}
-        />
-      </div>
-      <details
-        data-testid="script-highlight"
-        open
-        style={{ borderTop: '1px solid var(--color-border)' }}
-      >
-        <summary
-          style={{
-            padding: '4px 8px',
-            fontSize: 11,
-            cursor: 'pointer',
-            color: 'var(--color-text-muted)',
-          }}
-        >
-          Highlighted preview (read-only)
-        </summary>
-        <pre
-          data-testid="script-highlight-source"
-          style={{
-            margin: 0,
-            padding: '8px',
-            overflow: 'auto',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-            fontSize: 12,
-            lineHeight: '18px',
-            whiteSpace: 'pre',
-          }}
-        >
-          <code
-            className="anim-code"
-            dangerouslySetInnerHTML={{ __html: highlightAnimationScript(draft) }}
+        <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
+          <pre
+            ref={highlightRef}
+            aria-hidden="true"
+            data-testid="script-highlight-source"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              margin: 0,
+              padding: '8px 8px',
+              overflow: 'hidden',
+              pointerEvents: 'none',
+              fontFamily: 'inherit',
+              fontSize: 'inherit',
+              lineHeight: 'inherit',
+              whiteSpace: 'pre',
+              overflowWrap: 'normal',
+              color: 'var(--color-text)',
+            }}
+          >
+            <code className="anim-code" dangerouslySetInnerHTML={{ __html: displayHtml }} />
+          </pre>
+          <textarea
+            ref={editorRef}
+            aria-label="Animation Script source"
+            value={draft}
+            onChange={(event) => editDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault()
+                commit()
+              }
+            }}
+            onScroll={syncScroll}
+            spellCheck={false}
+            className="script-editor-textarea"
+            style={{
+              position: 'relative',
+              zIndex: 1,
+              flex: 1,
+              minHeight: 0,
+              padding: '8px 8px',
+              border: 'none',
+              outline: 'none',
+              resize: 'none',
+              background: 'transparent',
+              color: 'transparent',
+              caretColor: 'var(--color-text)',
+              WebkitTextFillColor: 'transparent',
+              fontFamily: 'inherit',
+              fontSize: 'inherit',
+              lineHeight: 'inherit',
+              whiteSpace: 'pre',
+              overflowWrap: 'normal',
+              overflow: 'auto',
+            }}
           />
-        </pre>
-      </details>
+        </div>
+      </div>
       {visibleOutcome !== null && (
         <CompileOutcome
           kind={visibleOutcome.kind}

@@ -1500,6 +1500,18 @@ button:disabled {
   font-style: italic;
 }
 
+.script-editor-textarea {
+  -webkit-text-fill-color: transparent;
+}
+
+.script-editor-textarea::selection {
+  background: rgba(97, 175, 239, 0.35);
+}
+
+.script-editor-textarea::-moz-selection {
+  background: rgba(97, 175, 239, 0.35);
+}
+
 .inspector-section__shader-source {
   margin-top: 10px;
   border-top: 1px solid var(--color-border);
