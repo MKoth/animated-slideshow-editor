@@ -51,6 +51,7 @@ export function ProjectsDialog() {
   const [renameFolderDraft, setRenameFolderDraft] = useState('')
   const [renameFolderError, setRenameFolderError] = useState<string | null>(null)
   const [pendingDeleteFolderId, setPendingDeleteFolderId] = useState<string | null>(null)
+  const [pendingDeleteProject, setPendingDeleteProject] = useState<ProjectSummary | null>(null)
   const [backupBusy, setBackupBusy] = useState(false)
 
   useEffect(() => {
@@ -73,6 +74,7 @@ export function ProjectsDialog() {
       setRenameFolderDraft('')
       setRenameFolderError(null)
       setPendingDeleteFolderId(null)
+      setPendingDeleteProject(null)
       setBackupBusy(false)
     }
   }, [visible])
@@ -147,7 +149,19 @@ export function ProjectsDialog() {
   }
 
   const handleDelete = (project: ProjectSummary): void => {
-    void deleteLibraryProject(project.id)
+    setPendingDeleteProject(project)
+  }
+
+  const handleConfirmDeleteProject = (): void => {
+    const project = pendingDeleteProject
+    setPendingDeleteProject(null)
+    if (project) {
+      void deleteLibraryProject(project.id)
+    }
+  }
+
+  const handleCancelDeleteProject = (): void => {
+    setPendingDeleteProject(null)
   }
 
   const handleDuplicate = (project: ProjectSummary): void => {
@@ -332,6 +346,29 @@ export function ProjectsDialog() {
               }}
             >
               Delete folder &amp; projects
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (pendingDeleteProject) {
+    return (
+      <div className="projects-overlay">
+        <div className="projects-dialog" role="dialog" aria-label="Delete project">
+          <p className="projects-dialog__message">
+            {`Delete "${pendingDeleteProject.name}"? This cannot be undone.`}
+          </p>
+          <div className="projects-dialog__actions">
+            <button className="projects-dialog__button" onClick={handleCancelDeleteProject}>
+              Cancel
+            </button>
+            <button
+              className="projects-dialog__button projects-dialog__button--danger"
+              onClick={handleConfirmDeleteProject}
+            >
+              Delete
             </button>
           </div>
         </div>

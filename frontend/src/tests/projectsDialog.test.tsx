@@ -202,7 +202,7 @@ describe('ProjectsDialog', () => {
     expect(screen.queryByRole('dialog', { name: 'Projects' })).not.toBeInTheDocument()
   })
 
-  it('deletes a project row and its backend record', async () => {
+  it('asks for confirmation before deleting a project row', async () => {
     const calls = stubBackend()
     const user = userEvent.setup()
     renderHost()
@@ -210,6 +210,25 @@ describe('ProjectsDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Open' }))
     await within(dialog()).findByText('Maths Lesson')
     await user.click(within(dialog()).getByRole('button', { name: 'Delete Maths Lesson' }))
+
+    expect(calls).not.toContain('DELETE /api/projects/p-2')
+    expect(screen.getByRole('dialog', { name: 'Delete project' })).toBeInTheDocument()
+    expect(screen.getByText(/Delete "Maths Lesson"\? This cannot be undone/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(calls).not.toContain('DELETE /api/projects/p-2')
+    expect(await within(dialog()).findByText('Maths Lesson')).toBeInTheDocument()
+  })
+
+  it('deletes a project row and its backend record after confirming', async () => {
+    const calls = stubBackend()
+    const user = userEvent.setup()
+    renderHost()
+
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await within(dialog()).findByText('Maths Lesson')
+    await user.click(within(dialog()).getByRole('button', { name: 'Delete Maths Lesson' }))
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
 
     expect(calls).toContain('DELETE /api/projects/p-2')
     expect(within(dialog()).queryByText('Maths Lesson')).not.toBeInTheDocument()
