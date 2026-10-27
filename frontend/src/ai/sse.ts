@@ -1,3 +1,5 @@
+import type { AiAssistantMode } from '../api/aiApi'
+
 export type SseEventType = 'start' | 'token' | 'done' | 'error'
 
 export interface SseEvent {
@@ -50,7 +52,7 @@ export async function streamAiChat(
     message?: string
     mode: 'send' | 'regenerate'
     context: unknown
-    assistantMode?: 'scenario' | 'audio' | 'blackboard' | 'animation' | 'shape' | 'collection'
+    assistantMode?: AiAssistantMode
   },
   handlers: StreamHandlers,
   signal?: AbortSignal,

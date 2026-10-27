@@ -9,7 +9,6 @@ import type {
 import { captureAssetSnapshot, captureAudioSnapshot } from '../../app/assetSnapshot'
 import { captureMaterialSnapshot, captureShaderSnapshot } from '../../app/definitionSnapshot'
 import { ensureMaterialLibrariesLoaded } from '../../app/materialLibraries'
-import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import type {
   AnimationScriptCompileResult,
   AnimationScriptDiagnostic,
@@ -18,28 +17,10 @@ import type {
 import { SetSlideAnimationScriptCommand } from '../../engine/commands'
 import { findScriptLibraryDrift } from '../../engine/scriptLibrary'
 import { highlightAnimationScript } from './AnimationScriptViewer'
+import { ScriptAiModal } from '../ai/ScriptAiModal'
+import { collectGlobalAudioAssets } from '../../stores/assetLibraryStore'
 import { useClipLibraryStore } from '../../stores/clipLibraryStore'
 import { measuredNodeSize } from '../../pixi/renderer/nodeMeasurement'
-
-/** Fresh library uploads Check can resolve by name before anything embeds them. */
-function collectGlobalAudioAssets(): readonly { id: string; name: string; duration: number }[] {
-  const definitions = useAssetLibraryStore.getState().allDefinitions
-  const out: { id: string; name: string; duration: number }[] = []
-  for (const definition of definitions) {
-    const isAudio =
-      definition.category === 'audio' ||
-      definition.mimeType?.startsWith('audio/') === true ||
-      /\.(wav|mp3|mpeg|ogg|webm)$/i.test(definition.original_filename ?? '')
-    if (!isAudio) continue
-    const raw = (definition.metadata as Record<string, unknown> | undefined)?.duration
-    out.push({
-      id: definition.id,
-      name: definition.name,
-      duration: typeof raw === 'number' ? raw : Number.NaN,
-    })
-  }
-  return out
-}
 
 type ScriptOutcome =
   | {
@@ -70,6 +51,7 @@ export function ScriptPanel({
   const [outcome, setOutcome] = useState<ScriptOutcome | null>(null)
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<AnimationScriptRunProgress | null>(null)
+  const [aiOpen, setAiOpen] = useState(false)
 
   if (syncedFrom.slideId !== slideId || syncedFrom.source !== source) {
     if (syncedFrom.slideId !== slideId) {
@@ -280,6 +262,23 @@ export function ScriptPanel({
         >
           Functions
         </button>
+        <button
+          type="button"
+          data-testid="script-ai-open"
+          onClick={() => setAiOpen(true)}
+          title="Edit this script with the AI assistant"
+          style={{
+            padding: '4px 12px',
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            background: 'transparent',
+            color: 'var(--color-text)',
+            cursor: 'pointer',
+            fontSize: 11,
+          }}
+        >
+          AI Assist
+        </button>
       </div>
       {running && (
         <div
@@ -428,6 +427,17 @@ export function ScriptPanel({
           ok={outcomeOk(visibleOutcome)}
           error={visibleOutcome.kind === 'run' ? visibleOutcome.result.error : null}
           onReveal={revealDiagnostic}
+        />
+      )}
+      {aiOpen && (
+        <ScriptAiModal
+          projectId={engine.project?.id ?? ''}
+          projectName={engine.project?.name ?? ''}
+          slideId={slideId}
+          slideName={slideName}
+          draft={draft}
+          diagnostics={visibleOutcome?.result.diagnostics ?? []}
+          onClose={() => setAiOpen(false)}
         />
       )}
     </div>

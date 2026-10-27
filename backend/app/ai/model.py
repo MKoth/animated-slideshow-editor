@@ -23,7 +23,11 @@ class AiSettingsRow(Base):
 
 
 class AiConversationRow(Base):
-    """Project-scoped AI chat conversation. Never part of the .lesson file."""
+    """Project-scoped AI chat conversation. Never part of the .lesson file.
+
+    Slide assistants (script mode) scope a conversation to one slide via
+    slide_id; project assistants leave it null.
+    """
 
     __tablename__ = "ai_conversations"
 
@@ -31,6 +35,8 @@ class AiConversationRow(Base):
     project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     mode: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
+    # Slide basis (script assistant): nullable so older databases backfill via ADD COLUMN.
+    slide_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 

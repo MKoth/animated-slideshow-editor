@@ -72,6 +72,7 @@ from app.config import (
     DEFAULT_BLACKBOARD_SYSTEM_PROMPT,
     DEFAULT_COLLECTION_SYSTEM_PROMPT,
     DEFAULT_SCENARIO_SYSTEM_PROMPT,
+    DEFAULT_SCRIPT_SYSTEM_PROMPT,
     DEFAULT_SHAPE_SYSTEM_PROMPT,
     DEFAULT_SYSTEM_PROMPT,
 )
@@ -169,7 +170,7 @@ def get_ai_models(request: Request) -> AiModelsOut:
 
 @router.get("/ai/conversations")
 def list_ai_conversations(
-    request: Request, projectId: str = "", mode: str | None = None
+    request: Request, projectId: str = "", mode: str | None = None, slideId: str | None = None
 ) -> list[dict[str, object]]:
     if not projectId.strip():
         raise HTTPException(status_code=422, detail="projectId is required")
@@ -181,21 +182,23 @@ def list_ai_conversations(
             "projectId": row.project_id,
             "title": row.title,
             "mode": library.normalize_conversation_mode(row.mode),
+            "slideId": getattr(row, "slide_id", None),
             "modified": _iso(row.updated_at),
         }
-        for row in library.list_conversations(projectId, wanted)
+        for row in library.list_conversations(projectId, wanted, slideId)
     ]
 
 
 @router.post("/ai/conversations", status_code=201)
 def create_ai_conversation(request: Request, body: AiConversationCreate) -> dict[str, object]:
     library = _library(request)
-    row = library.create_conversation(body.projectId, body.title, body.mode)
+    row = library.create_conversation(body.projectId, body.title, body.mode, body.slideId)
     return {
         "id": row.id,
         "projectId": row.project_id,
         "title": row.title,
         "mode": library.normalize_conversation_mode(row.mode),
+        "slideId": getattr(row, "slide_id", None),
         "created": _iso(row.created_at),
         "modified": _iso(row.updated_at),
     }
@@ -217,8 +220,27 @@ def rename_ai_conversation(
         "projectId": row.project_id,
         "title": row.title,
         "mode": library.normalize_conversation_mode(row.mode),
+        "slideId": getattr(row, "slide_id", None),
         "modified": _iso(row.updated_at),
     }
+
+
+@router.delete("/ai/conversations", status_code=200)
+def delete_slide_conversations(
+    request: Request, projectId: str = "", mode: str | None = None, slideId: str | None = None
+) -> dict[str, object]:
+    """Bulk delete one slide's assistant conversations (deterministic regen).
+
+    Regenerating a deterministic board script replaces the source the slide
+    assistant was improving — its history would pollute the next pass.
+    """
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    if not slideId or not slideId.strip():
+        raise HTTPException(status_code=422, detail="slideId is required")
+    library = _library(request)
+    deleted = library.delete_slide_conversations(projectId, slideId.strip(), mode)
+    return {"deleted": deleted}
 
 
 @router.delete("/ai/conversations/{conversation_id}", status_code=204)
@@ -315,8 +337,16 @@ def _resolve_live_models(
 
 
 def _effective_assistant_mode(requested: str | None, conversation_mode: object) -> str:
-    """Scenario/audio/blackboard/animation/shape/collection split: explicit request wins, else stored conversation mode."""
-    if requested in ("scenario", "audio", "blackboard", "animation", "shape", "collection"):
+    """Scenario/audio/blackboard/animation/shape/collection/script split: explicit request wins, else stored conversation mode."""
+    if requested in (
+        "scenario",
+        "audio",
+        "blackboard",
+        "animation",
+        "shape",
+        "collection",
+        "script",
+    ):
         return str(requested)
     return AiLibrary.normalize_conversation_mode(conversation_mode)
 
@@ -391,6 +421,10 @@ def _system_prompt_for_mode(stored_prompt: str, effective_mode: str) -> str:
         if stored_prompt.strip() and stored_prompt.strip() != DEFAULT_SYSTEM_PROMPT.strip():
             return stored_prompt
         return DEFAULT_BLACKBOARD_SYSTEM_PROMPT
+    if effective_mode == "script":
+        if stored_prompt.strip() and stored_prompt.strip() != DEFAULT_SYSTEM_PROMPT.strip():
+            return stored_prompt
+        return DEFAULT_SCRIPT_SYSTEM_PROMPT
     return stored_prompt
 
 

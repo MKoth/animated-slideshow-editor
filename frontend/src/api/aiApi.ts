@@ -22,7 +22,7 @@ export interface AiSettingsUpdate {
 }
 
 export type AiAssistantMode =
-  'scenario' | 'audio' | 'blackboard' | 'animation' | 'shape' | 'collection'
+  'scenario' | 'audio' | 'blackboard' | 'animation' | 'shape' | 'collection' | 'script'
 
 export function normalizeAssistantMode(mode: unknown): AiAssistantMode {
   if (
@@ -31,7 +31,8 @@ export function normalizeAssistantMode(mode: unknown): AiAssistantMode {
     mode === 'blackboard' ||
     mode === 'animation' ||
     mode === 'shape' ||
-    mode === 'collection'
+    mode === 'collection' ||
+    mode === 'script'
   )
     return mode
   // Legacy 'lesson' (split into scenario/audio/blackboard) and unknown read as scenario.
@@ -43,6 +44,8 @@ export interface AiConversationSummary {
   projectId: string
   title: string
   mode?: AiAssistantMode
+  /** Slide basis (script assistant): set only for slide-scoped conversations. */
+  slideId?: string | null
   modified: string
 }
 
@@ -51,6 +54,8 @@ export interface AiConversation {
   projectId: string
   title: string
   mode?: AiAssistantMode
+  /** Slide basis (script assistant): set only for slide-scoped conversations. */
+  slideId?: string | null
   created: string
   modified: string
 }
@@ -552,9 +557,11 @@ export class AiApi {
   async listConversations(
     projectId: string,
     mode?: AiAssistantMode,
+    slideId?: string,
   ): Promise<AiConversationSummary[]> {
     const params = new URLSearchParams({ projectId })
     if (mode) params.set('mode', normalizeAssistantMode(mode))
+    if (slideId) params.set('slideId', slideId)
     return this.client.get<AiConversationSummary[]>(`/api/ai/conversations?${params.toString()}`)
   }
 
@@ -562,10 +569,12 @@ export class AiApi {
     projectId: string,
     title?: string,
     mode?: AiAssistantMode,
+    slideId?: string,
   ): Promise<AiConversation> {
     const body: Record<string, string> = { projectId }
     if (title) body.title = title
     if (mode) body.mode = normalizeAssistantMode(mode)
+    if (slideId) body.slideId = slideId
     return this.client.post<AiConversation>('/api/ai/conversations', JSON.stringify(body))
   }
 
@@ -578,6 +587,20 @@ export class AiApi {
 
   async deleteConversation(id: string): Promise<void> {
     return this.client.delete(`/api/ai/conversations/${encodeURIComponent(id)}`)
+  }
+
+  /** Bulk delete one slide's assistant conversations (deterministic regen). */
+  async deleteSlideConversations(
+    projectId: string,
+    slideId: string,
+    mode?: AiAssistantMode,
+  ): Promise<number> {
+    const params = new URLSearchParams({ projectId, slideId })
+    if (mode) params.set('mode', normalizeAssistantMode(mode))
+    const result = await this.client.deleteJson<{ deleted: number }>(
+      `/api/ai/conversations?${params.toString()}`,
+    )
+    return result.deleted ?? 0
   }
 
   async listMessages(conversationId: string): Promise<AiMessage[]> {

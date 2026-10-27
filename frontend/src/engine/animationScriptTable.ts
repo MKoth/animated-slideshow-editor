@@ -54,11 +54,24 @@ export interface ScriptTableGrid {
 export function buildScriptTableGrid(
   table: ScriptTableNodeInfo,
   nodes: readonly ScriptTableNodeInfo[],
+  onlyIds?: ReadonlySet<string>,
 ): ScriptTableGrid {
   const columnCount = Math.max(1, table.tableColumnCount ?? 0)
+  // Deterministic node ids are stable across runs by design
+  // (`script-node:<scope>:<index>`), so a previous run's rows share ids with
+  // the new table's rows. When the table itself is same-script-created, the
+  // grid must resolve against this run's rows/cells only — otherwise
+  // `inside newTable.cell(r, c)` parents new content into the previous run's
+  // cells, which this run then deletes ("Parent node not found").
+  const inScope = (node: ScriptTableNodeInfo): boolean =>
+    onlyIds === undefined || onlyIds.has(node.id)
   const flatCells = nodes
-    .filter((node) => node.parentId === table.id)
-    .flatMap((row) => nodes.filter((node) => node.parentId === row.id && node.isTableCell === true))
+    .filter((node) => node.parentId === table.id && inScope(node))
+    .flatMap((row) =>
+      nodes.filter(
+        (node) => node.parentId === row.id && node.isTableCell === true && inScope(node),
+      ),
+    )
 
   const occupied = new Set<string>()
   const cells: ScriptTableGridCell[] = []

@@ -1,5 +1,5 @@
 import { act } from 'react'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EngineContext } from '../app/engineContext'
@@ -22,6 +22,7 @@ import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
 import { DEFAULT_TIMELINE_HEIGHT } from '../stores/uiPrefs'
 import { useTimelineViewStore } from '../stores/timelineViewStore'
+import { useScriptAiStore } from '../stores/scriptAiStore'
 import { noopPersistence } from './contextHarness'
 
 // Check/Run load the material and shader libraries first; the real stores
@@ -96,6 +97,17 @@ beforeEach(() => {
   usePlaybackController.setState({ currentTimes: {} })
   useTimelineViewStore.persist.clearStorage()
   useTimelineViewStore.setState({ zoomLevel: 1, scrollTime: 0, height: DEFAULT_TIMELINE_HEIGHT })
+  useScriptAiStore.setState({
+    conversations: [],
+    messagesById: {},
+    activeIdBySlide: {},
+    drafts: {},
+    status: 'idle',
+    streamingConversationId: null,
+    streamingContent: '',
+    lastError: null,
+    aborter: null,
+  })
   localStorage.clear()
 })
 
@@ -268,6 +280,128 @@ describe('Script tab shell', () => {
 
     expect(useClipLibraryStore.getState().libraryBrowserVisible).toBe(true)
     expect(useClipLibraryStore.getState().libraryBrowserSection).toBe('scriptFunctions')
+  })
+})
+
+describe('Script tab AI assistant', () => {
+  const convo = {
+    id: 'script-convo-1',
+    projectId: 'p-1',
+    title: 'Script — Slide 1',
+    mode: 'script',
+    slideId: 'slide-1',
+    created: new Date().toISOString(),
+    modified: new Date().toISOString(),
+  }
+
+  function stubScriptAi() {
+    vi.stubGlobal('fetch', vi.fn())
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const target = String(url)
+      if (target.includes('/api/ai/chat')) {
+        return new Response(null, { status: 200 })
+      }
+      if (target.includes('/api/ai/conversations') && target.includes('/messages')) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      if (target.includes('/api/ai/proposals')) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      if (target.includes('/api/ai/conversations')) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      return new Response(JSON.stringify({}), { status: 200 })
+    })
+  }
+
+  function stubConversations() {
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      const target = String(url)
+      if (target.includes('/api/ai/chat')) {
+        return new Response(null, { status: 200 })
+      }
+      if (target.includes('/api/ai/conversations') && target.includes('/messages')) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      if (target.includes('/api/ai/proposals')) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      if (target.endsWith('/api/ai/conversations') && (init as RequestInit)?.method === 'POST') {
+        // Echo the requested slide scope, like the backend does.
+        const requested = JSON.parse(String((init as RequestInit)?.body))
+        return new Response(
+          JSON.stringify({ ...convo, slideId: requested.slideId ?? convo.slideId }),
+          { status: 201 },
+        )
+      }
+      if (target.includes('/api/ai/conversations')) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      return new Response(JSON.stringify({}), { status: 200 })
+    })
+  }
+
+  it('opens the slide AI modal without a start step and creates the conversation on first send', async () => {
+    const user = userEvent.setup()
+    const { engine } = renderPanel()
+    setupProject(engine)
+    stubScriptAi()
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+
+    await user.click(screen.getByTestId('script-ai-open'))
+
+    expect(screen.getByTestId('script-ai-modal')).toHaveTextContent('Slide 1')
+    expect(screen.queryByTestId('script-ai-start')).not.toBeInTheDocument()
+    expect(screen.getByTestId('script-ai-messages')).toHaveTextContent(
+      'starts with your first message',
+    )
+
+    stubConversations()
+    await user.type(screen.getByTestId('script-ai-input'), 'tighten the timing')
+    await user.click(screen.getByTestId('script-ai-send'))
+
+    await waitFor(() => {
+      const chatCall = vi
+        .mocked(fetch)
+        .mock.calls.find(([url]) => String(url).includes('/api/ai/chat'))
+      expect(chatCall).toBeDefined()
+    })
+    const createCall = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([url, init]) =>
+          String(url).endsWith('/api/ai/conversations') && (init as RequestInit)?.method === 'POST',
+      )
+    expect(createCall).toBeDefined()
+    const body = JSON.parse(String((createCall?.[1] as RequestInit)?.body))
+    expect(body.mode).toBe('script')
+    expect(body.slideId).toBe(engine.getActiveSlide()?.id)
+  })
+
+  it('sends the improve-timing request in script mode with narration guidance', async () => {
+    const user = userEvent.setup()
+    const { engine } = renderPanel()
+    setupProject(engine)
+    stubScriptAi()
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+    await user.click(screen.getByTestId('script-ai-open'))
+
+    stubConversations()
+    await user.click(screen.getByTestId('script-ai-improve'))
+
+    await waitFor(() => {
+      const chatCall = vi
+        .mocked(fetch)
+        .mock.calls.find(([url]) => String(url).includes('/api/ai/chat'))
+      expect(chatCall).toBeDefined()
+    })
+    const chatCall = vi
+      .mocked(fetch)
+      .mock.calls.find(([url]) => String(url).includes('/api/ai/chat'))
+    const chatBody = JSON.parse(String((chatCall?.[1] as RequestInit)?.body))
+    expect(chatBody.assistantMode).toBe('script')
+    expect(chatBody.message).toContain('narration')
+    expect(chatBody.context.scriptFocus.slideName).toBe('Slide 1')
   })
 })
 

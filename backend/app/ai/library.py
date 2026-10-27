@@ -184,18 +184,29 @@ class AiLibrary:
 
     @staticmethod
     def normalize_conversation_mode(mode: object) -> str:
-        """Scenario/audio/blackboard/animation/shape/collection split.
+        """Scenario/audio/blackboard/animation/shape/collection/script split.
 
         Legacy `lesson`, unknown, or missing modes read as `scenario` (the Lesson
         tab was split into Scenario/Audio/Blackboard; old lesson conversations
         surface in Scenario).
         """
-        if mode in ("scenario", "audio", "blackboard", "animation", "shape", "collection"):
+        if mode in (
+            "scenario",
+            "audio",
+            "blackboard",
+            "animation",
+            "shape",
+            "collection",
+            "script",
+        ):
             return str(mode)
         return "scenario"
 
     def list_conversations(
-        self, project_id: str, mode: str | None = None
+        self,
+        project_id: str,
+        mode: str | None = None,
+        slide_id: str | None = None,
     ) -> list[AiConversationRow]:
         statement = (
             select(AiConversationRow)
@@ -207,13 +218,19 @@ class AiLibrary:
             rows = list(session.scalars(statement))
         if wanted is None:
             return rows
-        return [row for row in rows if self.normalize_conversation_mode(row.mode) == wanted]
+        return [
+            row
+            for row in rows
+            if self.normalize_conversation_mode(row.mode) == wanted
+            and (slide_id is None or getattr(row, "slide_id", None) == slide_id)
+        ]
 
     def create_conversation(
         self,
         project_id: str,
         title: str | None = None,
         mode: str | None = None,
+        slide_id: str | None = None,
     ) -> AiConversationRow:
         wanted = self.normalize_conversation_mode(mode)
         with self._database.session() as session:
@@ -230,6 +247,7 @@ class AiLibrary:
                 project_id=project_id,
                 title=clean[:255],
                 mode=wanted,
+                slide_id=slide_id.strip() if slide_id and slide_id.strip() else None,
                 created_at=now,
                 updated_at=now,
             )
@@ -272,6 +290,38 @@ class AiLibrary:
             )
             session.delete(row)
             session.commit()
+
+    def delete_slide_conversations(
+        self, project_id: str, slide_id: str, mode: str | None = "script"
+    ) -> int:
+        """Delete one slide's assistant conversations (deterministic regen).
+
+        A regenerated deterministic board script replaces the source the slide
+        assistant was improving, so its history would pollute the next pass.
+        Returns the deleted conversation count.
+        """
+        wanted = self.normalize_conversation_mode(mode) if mode is not None else None
+        with self._database.session() as session:
+            rows = list(
+                session.scalars(
+                    select(AiConversationRow).where(AiConversationRow.project_id == project_id)
+                )
+            )
+        victims = [
+            row
+            for row in rows
+            if getattr(row, "slide_id", None) == slide_id
+            and (wanted is None or self.normalize_conversation_mode(row.mode) == wanted)
+        ]
+        for row in victims:
+            scenario_store.delete_markdown_for_conversation(self._database, row.id)
+        if victims:
+            ids = [row.id for row in victims]
+            with self._database.session() as session:
+                session.execute(delete(AiMessageRow).where(AiMessageRow.conversation_id.in_(ids)))
+                session.execute(delete(AiConversationRow).where(AiConversationRow.id.in_(ids)))
+                session.commit()
+        return len(victims)
 
     def delete_by_project(self, project_id: str) -> None:
         with self._database.session() as session:

@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -44,6 +45,62 @@ def test_tts_model_download_rejects_unknown_model(client: TestClient) -> None:
     assert r.status_code == 422
     r2 = client.post("/api/tts/models/download", json={"modelId": ""})
     assert r2.status_code == 422
+
+
+def test_tts_settings_saved_choice_survives_restart(
+    client: TestClient, settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r = client.put(
+        "/api/tts/settings",
+        json={"provider": "sine", "modelId": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["provider"] == "sine"
+    assert r.json()["modelId"] == "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16"
+
+    got = client.get("/api/tts/settings")
+    assert got.status_code == 200
+    assert got.json()["provider"] == "sine"
+    assert got.json()["modelId"] == "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16"
+
+    # Simulate a backend restart: fresh load_settings() from the same data
+    # dir must pick up the UI-saved choice, not the env/default values.
+    from app.config import load_settings
+
+    monkeypatch.setenv("DATA_DIR", str(settings.data_dir))
+    monkeypatch.delenv("TTS_PROVIDER", raising=False)
+    monkeypatch.delenv("TTS_MODEL_ID", raising=False)
+    reloaded = load_settings()
+    assert reloaded.tts_provider == "sine"
+    assert reloaded.tts_model_id == "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16"
+
+
+def test_tts_settings_file_tolerates_missing_and_corrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import _load_tts_settings_file, load_settings, save_tts_settings
+
+    assert _load_tts_settings_file(tmp_path) == {}
+
+    (tmp_path / "tts_settings.json").write_text("not json{", encoding="utf-8")
+    assert _load_tts_settings_file(tmp_path) == {}
+
+    (tmp_path / "tts_settings.json").write_text("[1, 2]", encoding="utf-8")
+    assert _load_tts_settings_file(tmp_path) == {}
+
+    saved = save_tts_settings(tmp_path, provider="SINE", model_id="  test/model-x  ")
+    assert saved == {"tts_provider": "sine", "tts_model_id": "test/model-x"}
+    assert _load_tts_settings_file(tmp_path) == saved
+
+    # Saved UI choice wins over env vars; env vars win over built-ins.
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("TTS_PROVIDER", "mlx")
+    monkeypatch.setenv("TTS_MODEL_ID", "env/model")
+    assert load_settings().tts_provider == "sine"
+    (tmp_path / "tts_settings.json").unlink()
+    reloaded = load_settings()
+    assert reloaded.tts_provider == "mlx"
+    assert reloaded.tts_model_id == "env/model"
 
 
 def test_tts_settings_reports_mlx_and_reference(client: TestClient) -> None:

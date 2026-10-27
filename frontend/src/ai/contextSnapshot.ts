@@ -3,6 +3,7 @@ import type { ShapeCategory } from '../engine/shapeCategory'
 import { categoryPathOfShape, qualifiedShapeName } from '../engine/shape'
 import { composeChain } from '../engine/worldTransform'
 import { buildBlackboardFocus, type BlackboardFocus } from './blackboardFocus'
+import type { ScriptFocus } from './scriptFocus'
 
 export interface ContextSnapshotSlide {
   id: string
@@ -136,6 +137,10 @@ export interface ContextSnapshot {
    * blackboard-only (scenario) snapshots and when there is no active slide.
    */
   blackboardFocus?: BlackboardFocus
+  /** Script-assistant focus (script mode): slide id/name/duration, full script
+   * source, prompt block ids/windows/text, and latest check diagnostics.
+   */
+  scriptFocus?: ScriptFocus
   sceneNodes: string[]
   selection: string[]
   materials: string[]
@@ -186,6 +191,8 @@ export interface SnapshotSources {
   }[]
   /** Scenario markdown doc (issue #462): project-attached doc working view. */
   scenarioMarkdown?: string
+  /** Script-assistant focus (script mode): current draft + prompt blocks + diagnostics. */
+  scriptFocus?: ScriptFocus
   /**
    * Blackboard-only mode (scenario assistant): omit every room key (scene
    * nodes, selection, materials, shaders, clips, library assets, collections,
@@ -366,6 +373,7 @@ export function buildContextSnapshot(
     ...(sources.animationAssets && sources.animationAssets.length > 0 && !blackboardOnly
       ? { animationAssistantAssets: sources.animationAssets.map((asset) => ({ ...asset })) }
       : {}),
+    ...(sources.scriptFocus ? { scriptFocus: sources.scriptFocus } : {}),
   }
   const elapsed = performance.now() - started
   if (elapsed > 50) {

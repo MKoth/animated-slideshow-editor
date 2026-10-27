@@ -5280,12 +5280,16 @@ class Compiler {
       })
     })
     this.#emitCreate(new ApplyTableLayoutCommand({ tableNodeId: tableId, availableWidth: 400 }))
+    // Scope the grid to this run's nodes: deterministic ids are recycled
+    // across runs, so unscoped matching would also pick up the previous
+    // run's rows/cells under the same ids.
+    const createdIds = new Set(this.#createdNodes.map((node) => node.id))
     this.#registerCreatedBinding(statement, () => ({
       alias: statement.alias!,
       aliasSpan: statement.aliasSpan!,
       kind: 'table',
       members: [{ nodeId: tableId, nodeName: statement.resourceName }],
-      grid: buildScriptTableGrid(tableInfo, this.#allNodes()),
+      grid: buildScriptTableGrid(tableInfo, this.#allNodes(), createdIds),
       used: false,
     }))
   }

@@ -126,6 +126,83 @@ def _blackboard_focus_to_text(focus: object) -> str:
     return "\n".join(lines)
 
 
+def _script_focus_to_text(focus: object) -> str:
+    """Slide script focus: slide id/name/duration, full script source, prompt
+    block ids/windows/text, and latest check diagnostics. Pure and read-only;
+    malformed focus renders as empty.
+    """
+    if not isinstance(focus, dict):
+        return ""
+    slide_id = focus.get("slideId")
+    slide_name = focus.get("slideName")
+    duration = _as_float(focus.get("duration"))
+    header = ""
+    if isinstance(slide_id, str) and slide_id.strip():
+        header = f"script focus slide: {slide_id.strip()}"
+        if isinstance(slide_name, str) and slide_name.strip():
+            header += f' "{slide_name.strip()}"'
+        if duration is not None:
+            header += f" ({duration:g}s)"
+    elif isinstance(slide_name, str) and slide_name.strip():
+        header = f"script focus slide: {slide_name.strip()}"
+        if duration is not None:
+            header += f" ({duration:g}s)"
+    lines: list[str] = []
+    if header:
+        lines.append(header)
+    source = focus.get("source")
+    if isinstance(source, str) and source.strip():
+        # Bounded: the full source is the model's working view for this slide.
+        lines.append("script source:\n" + source.strip()[:6000])
+    blocks = focus.get("promptBlocks")
+    if isinstance(blocks, list) and blocks:
+        rendered: list[str] = []
+        for entry in blocks[:50]:
+            if not isinstance(entry, dict):
+                continue
+            block_id = entry.get("id")
+            if not isinstance(block_id, str) or not block_id.strip():
+                continue
+            start = _as_float(entry.get("start"))
+            end = _as_float(entry.get("end"))
+            window = f" [{start:g}-{end:g}s]" if start is not None and end is not None else ""
+            text = entry.get("text")
+            snippet = (
+                str(text).strip().replace("\n", " ")[:200]
+                if isinstance(text, str) and str(text).strip()
+                else ""
+            )
+            rendered.append(
+                f'{block_id.strip()}{window} "{snippet}"'
+                if snippet
+                else f"{block_id.strip()}{window}"
+            )
+        if rendered:
+            lines.append("prompt blocks: " + "; ".join(rendered))
+    diagnostics = focus.get("diagnostics")
+    if isinstance(diagnostics, list) and diagnostics:
+        rendered_diags: list[str] = []
+        for entry in diagnostics[:20]:
+            if not isinstance(entry, dict):
+                continue
+            message = entry.get("message")
+            if not isinstance(message, str) or not message.strip():
+                continue
+            severity = entry.get("severity")
+            line = entry.get("line")
+            column = entry.get("column")
+            where = ""
+            if isinstance(line, int) and isinstance(column, int):
+                where = f"line {line}, col {column}: "
+            elif isinstance(line, int):
+                where = f"line {line}: "
+            prefix = f"{severity}: " if isinstance(severity, str) and severity.strip() else ""
+            rendered_diags.append(f"{prefix}{where}{message.strip()[:300]}")
+        if rendered_diags:
+            lines.append("check diagnostics: " + " | ".join(rendered_diags))
+    return "\n".join(lines)
+
+
 def compose_messages(
     system_prompt: str,
     context_text: str,
@@ -191,6 +268,9 @@ def context_to_text(context: object) -> str:
         focus_text = _blackboard_focus_to_text(context.get("blackboardFocus"))
         if focus_text:
             parts.append(focus_text)
+        script_focus_text = _script_focus_to_text(context.get("scriptFocus"))
+        if script_focus_text:
+            parts.append(script_focus_text)
         slides = context.get("slides")
         if isinstance(slides, list) and slides:
             # Slide ids ride alongside names so polish can target the active

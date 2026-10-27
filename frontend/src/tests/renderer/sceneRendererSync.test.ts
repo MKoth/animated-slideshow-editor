@@ -13,7 +13,7 @@ import { Renderer } from '../../pixi/renderer/renderer'
 import { pixiRegistry, FakeContainer } from './pixiFake'
 import { worldOf } from './testUtils'
 import { walkPreOrder } from '../../engine/sceneNode'
-import { deserialize, serialize } from '../../engine/lessonSerializer'
+import { deserialize, serialize, toLessonJSON } from '../../engine/lessonSerializer'
 import type { CurrentTimeSource } from '../../pixi/renderer/sceneRenderer'
 import type { FakeGraphics } from './pixiFake'
 
@@ -333,5 +333,72 @@ describe('scene renderer display tree sync', () => {
     setTime(3)
     expect((world.children as FakeContainer[]).includes(mark as FakeContainer)).toBe(false)
     renderer.dispose()
+  })
+
+  it('rebinds the canvas after a snapshot apply that keeps scene ids', async () => {
+    const { system, app } = await mount()
+    system.dispatcher.dispatch(new CreateProjectCommand({ name: 'P' }))
+    system.dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' }))
+    const engine = system.engine
+    const slide = engine.getActiveSlide()
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    system.dispatcher.dispatch(
+      new CreateNodeCommand({
+        sceneId: slide.scene.id,
+        parentId: slide.scene.root.id,
+        name: 'Old',
+        components: { circle: { kind: 'circle', radius: 10, startAngle: 0, endAngle: 360 } },
+      }),
+    )
+    const world = worldOf(app)
+    const root = world.children.find((child) => child.label === 'Root') as FakeContainer | undefined
+    if (!root) {
+      throw new Error('Root container not found')
+    }
+    expect(root.children.map((child) => child.label)).toContain('Old')
+
+    // A snapshot restore (proposal apply, undo/redo, import) rebuilds the
+    // project under the SAME ids with no granular node events. The canvas
+    // must rebind instead of rendering the dead scene.
+    const snapshot = structuredClone(toLessonJSON(engine.project!))
+    const slideJson = snapshot.slides[0]
+    if (!slideJson) {
+      throw new Error('Slide JSON missing')
+    }
+    const oldNode = slideJson.scene.nodes.find((node) => node.name === 'Old')
+    if (!oldNode) {
+      throw new Error('Old node JSON missing')
+    }
+    const nodes = slideJson.scene.nodes.filter((node) => node.id !== oldNode.id)
+    const rebuilt = {
+      ...snapshot,
+      slides: [
+        {
+          ...slideJson,
+          scene: {
+            ...slideJson.scene,
+            nodes: [...nodes, { ...oldNode, id: 'test-new-node', name: 'New' }],
+          },
+        },
+        ...snapshot.slides.slice(1),
+      ],
+    }
+    engine.applyLessonSnapshot(rebuilt, slide.id)
+
+    // Re-query the world: bind() destroys the old containers and rebuilds.
+    const freshWorld = worldOf(app)
+    const freshRoot = freshWorld.children.find((child) => child.label === 'Root') as
+      FakeContainer | undefined
+    if (!freshRoot) {
+      throw new Error('Root container not found after snapshot apply')
+    }
+    // Circle nodes render decoration containers, so compare by label: the
+    // stale node must be gone and the fresh node present.
+    const labels = freshRoot.children.map((child) => child.label)
+    expect(labels).toContain('Camera')
+    expect(labels).toContain('New')
+    expect(labels).not.toContain('Old')
   })
 })

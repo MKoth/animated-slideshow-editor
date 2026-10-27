@@ -1015,7 +1015,12 @@ export class Renderer {
   #syncScene(sceneRenderer: SceneRenderer): void {
     const slide = this.#engine.getActiveSlide()
     const scene = slide ? slide.scene : null
-    if (sceneRenderer.boundSceneId !== (scene?.id ?? null)) {
+    // Snapshot restores (proposal apply, undo/redo, imports) rebuild the
+    // whole project under the SAME ids with no granular node events — the id
+    // check alone would keep rendering the dead scene. A changed object
+    // identity means the content was replaced wholesale: rebind. Granular
+    // commands mutate nodes in place, so identity stays stable for them.
+    if (sceneRenderer.boundSceneId !== (scene?.id ?? null) || sceneRenderer.boundScene !== scene) {
       this.#controls?.reset()
       this.#cameraPreview = null
       sceneRenderer.bind(scene, slide ? slide.id : null)

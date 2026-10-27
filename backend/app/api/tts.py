@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -484,7 +485,7 @@ def update_tts_settings(request: Request, body: TtsSettingsUpdate) -> dict[str, 
     provider, model_id = _get_settings_values(request)
     new_provider = body.provider if body.provider is not None else provider
     # modelId alias handling – body may have modelId or model_id
-    new_model_id = None
+    new_model_id: str | None = None
     if body.modelId is not None:
         new_model_id = body.modelId
     elif getattr(body, "model_id", None) is not None:
@@ -502,6 +503,26 @@ def update_tts_settings(request: Request, body: TtsSettingsUpdate) -> dict[str, 
             new_model_id = normalize_model_id(new_model_id) or new_model_id
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+
+    # Fall back to the current value – never persist an empty model id.
+    if not new_model_id:
+        new_model_id = model_id
+
+    # Persist the UI choice to the data dir so it survives backend
+    # restarts; load_settings() picks it up with precedence over env vars.
+    try:
+        from app.config import save_tts_settings
+
+        data_dir = getattr(settings, "data_dir", None)
+        if data_dir is None:
+            from app.config import DEFAULT_DATA_DIR
+
+            data_dir = DEFAULT_DATA_DIR
+        save_tts_settings(Path(data_dir), provider=new_provider, model_id=new_model_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"failed to persist TTS settings: {exc}"
+        ) from exc
 
     # Update settings – handle frozen or not
     try:
@@ -547,7 +568,7 @@ def update_tts_settings(request: Request, body: TtsSettingsUpdate) -> dict[str, 
         except MlxNotAvailableError:
             if new_provider == "mlx":
                 # Store placeholder that will 503 on next generate – consistent with factory
-                request.app.state.tts_engine = MlxQwenTtsEngine(new_model_id)  # type: ignore
+                request.app.state.tts_engine = MlxQwenTtsEngine(new_model_id)
             else:
                 request.app.state.tts_engine = SineTtsEngine()
         except ValueError as ve:

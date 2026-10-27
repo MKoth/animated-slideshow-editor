@@ -9,6 +9,8 @@ import { SetSlideAnimationScriptCommand } from './setSlideAnimationScriptCommand
 import { runAnimationScript } from '../animationScriptRun'
 import type { Command } from './command'
 import { animationScriptClearCommands } from '../animationScriptClear'
+import { measuredNodeSize } from '../../pixi/renderer/nodeMeasurement'
+import { collectGlobalAudioAssets } from '../../stores/assetLibraryStore'
 
 export interface AiRunAnimationScriptParameters {
   readonly slideId: string
@@ -63,7 +65,21 @@ export class AiRunAnimationScriptCommand implements Command<AiRunAnimationScript
         ]),
         'ai',
       )) as DispatchCommand
-    const result = runAnimationScript(toReadOnly(preview), dispatchRun, this.#slideId, this.#source)
+    // Same seams as the Script panel Check: renderer-measured bounds plus
+    // global library audio. Without them, reveal/wipe/mark on pre-existing
+    // nodes (e.g. marking a carried image from the previous run) report
+    // "no visible, measurable renderable content" and block reviewable
+    // scripts that Run would accept. Headless callers simply measure null.
+    const result = runAnimationScript(
+      toReadOnly(preview),
+      dispatchRun,
+      this.#slideId,
+      this.#source,
+      {
+        measure: measuredNodeSize,
+        globalAudioAssets: collectGlobalAudioAssets(),
+      },
+    )
     if (!result.ran) {
       throw new Error(
         result.error ??

@@ -7,6 +7,9 @@ from dotenv import load_dotenv
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "var"
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 DEFAULT_ZEN_URL = "https://opencode.ai/zen/go/v1"
+#: TTS provider/model choice saved from the TTS Global Settings UI. Lives in
+#: the data dir next to library.db so a UI save survives backend restarts.
+TTS_SETTINGS_FILENAME = "tts_settings.json"
 DEFAULT_FALLBACK_MODELS = ("kimi-k2.6",)
 DEFAULT_CONTEXT_BUDGET = 8000
 DEFAULT_SYSTEM_PROMPT = (
@@ -315,6 +318,79 @@ DEFAULT_ANIMATION_SYSTEM_PROMPT = (
     "vocabulary, Collections bind clips to explicit Semantic Names, and delete operations name "
     "stable ids. Denial feedback is a new instruction to revise the proposal."
 )
+DEFAULT_SCRIPT_SYSTEM_PROMPT = (
+    "You are the AI script advisor inside the AI Slideshow Editor. "
+    "You own one slide's Animation Script and nothing else — other slides stay untouched. "
+    "Answer with the read-only script context in mind and never claim to edit the project directly. "
+    "The context carries a script focus section: the slide id, name, and length, the full current "
+    "script source, the prompt blocks (ids with [start-end] windows plus the spoken text), and the "
+    "latest check diagnostics. "
+    "The conversation story — this conversation's own history — is ground truth for earlier decisions: "
+    "honor settled names, timings, and approaches from it instead of re-asking, and never confuse it "
+    "with the read-only linked histories of other assistants. "
+    'Write real Animation Script DSL only. The header is `script "Title" from <seconds>` with waits '
+    'and timed actions filling the slide segment. `bind alias = node("Name")` (also group, table, '
+    "clip, collection, material, audio) then member calls with a dot: `alias.tween(...)`, "
+    "`alias.set(...)`, `alias.move(...)`, `alias.fadeIn(...)`, `alias.fadeOut(...)`, `alias.tint(...)`, "
+    "`alias.pulse(...)`, `alias.shadow(...)`, `alias.symmetry(...)`, `alias.morph(...)`, "
+    "`alias.dataLabel(...)`, `alias.control(...)`, `alias.play(...)`, `alias.apply(...)`, "
+    "`alias.material(...)`. Free statements: `setText(...)`, `create text|table|asset|data|chart|group "
+    "… as alias …`, `function name(p: type, …) { … }`, `pointArrowAt(...)`, `reveal(...)`, `wipe(...)`, "
+    "`mark(target, …)` (temporary laser/underline overlay), `carry(...)`. Cursor: `wait(d)`, "
+    '`mark("name")` labels cursor time for later `markTime("name")` reads, `at(t)` or '
+    '`at("marker")` placement, `parallel { … }`, `repeat(n) { … }`, `for x in <list> { … }`, '
+    "`stagger(step, targets) { … }`. Anchor effect timing to prompt-block marks with "
+    '`at: markTime("part-N") + offset` — never absolute times, one stage at a time, never overlapping. '
+    "Keep the script compiling: every statement needs a duration from itself, the header, or defaults; "
+    "reads (`worldAt`, `bounds`, `cellRect`, `controlValue`, `markTime`) stay within the slide. "
+    "Setup and styling member calls (`tint`, `material`, `set`, `control`, `dataLabel`, `morph`, "
+    "`symmetry`, `shadow`, `pulse`) carry no `at:` of their own, so they land on the CURRENT cursor: "
+    "always place them before the first `mark(...)`, or give them an explicit `at: 0` — a tint written "
+    "after the marks lands at end-of-slide and the colors stay wrong for the whole narration. "
+    "Every created visible node needs its own `reveal` (backgrounds and offscreen-parked performers "
+    "excepted): objects start hidden only through their reveal mask, so a created node with no reveal "
+    "stays on screen from time zero forever — never emit creates without pairing reveals, and never "
+    "wipe a node that has no reveal. "
+    "Every effect must end within the slide duration from the script focus (marks plus tails "
+    "included): never extend a teardown past it. "
+    "Emit the FULL revised script in the single ```engine-command block — never a prefix cut off by "
+    "length: if the script does not fit, say so plainly and continue it in the next turn instead of "
+    "passing off a truncated block as complete. "
+    "`mark(target, ...)` sweeps need an explicit `visual`, otherwise they may render nothing; prefer "
+    "the reveal/wipe/carry vocabulary for appearance work. "
+    "A `mark` (like any `reveal`/`wipe`) needs a target that is visible and measurable at its start: "
+    "text you revealed earlier in the same script is always safe; a carried image only validates when "
+    "the previous run already shows it — so mark re-emphasized text, never carried pictures (the carry "
+    "already draws the eye). "
+    "The deterministic first draft times visuals loosely — your editing job is narration fit: a visual "
+    "appears only once spoken about, never before its mention; a label appears when the narrator "
+    "pronounces its text; a table border is drawn on a general mention (`look at the table`) while each "
+    "cell fills as its text is spoken; use `mark(...)` to re-emphasize something already on screen when "
+    "the narrator returns to it instead of recreating it; for a long spoken stretch with no visual, add "
+    "one short phrase appearing at the stretch start and leaving at its end. "
+    "When a table leaves the board, wipe it once with `wipe(subtree(<table>), ...)` — never cell by cell "
+    "followed by a table wipe (nine erase sounds and a second sweep for nothing). Cell-by-cell removal "
+    "is only for when the narrator names cells while they disappear; a closing teardown is one sweep. "
+    "When content or timing is ambiguous, carry each clarifying question in its own fenced ```ask block "
+    "— id: <slug>, question: <one question>, kind: single|multi|text, options: with - id:/label:/detail: "
+    "lines, allowCustom: true|false — one block per question, then wait for answers instead of prose "
+    "bullet questions. "
+    "Make each question self-contained: state the expected answer format with a concrete example "
+    "(e.g. `logo with title 3s, table rows 8s`), especially for kind: text; explain "
+    "what each option means in its detail: line. "
+    "Never send a full revised script plus clarifying questions in the same turn. "
+    "Proposals are canonical engine commands reviewed and approved by the user: put the single source of "
+    "truth for Apply in one fenced ```engine-command block holding the FULL revised script (no slide: "
+    'header line — it applies to this slide) starting with the `script "…" from …` line — never '
+    "pseudo-syntax or prose inside the block. Nothing is applied by chatting — the user turns the block "
+    "into a reviewable proposal with the Draft this script button under the message, then approves and "
+    "applies it there. "
+    "When the user reports a validation failure for your previous block, the failed source quoted in that "
+    "message is the specification — reply with the corrected full block in the same turn; never re-ask "
+    "for names, timings, or positions already present in this conversation or the context snapshot. "
+    "Never claim a mutation happened before approval. "
+    "Keep prose short; put reusable detail in the script block, not duplicated prose."
+)
 
 
 @dataclass
@@ -394,11 +470,70 @@ def _load_tts_ref_text() -> str | None:
     return None
 
 
+def _load_tts_settings_file(data_dir: Path) -> dict[str, str]:
+    """UI-saved TTS provider/model choice. Missing or corrupt files read as empty."""
+    try:
+        raw = (data_dir / TTS_SETTINGS_FILENAME).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        import json as _json
+
+        parsed = _json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key in ("tts_provider", "tts_model_id"):
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            out[key] = value.strip()
+    return out
+
+
+def save_tts_settings(data_dir: Path, *, provider: str, model_id: str) -> dict[str, str]:
+    """Persist the UI-saved TTS choice atomically. Returns the saved values."""
+    import json as _json
+    import os as _os
+    import tempfile as _tempfile
+
+    saved = {
+        "tts_provider": provider.strip().lower(),
+        "tts_model_id": model_id.strip(),
+    }
+    data_dir.mkdir(parents=True, exist_ok=True)
+    target = data_dir / TTS_SETTINGS_FILENAME
+    fd, tmp_name = _tempfile.mkstemp(dir=str(data_dir), prefix="tts_settings.", suffix=".tmp")
+    try:
+        with _os.fdopen(fd, "w", encoding="utf-8") as handle:
+            _json.dump(saved, handle, indent=2)
+            handle.write("\n")
+        _os.replace(tmp_name, target)
+    except BaseException:
+        try:
+            _os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return saved
+
+
 def load_settings() -> Settings:
     # Load backend/.env for local development; variables exported by the
     # process/container take precedence over values in the file.
     _load_environment_file(Path(__file__).resolve().parents[1] / ".env")
     data_dir = Path(os.getenv("DATA_DIR", str(DEFAULT_DATA_DIR)))
+    # Saved UI choice wins over env vars, which win over built-in defaults.
+    saved_tts = _load_tts_settings_file(data_dir)
+    tts_provider = (
+        saved_tts.get("tts_provider") or os.getenv("TTS_PROVIDER", "auto").strip().lower() or "auto"
+    )
+    tts_model_id = (
+        saved_tts.get("tts_model_id")
+        or os.getenv("TTS_MODEL_ID", "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16").strip()
+        or "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
+    )
     secret_raw = os.getenv("AI_SECRET_KEY")
     secret = secret_raw.strip() if secret_raw and secret_raw.strip() else None
     ref_audio_env = os.getenv("TTS_REF_AUDIO")
@@ -412,10 +547,8 @@ def load_settings() -> Settings:
         data_dir=data_dir,
         database_url=os.getenv("DATABASE_URL", f"sqlite:///{data_dir}/library.db"),
         max_upload_bytes=int(os.getenv("MAX_UPLOAD_BYTES", str(DEFAULT_MAX_UPLOAD_BYTES))),
-        tts_provider=os.getenv("TTS_PROVIDER", "auto").strip().lower(),
-        tts_model_id=os.getenv(
-            "TTS_MODEL_ID", "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
-        ).strip(),
+        tts_provider=tts_provider,
+        tts_model_id=tts_model_id,
         tts_ref_audio=tts_ref_audio,
         tts_ref_text=_load_tts_ref_text(),
         opencode_base_url=os.getenv("OPENCODE_BASE_URL", DEFAULT_ZEN_URL).strip()

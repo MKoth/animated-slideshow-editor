@@ -21,6 +21,34 @@ interface TargetReplacement {
 }
 
 /**
+ * Children before parents regardless of footprint order. Deterministic ids
+ * are recycled across runs (`script-node:<slide>:<index>`), and table
+ * internals (rows/cells) never enter the footprint — so a reversed footprint
+ * alone can schedule a parent subtree delete before a recycled id's own
+ * DeleteNode, which then throws "Node not found". Depth from the live parent
+ * chain cannot disagree with itself: executing deepest-first means no
+ * DeleteNode ever runs for a node an earlier command already took with a
+ * subtree. Missing nodes are skipped exactly like the historic guards.
+ */
+function orderDeepestFirst(engine: EnginePublic, nodeIds: readonly string[]): string[] {
+  const entries: { id: string; depth: number; index: number }[] = []
+  nodeIds.forEach((nodeId, index) => {
+    try {
+      let depth = 0
+      let current = engine.getNode(nodeId)
+      while (current.parent !== null && current.parent !== undefined) {
+        depth += 1
+        current = current.parent
+      }
+      entries.push({ id: nodeId, depth, index })
+    } catch {
+      // Missing at build time: tolerated, same as the historic guards.
+    }
+  })
+  return entries.sort((a, b) => b.depth - a.depth || b.index - a.index).map((entry) => entry.id)
+}
+
+/**
  * The deletions a Run must perform before emitting: for the previous and the
  * new footprint alike, every keyframe on a written track whose time lies
  * inside that footprint's `[from, to]`, every standalone Clip Instance on an
@@ -47,21 +75,24 @@ export function animationScriptClearCommands(
   // records the parent before the child. Reversing deletes each child before
   // the parent command takes the parent's whole subtree with it.
   const queuedDeletes = new Set<string>()
+  // Collect first (previous then next, children first), then order the
+  // combined set deepest-first: see orderDeepestFirst.
+  const queuedOrder: string[] = []
   for (const nodeId of [...(previous?.createdNodes ?? [])].reverse()) {
+    if (queuedDeletes.has(nodeId)) continue
     try {
       engine.getNode(nodeId)
     } catch {
       continue
     }
     queuedDeletes.add(nodeId)
-    commands.push(new DeleteNodeCommand({ nodeId }))
+    queuedOrder.push(nodeId)
   }
   // Stale script output without a footprint entry (older lessons, a lost
   // footprint, or a hand-deleted record) still owns its `script-node:` ids.
   // The new run is about to recreate those ids, so clear any that already
   // exist — otherwise the create fails with an unhelpful "already exists".
-  // Children first (reverse creation order: parents are recorded before
-  // children), skipping ids already queued above so no node is deleted twice.
+  // Skipping ids already queued above so no node is deleted twice.
   for (const nodeId of [...next.createdNodes].reverse()) {
     if (queuedDeletes.has(nodeId)) continue
     try {
@@ -70,6 +101,9 @@ export function animationScriptClearCommands(
       continue
     }
     queuedDeletes.add(nodeId)
+    queuedOrder.push(nodeId)
+  }
+  for (const nodeId of orderDeepestFirst(engine, queuedOrder)) {
     commands.push(new DeleteNodeCommand({ nodeId }))
   }
   const queuedDataSources = new Set<string>()

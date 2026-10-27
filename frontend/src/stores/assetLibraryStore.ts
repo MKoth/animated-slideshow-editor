@@ -28,6 +28,30 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error'
 }
 
+/** Fresh library uploads a script Check can resolve by name before anything embeds them. */
+export function collectGlobalAudioAssets(): readonly {
+  id: string
+  name: string
+  duration: number
+}[] {
+  const definitions = useAssetLibraryStore.getState().allDefinitions
+  const out: { id: string; name: string; duration: number }[] = []
+  for (const definition of definitions) {
+    const isAudio =
+      definition.category === 'audio' ||
+      definition.mimeType?.startsWith('audio/') === true ||
+      /\.(wav|mp3|mpeg|ogg|webm)$/i.test(definition.original_filename ?? '')
+    if (!isAudio) continue
+    const raw = (definition.metadata as Record<string, unknown> | undefined)?.duration
+    out.push({
+      id: definition.id,
+      name: definition.name,
+      duration: typeof raw === 'number' ? raw : Number.NaN,
+    })
+  }
+  return out
+}
+
 interface AssetLibraryState {
   definitions: AssetDefinition[]
   /**

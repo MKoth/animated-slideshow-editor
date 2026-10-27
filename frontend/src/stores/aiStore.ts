@@ -29,7 +29,7 @@ import { createScenarioSlice, initialScenarioSliceState } from './scenarioSlice'
 export type AiBackendStatus = 'idle' | 'loading' | 'streaming' | 'unavailable'
 
 export type AiAssistantMode =
-  'scenario' | 'audio' | 'blackboard' | 'animation' | 'shape' | 'collection'
+  'scenario' | 'audio' | 'blackboard' | 'animation' | 'shape' | 'collection' | 'script'
 
 export function normalizeAiMode(mode: unknown): AiAssistantMode {
   if (
@@ -38,7 +38,8 @@ export function normalizeAiMode(mode: unknown): AiAssistantMode {
     mode === 'blackboard' ||
     mode === 'animation' ||
     mode === 'shape' ||
-    mode === 'collection'
+    mode === 'collection' ||
+    mode === 'script'
   )
     return mode
   // Legacy 'lesson' (split into scenario/audio/blackboard) and unknown read as scenario.
