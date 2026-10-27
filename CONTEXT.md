@@ -39,6 +39,10 @@ The primary organizational unit of a lesson; a timeline whose nodes render to on
 **Project**:
 The root model of the editor: metadata (id, name, description, author, dates, version) plus an ordered list of slides. Exactly one project exists in memory; it serializes to the `.lesson` format.
 
+**Project Folder**:
+A user-created, flat container organising the project library. A folder has a name (unique, case-insensitive); a project points at zero or one folder (`folder_id`, none means Uncategorized). Deleting a folder never deletes projects by default — its projects move to Uncategorized — unless the user explicitly chooses to delete the folder together with its projects. Folders never enter the `.lesson` file or the portable backup zip structure beyond directory names.
+_Avoid_: Project category, tag
+
 **Active Slide**:
 The slide the renderer, animation evaluator, and timeline currently operate on. Engine state — set through the engine API, never a command; not undoable and not persisted (the first slide is active after load).
 

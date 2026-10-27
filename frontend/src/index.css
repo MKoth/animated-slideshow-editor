@@ -3638,6 +3638,155 @@ button:disabled {
   max-width: min(720px, calc(100vw - 24px));
 }
 
+.projects-dialog--with-folders {
+  width: 860px;
+  max-width: min(920px, calc(100vw - 24px));
+}
+
+.projects-dialog__body {
+  display: flex;
+  gap: 16px;
+  min-height: 0;
+  max-height: min(60vh, 480px);
+}
+
+.projects-dialog__folders {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  border-right: 1px solid var(--color-border);
+  padding-right: 12px;
+  overflow-y: auto;
+}
+
+.projects-dialog__folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.projects-dialog__folder {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.projects-dialog__folder:hover {
+  border-color: var(--color-border);
+}
+
+.projects-dialog__folder--active {
+  border-color: var(--color-border);
+  background: var(--color-bg-hover, rgba(127, 127, 127, 0.12));
+  font-weight: 600;
+}
+
+.projects-dialog__folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects-dialog__folder-count {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.projects-dialog__folder-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.projects-dialog__folder-row .projects-dialog__folder {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.projects-dialog__folder-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.projects-dialog__icon-button {
+  border: none;
+  background: transparent;
+  padding: 2px 5px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  border-radius: 4px;
+}
+
+.projects-dialog__icon-button:hover {
+  color: var(--color-text);
+  background: var(--color-bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.projects-dialog__folder-rename {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.projects-dialog__folder-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.projects-dialog__add-folder {
+  align-self: flex-start;
+}
+
+.projects-dialog__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.projects-dialog__select {
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-input, var(--color-bg));
+  color: var(--color-text);
+  font-size: 12px;
+  max-width: 140px;
+}
+
+.projects-dialog__row-actions--with-folder {
+  grid-template-columns: auto repeat(4, auto);
+}
+
+.projects-dialog__button--danger {
+  border-color: var(--color-error, #d14343);
+  color: var(--color-error, #d14343);
+}
+
+.projects-dialog__folder-tag {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
 .projects-dialog__header {
   display: flex;
   align-items: center;

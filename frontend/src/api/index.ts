@@ -55,7 +55,7 @@ export type {
   MaterialUpdateInput,
 } from './materialsApi'
 export type { PingResponse } from './pingApi'
-export type { ProjectSummary, StoredProject } from './projectsApi'
+export type { ProjectFolder, ProjectSummary, StoredProject } from './projectsApi'
 export type {
   ShaderDefinition,
   ShaderImportInput,

@@ -7,6 +7,7 @@ import { createPersistenceService } from './persistence'
 import { ensureReferencedEmbedded, ensureReferencedAudioEmbedded } from './assetSnapshot'
 import { ensureReferencedMaterialAndShaderSnapshots } from './definitionSnapshot'
 import { EngineContext } from './engineContext'
+import { useProjectBrowserStore } from '../stores/projectBrowserStore'
 import type { EngineContextValue } from './engineContext'
 import { registerActiveSlideSync } from './activeSlideSync'
 import {
@@ -33,7 +34,29 @@ export function EngineProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const persistence = createPersistenceService({
       engine: system.engine,
-      upsert: (blob) => projectsApi.upsert(blob),
+      upsert: (blob) => {
+        // New (never-listed) projects land in the currently selected folder.
+        // Existing projects preserve their folder (UNSET) so moves are explicit.
+        try {
+          const id = (JSON.parse(blob) as { project?: { id?: unknown } }).project?.id
+          if (typeof id === 'string') {
+            const state = useProjectBrowserStore.getState()
+            if (!state.projects.some((project) => project.id === id)) {
+              const selected = state.selectedFolder
+              const folder =
+                selected === 'all' || selected === 'root'
+                  ? null
+                  : state.folders.some((entry) => entry.id === selected)
+                    ? selected
+                    : null
+              return projectsApi.upsert(blob, folder)
+            }
+          }
+        } catch {
+          // Fall through to a plain upsert when the blob cannot be inspected.
+        }
+        return projectsApi.upsert(blob)
+      },
       ensureEmbedded: async () => {
         await ensureReferencedEmbedded(system.engine)
         await ensureReferencedAudioEmbedded(system.engine)

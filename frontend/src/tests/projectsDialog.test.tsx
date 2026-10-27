@@ -103,6 +103,9 @@ beforeEach(() => {
     newProjectVisible: false,
     pendingOpen: null,
     pendingNew: false,
+    pendingImport: null,
+    folders: [],
+    selectedFolder: 'all',
   })
 })
 
@@ -133,7 +136,7 @@ describe('ProjectsDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Open' }))
     await within(dialog()).findByText('Spanish Lesson')
 
-    const list = within(dialog()).getByRole('list')
+    const list = within(dialog()).getByRole('list', { name: 'Projects list' })
     const rows = within(list)
       .getAllByRole('listitem')
       .map((row) => row.textContent)
@@ -407,5 +410,110 @@ describe('ProjectsDialog', () => {
     await within(dialog()).findByText('Spanish Lesson')
 
     expect(within(dialog()).getByRole('button', { name: 'Download .lesson copy' })).toBeDisabled()
+  })
+
+  it('creates a folder from the sidebar and filters the list', async () => {
+    stubBackend()
+    const user = userEvent.setup()
+    renderHost()
+
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await within(dialog()).findByText('Spanish Lesson')
+
+    await user.click(within(dialog()).getByRole('button', { name: '+ Add folder' }))
+    const input = within(dialog()).getByRole('textbox', { name: 'Folder name' })
+    await user.type(input, 'Course')
+    vi.mocked(fetch).mockImplementationOnce(() =>
+      Promise.resolve(new Response(JSON.stringify({ id: 'f-1', name: 'Course' }), { status: 201 })),
+    )
+    await user.click(within(dialog()).getByRole('button', { name: 'Add' }))
+
+    expect(
+      await within(dialog()).findByRole('button', { name: 'Folder Course' }),
+    ).toBeInTheDocument()
+  })
+
+  it('moves a project to a folder through the row select', async () => {
+    const calls: string[] = []
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${String(input)}`)
+      if (String(input) === '/api/projects' && (init?.method ?? 'GET') === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify(LIBRARY), { status: 200 }))
+      }
+      if (String(input) === '/api/project-folders' && (init?.method ?? 'GET') === 'GET') {
+        return Promise.resolve(
+          new Response(JSON.stringify([{ id: 'f-1', name: 'Course' }]), { status: 200 }),
+        )
+      }
+      if (String(input) === '/api/projects/p-1' && init?.method === 'PATCH') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ id: 'p-1', folder_id: 'f-1' }), { status: 200 }),
+        )
+      }
+      if (
+        typeof String(input) === 'string' &&
+        String(input).startsWith('/api/projects/p-') &&
+        (init?.method ?? 'GET') === 'GET'
+      ) {
+        const id = String(input).split('/').pop() ?? 'p-1'
+        return Promise.resolve(new Response(makeBlob(id), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${String(input)}`))
+    })
+    const user = userEvent.setup()
+    renderHost()
+
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await within(dialog()).findByText('Spanish Lesson')
+
+    const select = within(dialog()).getByRole('combobox', { name: 'Move Spanish Lesson to folder' })
+    await user.selectOptions(select, 'f-1')
+
+    expect(calls).toContain('PATCH /api/projects/p-1')
+  })
+
+  it('asks move-or-delete when deleting a non-empty folder', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url === '/api/projects' && method === 'GET') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                id: 'p-1',
+                name: 'Spanish Lesson',
+                lastModified: '2026-08-14T10:00:00',
+                folder_id: 'f-1',
+              },
+            ]),
+            { status: 200 },
+          ),
+        )
+      }
+      if (url === '/api/project-folders' && method === 'GET') {
+        return Promise.resolve(
+          new Response(JSON.stringify([{ id: 'f-1', name: 'Course' }]), { status: 200 }),
+        )
+      }
+      if (url === '/api/project-folders/f-1?mode=move_to_root' && method === 'DELETE') {
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }
+      if (url === '/api/projects' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url} ${method}`))
+    })
+    const user = userEvent.setup()
+    renderHost()
+
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await within(dialog()).findByText('Spanish Lesson')
+    await user.click(within(dialog()).getByRole('button', { name: 'Delete folder Course' }))
+
+    expect(screen.getByRole('dialog', { name: 'Delete folder' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Move to Uncategorized' }))
+
+    await within(dialog()).findByText('Spanish Lesson')
   })
 })

@@ -34,6 +34,9 @@ function stubProjects(list: ProjectSummary[], blobs: Record<string, string>): vo
     if (String(input) === '/api/projects') {
       return Promise.resolve(new Response(JSON.stringify(list), { status: 200 }))
     }
+    if (String(input) === '/api/project-folders') {
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+    }
     const match = /^\/api\/projects\/([^/]+)$/.exec(String(input))
     if (match) {
       const blob = blobs[match[1]]
@@ -67,7 +70,13 @@ function setupEditor(): Engine {
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn())
-  useProjectBrowserStore.setState({ projects: [], loading: false, error: null })
+  useProjectBrowserStore.setState({
+    projects: [],
+    folders: [],
+    selectedFolder: 'all',
+    loading: false,
+    error: null,
+  })
   useNotificationStore.setState({ notifications: [] })
   useMissingAssetsStore.setState({ report: null, dialogVisible: false })
   useSelectionStore.setState({ selectedIds: [], selectedKeyframeIds: [] })
@@ -232,5 +241,130 @@ describe('createAndOpenFreshProject', () => {
     expect(engine.project?.slides).toHaveLength(1)
     expect(engine.project?.slides[0].name).toBe('Slide 1')
     expect(engine.activeSlideId).toBe(engine.project?.slides[0].id)
+  })
+})
+
+describe('project folders', () => {
+  it('creates a folder and selects it', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/project-folders' && init?.method === 'POST') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ id: 'f-1', name: 'Course' }), { status: 201 }),
+        )
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${String(input)}`))
+    })
+
+    const { createLibraryFolder } = await import('../app/projectBrowser')
+    const ok = await createLibraryFolder('Course')
+
+    expect(ok).toBe(true)
+    const state = useProjectBrowserStore.getState()
+    expect(state.folders).toEqual([{ id: 'f-1', name: 'Course' }])
+    expect(state.selectedFolder).toBe('f-1')
+  })
+
+  it('rejects duplicate folder names case-insensitively', async () => {
+    useProjectBrowserStore.setState({
+      folders: [{ id: 'f-1', name: 'Course', created_at: '', updated_at: '' }],
+      selectedFolder: 'all',
+    })
+    const calls: string[] = []
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      calls.push(String(input))
+      return Promise.reject(new Error(`unexpected fetch: ${String(input)}`))
+    })
+
+    const { createLibraryFolder } = await import('../app/projectBrowser')
+    const ok = await createLibraryFolder('course')
+
+    expect(ok).toBe(false)
+    expect(calls).toEqual([])
+    expect(useNotificationStore.getState().notifications.length).toBeGreaterThan(0)
+  })
+
+  it('renames a folder in the store', async () => {
+    useProjectBrowserStore.setState({
+      folders: [{ id: 'f-1', name: 'Old', created_at: '', updated_at: '' }],
+      selectedFolder: 'all',
+    })
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      if (String(input) === '/api/project-folders/f-1') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ id: 'f-1', name: 'New' }), { status: 200 }),
+        )
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${String(input)}`))
+    })
+
+    const { renameLibraryFolder } = await import('../app/projectBrowser')
+    const ok = await renameLibraryFolder('f-1', 'New')
+
+    expect(ok).toBe(true)
+    expect(useProjectBrowserStore.getState().folders[0].name).toBe('New')
+  })
+
+  it('moves a project between folders', async () => {
+    useProjectBrowserStore.setState({
+      projects: [{ ...SUMMARY_1, folder_id: null }],
+      folders: [],
+      selectedFolder: 'all',
+    })
+    const seen: string[] = []
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      seen.push(String(input))
+      return Promise.resolve(
+        new Response(JSON.stringify({ ...SUMMARY_1, folder_id: 'f-1' }), { status: 200 }),
+      )
+    })
+
+    const { moveLibraryProject } = await import('../app/projectBrowser')
+    const ok = await moveLibraryProject('p-1', 'f-1')
+
+    expect(ok).toBe(true)
+    expect(seen).toEqual(['/api/projects/p-1'])
+    expect(useProjectBrowserStore.getState().projects[0].folder_id).toBe('f-1')
+  })
+
+  it('deletes a folder with move_to_root by default', async () => {
+    const seen: string[] = []
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      seen.push(url)
+      if (url === '/api/projects') {
+        return Promise.resolve(new Response(JSON.stringify([SUMMARY_1]), { status: 200 }))
+      }
+      if (url === '/api/project-folders') {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+      }
+      return Promise.resolve(new Response(null, { status: 204 }))
+    })
+
+    const { deleteLibraryFolder } = await import('../app/projectBrowser')
+    const ok = await deleteLibraryFolder('f-1', false)
+
+    expect(ok).toBe(true)
+    expect(seen).toContain('/api/project-folders/f-1?mode=move_to_root')
+  })
+
+  it('deletes a folder together with its projects when asked', async () => {
+    const seen: string[] = []
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      seen.push(url)
+      if (url === '/api/projects') {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+      }
+      if (url === '/api/project-folders') {
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+      }
+      return Promise.resolve(new Response(null, { status: 204 }))
+    })
+
+    const { deleteLibraryFolder } = await import('../app/projectBrowser')
+    const ok = await deleteLibraryFolder('f-1', true)
+
+    expect(ok).toBe(true)
+    expect(seen).toContain('/api/project-folders/f-1?mode=delete_projects')
   })
 })

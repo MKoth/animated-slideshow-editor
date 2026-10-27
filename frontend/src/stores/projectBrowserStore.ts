@@ -1,7 +1,11 @@
 import { create } from 'zustand'
-import type { ProjectSummary } from '../api'
+import type { ProjectFolder, ProjectSummary } from '../api'
 
 export const DEFAULT_PROJECT_NAME = 'Untitled lesson'
+export const ALL_FOLDERS = 'all' as const
+export const ROOT_FOLDER = 'root' as const
+
+export type FolderFilter = typeof ALL_FOLDERS | typeof ROOT_FOLDER | string
 
 interface ProjectBrowserState {
   visible: boolean
@@ -11,6 +15,8 @@ interface ProjectBrowserState {
   pendingNew: boolean
   pendingImport: File | null
   projects: ProjectSummary[]
+  folders: ProjectFolder[]
+  selectedFolder: FolderFilter
   loading: boolean
   error: string | null
   show: () => void
@@ -23,9 +29,12 @@ interface ProjectBrowserState {
   requestImport: (file: File) => void
   clearPending: () => void
   setProjects: (projects: ProjectSummary[]) => void
+  setFolders: (folders: ProjectFolder[]) => void
+  setSelectedFolder: (folder: FolderFilter) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   removeProject: (id: string) => void
+  updateProjectFolder: (id: string, folder_id: string | null) => void
 }
 
 export const useProjectBrowserStore = create<ProjectBrowserState>()((set) => ({
@@ -36,6 +45,8 @@ export const useProjectBrowserStore = create<ProjectBrowserState>()((set) => ({
   pendingNew: false,
   pendingImport: null,
   projects: [],
+  folders: [],
+  selectedFolder: ALL_FOLDERS,
   loading: false,
   error: null,
   show: () => set({ visible: true }),
@@ -55,8 +66,16 @@ export const useProjectBrowserStore = create<ProjectBrowserState>()((set) => ({
   requestImport: (file) => set({ pendingImport: file }),
   clearPending: () => set({ pendingOpen: null, pendingNew: false, pendingImport: null }),
   setProjects: (projects) => set({ projects }),
+  setFolders: (folders) => set({ folders }),
+  setSelectedFolder: (selectedFolder) => set({ selectedFolder }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
   removeProject: (id) =>
     set((state) => ({ projects: state.projects.filter((project) => project.id !== id) })),
+  updateProjectFolder: (id, folder_id) =>
+    set((state) => ({
+      projects: state.projects.map((project) =>
+        project.id === id ? { ...project, folder_id } : project,
+      ),
+    })),
 }))

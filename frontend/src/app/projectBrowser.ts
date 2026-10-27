@@ -11,6 +11,10 @@ export const OPEN_FAILED_MESSAGE = 'Could not open the project.'
 export const DELETE_FAILED_MESSAGE = 'Could not delete the project.'
 export const DUPLICATE_FAILED_MESSAGE = 'Could not duplicate the project.'
 export const RENAME_FAILED_MESSAGE = 'Could not rename the project.'
+export const FOLDER_FAILED_MESSAGE = 'Could not save the folder.'
+export const FOLDER_DELETE_FAILED_MESSAGE = 'Could not delete the folder.'
+export const MOVE_FAILED_MESSAGE = 'Could not move the project.'
+export const BACKUP_FAILED_MESSAGE = 'Could not build the backup.'
 
 export function openProjectBrowser(): void {
   useProjectBrowserStore.getState().show()
@@ -36,9 +40,27 @@ export async function refreshProjects(): Promise<void> {
   useProjectBrowserStore.getState().setError(null)
   try {
     const projects = await projectsApi.list()
-    useProjectBrowserStore.getState().setProjects(projects)
+    let folders: Awaited<ReturnType<typeof projectsApi.listFolders>> = []
+    try {
+      folders = await projectsApi.listFolders()
+    } catch {
+      folders = []
+    }
+    const state = useProjectBrowserStore.getState()
+    state.setProjects(projects)
+    state.setFolders(folders)
+    // Drop a stale selection if its folder was deleted elsewhere.
+    const selected = state.selectedFolder
+    if (
+      selected !== 'all' &&
+      selected !== 'root' &&
+      !folders.some((folder) => folder.id === selected)
+    ) {
+      state.setSelectedFolder('all')
+    }
   } catch {
     useProjectBrowserStore.getState().setProjects([])
+    useProjectBrowserStore.getState().setFolders([])
     useProjectBrowserStore.getState().setError('Failed to load projects — is the backend running?')
   } finally {
     useProjectBrowserStore.getState().setLoading(false)
@@ -73,10 +95,20 @@ export async function duplicateLibraryProject(sourceId: string): Promise<boolean
   try {
     const blob = await projectsApi.get(sourceId)
     const json = JSON.parse(blob) as LessonJSON
-    const existingNames = useProjectBrowserStore.getState().projects.map((p) => p.name)
+    const state = useProjectBrowserStore.getState()
+    const existingNames = state.projects.map((p) => p.name)
     const duplicated = duplicateLessonJSON(json, existingNames)
     const blob2 = JSON.stringify(duplicated)
-    await projectsApi.upsert(blob2)
+    // Duplicates land in the currently selected folder (root when All/Root is active).
+    const selected = state.selectedFolder
+    const targetFolder =
+      selected === 'all' || selected === 'root'
+        ? null
+        : state.folders.some((folder) => folder.id === selected)
+          ? selected
+          : null
+    const source = state.projects.find((p) => p.id === sourceId)
+    await projectsApi.upsert(blob2, targetFolder ?? source?.folder_id ?? null)
     await refreshProjects()
     return true
   } catch {
@@ -139,6 +171,130 @@ export function createAndOpenFreshProject(engine: EnginePublic, name: string): b
     return true
   } catch {
     useNotificationStore.getState().notify(OPEN_FAILED_MESSAGE)
+    return false
+  }
+}
+
+export function getSelectedFolderIdForNew(): string | null {
+  const state = useProjectBrowserStore.getState()
+  const selected = state.selectedFolder
+  if (selected === 'all' || selected === 'root') return null
+  return state.folders.some((folder) => folder.id === selected) ? selected : null
+}
+
+export function isDuplicateFolderName(name: string, existingNames: readonly string[]): boolean {
+  const trimmed = name.trim().toLowerCase()
+  return existingNames.some((n) => n.trim().toLowerCase() === trimmed)
+}
+
+export async function createLibraryFolder(name: string): Promise<boolean> {
+  const trimmed = name.trim()
+  if (trimmed === '') {
+    useNotificationStore.getState().notify(FOLDER_FAILED_MESSAGE)
+    return false
+  }
+  const existing = useProjectBrowserStore.getState().folders.map((f) => f.name)
+  if (isDuplicateFolderName(trimmed, existing)) {
+    useNotificationStore.getState().notify('A folder with this name already exists')
+    return false
+  }
+  try {
+    const folder = await projectsApi.createFolder(trimmed)
+    const state = useProjectBrowserStore.getState()
+    state.setFolders([...state.folders, folder])
+    state.setSelectedFolder(folder.id)
+    return true
+  } catch {
+    useNotificationStore.getState().notify(FOLDER_FAILED_MESSAGE)
+    return false
+  }
+}
+
+export async function renameLibraryFolder(id: string, name: string): Promise<boolean> {
+  const trimmed = name.trim()
+  if (trimmed === '') {
+    useNotificationStore.getState().notify(FOLDER_FAILED_MESSAGE)
+    return false
+  }
+  const state = useProjectBrowserStore.getState()
+  const existing = state.folders.filter((f) => f.id !== id).map((f) => f.name)
+  if (isDuplicateFolderName(trimmed, existing)) {
+    useNotificationStore.getState().notify('A folder with this name already exists')
+    return false
+  }
+  try {
+    const folder = await projectsApi.renameFolder(id, trimmed)
+    state.setFolders(state.folders.map((f) => (f.id === id ? folder : f)))
+    return true
+  } catch {
+    useNotificationStore.getState().notify(FOLDER_FAILED_MESSAGE)
+    return false
+  }
+}
+
+export async function deleteLibraryFolder(id: string, deleteProjects: boolean): Promise<boolean> {
+  try {
+    await projectsApi.deleteFolder(id, deleteProjects)
+    await refreshProjects()
+    return true
+  } catch {
+    useNotificationStore.getState().notify(FOLDER_DELETE_FAILED_MESSAGE)
+    return false
+  }
+}
+
+export async function moveLibraryProject(id: string, folderId: string | null): Promise<boolean> {
+  try {
+    await projectsApi.move(id, folderId)
+  } catch {
+    useNotificationStore.getState().notify(MOVE_FAILED_MESSAGE)
+    return false
+  }
+  useProjectBrowserStore.getState().updateProjectFolder(id, folderId)
+  return true
+}
+
+function sanitizeFileName(name: string): string {
+  const cleaned = name.replace(/[\\/:*?"<>|]/g, '-').trim()
+  return cleaned === '' ? 'Untitled lesson' : cleaned
+}
+
+export async function downloadBackupZip(): Promise<boolean> {
+  const state = useProjectBrowserStore.getState()
+  try {
+    const { zipSync, strToU8 } = await import('fflate')
+    const folderById = new Map(state.folders.map((folder) => [folder.id, folder.name]))
+    const usedNames = new Set<string>()
+    const files: Record<string, Uint8Array> = {}
+    for (const project of state.projects) {
+      const blob = await projectsApi.get(project.id)
+      const folderName =
+        project.folder_id != null ? (folderById.get(project.folder_id) ?? 'Unknown folder') : null
+      const base = `${sanitizeFileName(project.name)}.lesson`
+      const key = folderName != null ? `${sanitizeFileName(folderName)}/${base}` : base
+      let uniqueKey = key
+      let counter = 2
+      while (usedNames.has(uniqueKey)) {
+        const suffixed = `${sanitizeFileName(project.name)} (${counter}).lesson`
+        uniqueKey = folderName != null ? `${sanitizeFileName(folderName)}/${suffixed}` : suffixed
+        counter += 1
+      }
+      usedNames.add(uniqueKey)
+      files[uniqueKey] = strToU8(blob)
+    }
+    const zipped = zipSync(files)
+    const blob = new Blob([zipped as unknown as BlobPart], { type: 'application/zip' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'projects-backup.zip'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+    return true
+  } catch {
+    useNotificationStore.getState().notify(BACKUP_FAILED_MESSAGE)
     return false
   }
 }
