@@ -12,6 +12,7 @@ import type { CreateNodeParameters } from '../../engine/commands/createNodeComma
 import { runAnimationScript } from '../../engine/animationScriptRun'
 import { checkAnimationScript } from '../../engine/animationScriptCheck'
 import { markLifecycle, revealCoverage } from '../../engine/sceneEffect'
+import { estimateTextSize } from '../../engine/estimatedTextMetrics'
 import { walkPreOrder } from '../../engine/sceneNode'
 import { deserialize, serialize, validate } from '../../engine/lessonSerializer'
 
@@ -207,6 +208,78 @@ describe('Animation Script reveal', () => {
     expect(bounds.maxX - bounds.minX).toBeGreaterThan(8 * 26 * 0.6)
     expect(bounds.maxX - bounds.minX).toBeCloseTo(8 * 26 * 0.72 * 1.05 + 5, 0)
     expect((bounds.minX + bounds.maxX) / 2).toBeCloseTo(341.5, 5)
+  })
+
+  it('uses planned bounds when a same-position text target changes to longer content', () => {
+    const { system, slide } = setup()
+    const targets = [
+      {
+        name: 'es-cubito',
+        alias: 'esCubito',
+        y: 591,
+        oldContent: 'cubito de hielo',
+        newContent: 'cubito de hielo -> ice cube',
+      },
+      {
+        name: 'es-frio',
+        alias: 'esFrio',
+        y: 634,
+        oldContent: 'frío ahora mismo',
+        newContent: 'frío ahora mismo -> cold right now',
+      },
+    ]
+    const makeSource = (useNewContent: boolean, includeReveals: boolean) =>
+      [
+        'script "Builder" from 0',
+        'create group "Board" as board',
+        ...targets.map(
+          (target) =>
+            `create text "${target.name}" as ${target.alias} at (545, ${target.y}) inside board { content: "${useNewContent ? target.newContent : target.oldContent}", fontSize: 26, alignment: "center" }`,
+        ),
+        ...(includeReveals
+          ? targets.map((target) => `reveal(${target.alias}, over: 1.1, visual: none)`)
+          : []),
+      ].join('\n')
+
+    const initial = makeSource(false, false)
+    system.dispatcher.dispatch(
+      new SetSlideAnimationScriptCommand({ slideId: slide.id, source: initial }),
+    )
+    expect(
+      runAnimationScript(
+        system.engine,
+        (command) => system.dispatcher.dispatch(command),
+        slide.id,
+        initial,
+      ).ran,
+    ).toBe(true)
+    const oldNodes = new Map(
+      [...walkPreOrder(system.engine.getSlide(slide.id).scene.root)]
+        .filter((node) => targets.some((target) => target.name === node.name))
+        .map((node) => [node.name, node] as const),
+    )
+    const staleSizes = new Map(
+      targets.map((target) => [target.name, estimateTextSize(target.oldContent, 26)] as const),
+    )
+
+    const result = checkAnimationScript(system.engine, slide.id, makeSource(true, true), {
+      measure: (nodeId) => {
+        const oldNode = [...oldNodes.values()].find((node) => node.id === nodeId)
+        return oldNode ? (staleSizes.get(oldNode.name) ?? null) : null
+      },
+    })
+
+    expect(result.diagnostics.filter((item) => item.severity === 'error')).toEqual([])
+    expect(result.effects).toHaveLength(targets.length)
+    for (const target of targets) {
+      const oldNode = oldNodes.get(target.name)!
+      const effect = result.effects.find((candidate) => candidate.nodeIds.includes(oldNode.id))
+      expect(effect?.kind).toBe('reveal')
+      if (effect?.kind !== 'reveal') throw new Error(`expected a reveal for ${target.name}`)
+      expect(effect.bounds.maxX - effect.bounds.minX).toBeGreaterThan(
+        estimateTextSize(target.newContent, 26).width,
+      )
+    }
   })
 
   it('unions live measurements with planned bounds when a rerun moved the node', () => {

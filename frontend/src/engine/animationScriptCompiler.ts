@@ -5806,7 +5806,8 @@ class Compiler {
         // Steady state (same spot): prefer the tight measured box. Unioning
         // with the planned estimate here is what dragged the reveal's maxX
         // past the last glyph, so the hand kept writing into empty board.
-        // Only union on a real move: centers far apart relative to the boxes.
+        // Only union when the target moved or its measured size is stale;
+        // steady-state bounds otherwise stay tight around the rendered text.
         const measuredCX = (measured.minX + measured.maxX) / 2
         const measuredCY = (measured.minY + measured.maxY) / 2
         const plannedCX = (planned.minX + planned.maxX) / 2
@@ -5818,7 +5819,15 @@ class Compiler {
         const moved =
           Math.abs(measuredCX - plannedCX) > (measuredW + plannedW) / 4 ||
           Math.abs(measuredCY - plannedCY) > (measuredH + plannedH) / 4
-        if (!moved) {
+        // A same-position text can still have changed content since its last
+        // renderer measurement. Center-only detection treated that stale,
+        // narrower box as steady and clipped both ends of longer replacement
+        // text (e.g. a translated label). Keep the measured box only when its
+        // dimensions still agree with the current planned content.
+        const resized =
+          Math.abs(measuredW - plannedW) > Math.min(measuredW, plannedW) * 0.1 ||
+          Math.abs(measuredH - plannedH) > Math.min(measuredH, plannedH) * 0.1
+        if (!moved && !resized) {
           const steadyW = measured.maxX - measured.minX
           const steadyProp = steadyW * 0.025
           return {
