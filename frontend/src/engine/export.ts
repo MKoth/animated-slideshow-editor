@@ -26,6 +26,11 @@ export const EXPORT_AFORMAT_FILTER = 'aformat=sample_fmts=fltp:channel_layouts=s
 export const EXPORT_CONCAT_METHOD = 'concat demuxer' as const
 export const EXPORT_VERSION = 1 as const
 
+// Fixed v1 output (Spec 473): 30 fps, 1920x1080 letterbox fit.
+export const EXPORT_VIDEO_FPS = 30 as const
+export const EXPORT_VIDEO_WIDTH = 1920 as const
+export const EXPORT_VIDEO_HEIGHT = 1080 as const
+
 // ---------------------------------------------------------------------------
 // Settings & helpers
 // ---------------------------------------------------------------------------
@@ -560,4 +565,35 @@ function determinismKeyOf(payload: unknown): string {
     hash = (hash * 0x100000001b3n) & 0xffffffffffffffffn
   }
   return `fnv1a64-${hash.toString(16).padStart(16, '0')}`
+}
+
+/** Fixed v1 export settings (Spec 473): 30 fps, 1920x1080. */
+export function getFixedExportSettings(): ExportSettings {
+  return { fps: EXPORT_VIDEO_FPS, width: EXPORT_VIDEO_WIDTH, height: EXPORT_VIDEO_HEIGHT }
+}
+
+/** Selectable slides for export: project order, zero-duration excluded. */
+export function getExportSelectableSlides(project: Project): readonly Slide[] {
+  return project.slides.filter((slide) => slide.duration > 0)
+}
+
+/**
+ * Subset descriptor (Spec 473): selected ids in project order, zero-duration
+ * excluded, empty selection rejected. Totals and determinismKey cover the
+ * subset only.
+ */
+export function buildExportJobDescriptorForSlides(
+  project: Project,
+  slideIds: readonly string[],
+  settings: ExportSettings,
+): ExportJobDescriptor {
+  const wanted = new Set(slideIds)
+  const ordered = project.slides.filter((slide) => wanted.has(slide.id) && slide.duration > 0)
+  if (ordered.length === 0) {
+    throw new Error('No selectable slides: select at least one slide with duration > 0')
+  }
+  // Reuse the whole-project builder on a subset view so per-slide descriptors,
+  // totals, derived cache, and determinism stay consistent with the full build.
+  const subsetProject = { id: project.id, slides: ordered } as Project
+  return buildExportJobDescriptor(subsetProject, settings)
 }

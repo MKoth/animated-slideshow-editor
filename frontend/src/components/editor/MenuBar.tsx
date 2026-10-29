@@ -22,6 +22,9 @@ import { useUiStore } from '../../stores/uiStore'
 import { triggerAssetImport } from '../assets/importTrigger'
 import { TtsGlobalSettingsModal } from '../settings/TtsGlobalSettings'
 import { KeyboardShortcutsModal } from './KeyboardShortcutsModal'
+import { ExportVideoDialog } from '../export/ExportVideoDialog'
+import { ApiClient } from '../../api/apiClient'
+import { ExportApi } from '../../api/exportApi'
 
 const IMPORT_ASSETS_ITEM = 'Import Assets'
 const SNAP_TO_GRID_ITEM = 'Snap to Grid'
@@ -30,6 +33,7 @@ const PASTE_ITEM = 'Paste'
 const DUPLICATE_ITEM = 'Duplicate'
 const DELETE_ITEM = 'Delete'
 const SAVE_ITEM = 'Save'
+const EXPORT_VIDEO_ITEM = 'Export video…'
 
 const TTS_SETTINGS_ITEM = 'TTS Settings'
 const DEBUG_PANEL_ITEM = 'Debug Panel'
@@ -37,7 +41,7 @@ const KEYBOARD_SHORTCUTS_ITEM = 'Keyboard Shortcuts'
 const MENUS = [
   {
     label: 'File',
-    items: ['New Project', 'Open', 'Save'],
+    items: ['New Project', 'Open', 'Save', EXPORT_VIDEO_ITEM],
   },
   {
     label: 'Edit',
@@ -153,6 +157,7 @@ export function MenuBar() {
   const [, setTick] = useState(0)
   const [showTtsSettings, setShowTtsSettings] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [showExport, setShowExport] = useState(false)
   useEngineEvent(() => setTick((tick) => tick + 1))
   const libraryUnavailable = useAssetLibraryStore((state) => state.unavailable)
   const gridSnap = useUiStore((state) => state.gridSnap)
@@ -183,6 +188,8 @@ export function MenuBar() {
   const handleItemClick = (item: string): boolean => {
     if (item === SAVE_ITEM) {
       persistence.save()
+    } else if (item === EXPORT_VIDEO_ITEM) {
+      setShowExport(true)
     } else if (item === 'AI Assistant') {
       const open = useAiStore.getState().panelOpen
       useAiStore.getState().setPanelOpen(!open)
@@ -240,6 +247,13 @@ export function MenuBar() {
       </header>
       {showTtsSettings && <TtsGlobalSettingsModal onClose={() => setShowTtsSettings(false)} />}
       {showShortcuts && <KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />}
+      {showExport && (
+        <ExportVideoDialog
+          engine={engine}
+          exportApi={new ExportApi(new ApiClient())}
+          onClose={() => setShowExport(false)}
+        />
+      )}
     </>
   )
 }

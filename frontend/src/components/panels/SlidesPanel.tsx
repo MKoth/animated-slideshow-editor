@@ -8,6 +8,9 @@ import {
 } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useThumbnailStore } from '../../stores/thumbnailStore'
+import { ExportVideoDialog } from '../export/ExportVideoDialog'
+import { ApiClient } from '../../api/apiClient'
+import { ExportApi } from '../../api/exportApi'
 
 export function SlidesPanel() {
   const { engine, dispatch } = useEngine()
@@ -18,6 +21,7 @@ export function SlidesPanel() {
 
   const [renameId, setRenameId] = useState<string | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
+  const [showExport, setShowExport] = useState(false)
   const [dropOver, setDropOver] = useState<{
     slideId: string
     position: 'before' | 'after'
@@ -114,6 +118,14 @@ export function SlidesPanel() {
           onClick={handleAdd}
         >
           +
+        </button>
+        <button
+          className="slides-toolbar__export"
+          aria-label="Export video"
+          title="Export video"
+          onClick={() => setShowExport(true)}
+        >
+          Export video
         </button>
       </div>
       {project.slides.length === 0 ? (
@@ -212,6 +224,13 @@ export function SlidesPanel() {
             )
           })}
         </ul>
+      )}
+      {showExport && (
+        <ExportVideoDialog
+          engine={engine}
+          exportApi={new ExportApi(new ApiClient())}
+          onClose={() => setShowExport(false)}
+        />
       )}
     </div>
   )

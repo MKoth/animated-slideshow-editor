@@ -365,15 +365,25 @@ def test_export_determinism_and_derived_cache(client: TestClient) -> None:
     desc2 = _make_descriptor(fps=24, durations=[1.0, 2.0])
     # Same descriptor should produce same determinismKey (when using same projectId)
     assert desc1["determinismKey"] == desc2["determinismKey"]
-    # But after posting, each job gets unique jobId but same determinismKey preserved
+    # Single-concurrency (Spec 473): second create while one runs is blocked.
     r1 = client.post("/api/export/jobs", json=desc1)
-    r2 = client.post("/api/export/jobs", json=desc2)
     assert r1.status_code == 201
+    r2_blocked = client.post("/api/export/jobs", json=desc2)
+    assert r2_blocked.status_code == 409
+    assert "already in progress" in r2_blocked.text.lower()
+    # After cancelling the first job, the same descriptor is accepted with a new jobId.
+    job_id_1 = r1.json()["jobId"]
+    cancel = client.post(f"/api/export/jobs/{job_id_1}/cancel")
+    assert cancel.status_code == 200
+    assert cancel.json()["status"] == "cancelled"
+    r2 = client.post("/api/export/jobs", json=desc2)
     assert r2.status_code == 201
     assert r1.json()["determinismKey"] == r2.json()["determinismKey"]
     assert r1.json()["jobId"] != r2.json()["jobId"]
 
-    # derived cache: duplicate assetId+rate should be deduped (frontend does)
+    # derived cache: duplicate assetId+rate should be deduped (frontend does).
+    # Clear the active job first so validation (422) is reached, not concurrency (409).
+    _clear_jobs_for_test()
     desc3 = _make_descriptor(fps=30, durations=[2.0])
     # Add a second clip with same asset+rate as first to test dedup validation passes (but duplicate key should fail)
     # Our desc has 1 cached entry; adding duplicate with same key should be rejected as duplicate

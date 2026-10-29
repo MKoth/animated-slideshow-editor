@@ -128,6 +128,7 @@ import {
 } from './audioSync'
 import {
   buildExportJobDescriptor as buildExportJobDescriptorCore,
+  buildExportJobDescriptorForSlides as buildExportJobDescriptorForSlidesCore,
   buildPerSlideExportDescriptor as buildPerSlideExportDescriptorCore,
   getDerivedAssetCacheKey as getDerivedAssetCacheKeyCore,
   getExportFrameCount as getExportFrameCountCore,
@@ -1995,6 +1996,15 @@ export class Engine {
     const project = this.project
     if (!project) throw new Error('No project exists in memory')
     return buildExportJobDescriptorCore(project, settings)
+  }
+
+  buildExportJobDescriptorForSlides(
+    slideIds: readonly string[],
+    settings: ExportSettings,
+  ): ExportJobDescriptor {
+    const project = this.project
+    if (!project) throw new Error('No project exists in memory')
+    return buildExportJobDescriptorForSlidesCore(project, slideIds, settings)
   }
 
   getActiveSlide(): Slide | null {
@@ -7411,6 +7421,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     buildPerSlideExportDescriptor: (slideId, settings) =>
       engine.buildPerSlideExportDescriptor(slideId, settings),
     buildExportJobDescriptor: (settings) => engine.buildExportJobDescriptor(settings),
+    buildExportJobDescriptorForSlides: (slideIds, settings) =>
+      engine.buildExportJobDescriptorForSlides(slideIds, settings),
     toJSON: () => engine.toJSON(),
     restoreFromJSON: (json) => engine.restoreFromJSON(json),
     applyLessonSnapshot: (json, activeSlideId) => engine.applyLessonSnapshot(json, activeSlideId),

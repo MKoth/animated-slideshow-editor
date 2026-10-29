@@ -304,6 +304,10 @@ export interface EnginePublic {
   getDerivedAssetCacheKey(assetId: string, playbackRate: number): string
   buildPerSlideExportDescriptor(slideId: string, settings: ExportSettings): ExportPerSlideDescriptor
   buildExportJobDescriptor(settings: ExportSettings): ExportJobDescriptor
+  buildExportJobDescriptorForSlides(
+    slideIds: readonly string[],
+    settings: ExportSettings,
+  ): ExportJobDescriptor
   toJSON(): LessonJSON
   restoreFromJSON(json: LessonJSON): void
   applyLessonSnapshot(json: LessonJSON, activeSlideId: string | null): void

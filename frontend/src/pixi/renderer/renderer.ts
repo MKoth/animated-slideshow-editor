@@ -1070,6 +1070,19 @@ export class Renderer {
     useSelectionStore.getState().prune(valid)
   }
 
+  /**
+   * Capture the current stage through the thumbnail path (renderer.extract).
+   * Used by video export to grab exact-timestamp frames without relying on
+   * canvas readback timing.
+   */
+  captureFrame(): string | null {
+    const app = this.#app
+    if (!app || this.#disposed) {
+      return null
+    }
+    return extractCanvasCapture(app)
+  }
+
   #reportFailure(error: unknown): void {
     this.#overlay?.show(error)
     console.error('[renderer] rendering failure:', error)

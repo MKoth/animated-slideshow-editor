@@ -18,6 +18,7 @@ import { CanvasToolbar } from '../editor/CanvasToolbar'
 import { WeightPaintToolbar } from '../editor/WeightPaintToolbar'
 import { SculptToolbar } from '../editor/SculptToolbar'
 import { MeshEditToolbar } from '../editor/MeshEditToolbar'
+import { setActiveRenderer } from '../../pixi/renderer/activeRenderer'
 
 export function CanvasPanel() {
   const { engine, dispatch } = useEngine()
@@ -91,7 +92,9 @@ export function CanvasPanel() {
     })
     const clearNodeSize = setNodeSizeProvider((nodeId) => renderer.nodeSize(nodeId))
     void renderer.start()
+    setActiveRenderer(renderer)
     return () => {
+      setActiveRenderer(null)
       clearNodeSize()
       unsubscribeLibrary()
       unsubscribeShaders()
