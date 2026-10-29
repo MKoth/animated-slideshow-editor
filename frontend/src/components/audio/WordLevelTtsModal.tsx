@@ -6,7 +6,12 @@ import { apiClient, voicePromptsApi as defaultVoicePromptsApi } from '../../api'
 import type { VoicePromptOut } from '../../api/voicePromptsApi'
 import { VoicePromptsApi } from '../../api/voicePromptsApi'
 import { ReplacePrompterWordsCommand } from '../../engine/commands'
-import { LANGUAGE_OPTIONS, migrateStoredLanguage } from '../../engine/ttsLanguages'
+import {
+  CARTESIA_LANGUAGE_OPTIONS,
+  LANGUAGE_OPTIONS,
+  migrateStoredCartesiaLanguage,
+  migrateStoredLanguage,
+} from '../../engine/ttsLanguages'
 import {
   defaultSpeakerForModel,
   getFallbackSpeakersForModel,
@@ -23,9 +28,13 @@ import {
   paramsMatchPreset,
 } from '../../engine/ttsParams'
 import { TtsSettingsApi } from '../../api/ttsSettingsApi'
+import type { CartesiaVoice } from '../../api/ttsSettingsApi'
 import {
+  CARTESIA_MODEL_ID,
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
+  isCartesiaModel,
+  isCartesiaProvider,
   SUPPORTED_MODELS,
   SUPPORTED_PROVIDERS,
   getFallbackCapabilities,
@@ -83,6 +92,11 @@ export function WordLevelTtsModal({
   const [hasEditedProvider, setHasEditedProvider] = useState(false)
   const [downloadedMap, setDownloadedMap] = useState<Record<string, boolean>>({})
   const [downloadingModel, setDownloadingModel] = useState(false)
+  // Cartesia remote voices (fetched when provider is cartesia)
+  const [cartesiaVoices, setCartesiaVoices] = useState<CartesiaVoice[]>([])
+  const [cartesiaDefaultVoiceId, setCartesiaDefaultVoiceId] = useState<string>('')
+  const [cartesiaVoicesLoading, setCartesiaVoicesLoading] = useState(false)
+  const [cartesiaVoicesError, setCartesiaVoicesError] = useState<string | null>(null)
   const [capabilitiesMap, setCapabilitiesMap] = useState<
     Record<
       string,
@@ -286,10 +300,46 @@ export function WordLevelTtsModal({
     return capabilitiesMap[eff]?.mode ?? getModelMode(eff)
   }, [formModelId, ttsModel, capabilitiesMap])
 
-  const isTtsVoiceEnabled = ttsMode === 'custom_voice'
+  const isTtsVoiceEnabled = ttsMode === 'custom_voice' || ttsMode === 'cartesia'
   const isTtsReferenceEnabled = ttsMode === 'voice_clone'
-  const isFormVoiceEnabled = formMode === 'custom_voice'
+  const isFormVoiceEnabled = formMode === 'custom_voice' || formMode === 'cartesia'
   const isFormReferenceEnabled = formMode === 'voice_clone'
+  const isTtsCartesia = ttsMode === 'cartesia' || isCartesiaProvider(ttsProviderId)
+  const isFormCartesia = formMode === 'cartesia' || isCartesiaProvider(formProvider)
+  // Label for the default (empty) Cartesia voice option — the saved Mike voice.
+  const cartesiaDefaultLabel = useMemo(() => {
+    const found = cartesiaVoices.find((v) => v.id === cartesiaDefaultVoiceId)
+    const name = found?.name?.trim() ? found.name.trim() : 'Mike'
+    return `— Default (${name}) —`
+  }, [cartesiaVoices, cartesiaDefaultVoiceId])
+
+  // Fetch saved Cartesia voices when the per-generation or form provider needs them.
+  useEffect(() => {
+    if (!isTtsCartesia && !isFormCartesia) return
+    if (cartesiaVoices.length > 0 || cartesiaVoicesLoading) return
+    let cancelled = false
+    setCartesiaVoicesLoading(true)
+    setCartesiaVoicesError(null)
+    ttsSettingsApi
+      .getVoices()
+      .then((res) => {
+        if (cancelled) return
+        if (Array.isArray(res.voices)) setCartesiaVoices(res.voices)
+        if (typeof res.defaultVoiceId === 'string') setCartesiaDefaultVoiceId(res.defaultVoiceId)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        const msg = e instanceof Error ? e.message : String(e)
+        const detail = (e as { detail?: string })?.detail ?? msg
+        setCartesiaVoicesError(detail)
+      })
+      .finally(() => {
+        if (!cancelled) setCartesiaVoicesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isTtsCartesia, isFormCartesia]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const ttsInstructionSupported = useMemo(() => {
     const eff = ttsModel || DEFAULT_MODEL_ID
@@ -359,22 +409,38 @@ export function WordLevelTtsModal({
     if (!selectedPromptId) return
     const selected = prompts.find((p) => p.id === selectedPromptId)
     if (selected) {
+      const promptModelForCheck =
+        (selected as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
+      const promptProviderForCheck =
+        (selected as unknown as { provider?: string }).provider ?? ttsProviderId ?? ''
+      const promptIsCartesia =
+        isCartesiaModel(promptModelForCheck) || isCartesiaProvider(promptProviderForCheck)
       if (!language) {
-        const migrated = migrateStoredLanguage(selected.language)
-        if (migrated.value) setLanguage(migrated.value)
+        if (promptIsCartesia) {
+          const migrated = migrateStoredCartesiaLanguage(selected.language)
+          if (migrated.value) setLanguage(migrated.value)
+        } else {
+          const migrated = migrateStoredLanguage(selected.language)
+          if (migrated.value) setLanguage(migrated.value)
+        }
       }
       if (!voice && selected.voice) {
-        const promptModel =
-          (selected as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
-        const backendSpeakers =
-          capabilitiesMap[promptModel]?.speakers ?? getFallbackSpeakersForModel(promptModel)
-        const mig = migrateStoredVoice(
-          selected.voice,
-          promptModel,
-          selected.language,
-          backendSpeakers,
-        )
-        setVoice(mig.value)
+        if (promptIsCartesia) {
+          // Cartesia voice ids are stored verbatim (server validates)
+          setVoice(selected.voice)
+        } else {
+          const promptModel =
+            (selected as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
+          const backendSpeakers =
+            capabilitiesMap[promptModel]?.speakers ?? getFallbackSpeakersForModel(promptModel)
+          const mig = migrateStoredVoice(
+            selected.voice,
+            promptModel,
+            selected.language,
+            backendSpeakers,
+          )
+          setVoice(mig.value)
+        }
       }
       if (!instruction && selected.instruction) setInstruction(selected.instruction)
       if (!voiceReference) {
@@ -395,6 +461,7 @@ export function WordLevelTtsModal({
     instruction,
     voiceReference,
     ttsModel,
+    ttsProviderId,
     capabilitiesMap,
   ])
 
@@ -405,16 +472,24 @@ export function WordLevelTtsModal({
     if (!sel?.voice) return null
     const promptModel =
       (sel as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
+    const promptProvider = (sel as unknown as { provider?: string }).provider ?? ttsProviderId ?? ''
+    // Cartesia voice ids are validated server-side — never a migration warning
+    if (isCartesiaModel(promptModel) || isCartesiaProvider(promptProvider)) return null
     const backendSpeakers =
       capabilitiesMap[promptModel]?.speakers ?? getFallbackSpeakersForModel(promptModel)
     const mig = migrateStoredVoice(sel.voice, promptModel, sel.language, backendSpeakers)
     return mig.isUnknown ? mig.warning : null
-  }, [selectedPromptId, prompts, voice, ttsModel, capabilitiesMap])
+  }, [selectedPromptId, prompts, voice, ttsModel, ttsProviderId, capabilitiesMap])
 
   const effectiveTtsVoiceWarning = ttsVoiceWarning ?? ttsPromptVoiceWarning
 
   useEffect(() => {
     if (!voice) return
+    if (isTtsCartesia) {
+      // Cartesia voice ids pass through (server validates)
+      setTtsVoiceWarning(null)
+      return
+    }
     if (!isTtsVoiceEnabled) {
       setVoice('')
       setTtsVoiceWarning(null)
@@ -434,7 +509,7 @@ export function WordLevelTtsModal({
       : `Unknown voice '${voice}' — using default (${def})`
     setTtsVoiceWarning(warning)
     setVoice('')
-  }, [ttsModel, ttsSpeakers, isTtsVoiceEnabled]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ttsModel, ttsSpeakers, isTtsVoiceEnabled, isTtsCartesia]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!isTtsReferenceEnabled && voiceReference) setVoiceReference('')
@@ -528,6 +603,15 @@ export function WordLevelTtsModal({
     setShowCreate(true)
   }
 
+  /** Keep the voice-prompt form's model/provider pairing valid (cartesia ⟺ sonic-3.6). */
+  const pairFormModelProvider = (model: string, provider: string): [string, string] => {
+    if (isCartesiaProvider(provider) && !isCartesiaModel(model))
+      return [CARTESIA_MODEL_ID, provider]
+    if (!isCartesiaProvider(provider) && isCartesiaModel(model))
+      return [DEFAULT_MODEL_ID, provider || DEFAULT_PROVIDER]
+    return [model, provider]
+  }
+
   const openEdit = () => {
     if (!selectedPromptId) return
     const p = prompts.find((x) => x.id === selectedPromptId)
@@ -535,17 +619,26 @@ export function WordLevelTtsModal({
     setEditingPrompt(p)
     setFormTitle(p.title)
     setFormInstruction(p.instruction)
-    setFormLanguage(migrateStoredLanguage(p.language).value)
+    // Cartesia voice ids / languages pass through verbatim (server validates)
     const pmRaw = (p as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
-    const backendSpeakersForForm =
-      capabilitiesMap[pmRaw]?.speakers ?? getFallbackSpeakersForModel(pmRaw)
-    const mig = migrateStoredVoice(p.voice ?? null, pmRaw, p.language, backendSpeakersForForm)
-    if (mig.isUnknown) {
-      setFormVoice('')
-      setFormVoiceWarning(mig.warning)
-    } else {
-      setFormVoice(mig.value)
+    const ppRaw = (p as unknown as { provider?: string }).provider ?? ''
+    const editIsCartesia = isCartesiaModel(pmRaw) || isCartesiaProvider(ppRaw)
+    if (editIsCartesia) {
+      setFormLanguage(migrateStoredCartesiaLanguage(p.language).value)
+      setFormVoice(p.voice ?? '')
       setFormVoiceWarning(null)
+    } else {
+      setFormLanguage(migrateStoredLanguage(p.language).value)
+      const backendSpeakersForForm =
+        capabilitiesMap[pmRaw]?.speakers ?? getFallbackSpeakersForModel(pmRaw)
+      const mig = migrateStoredVoice(p.voice ?? null, pmRaw, p.language, backendSpeakersForForm)
+      if (mig.isUnknown) {
+        setFormVoice('')
+        setFormVoiceWarning(mig.warning)
+      } else {
+        setFormVoice(mig.value)
+        setFormVoiceWarning(null)
+      }
     }
     const refFromParams = (p.params as unknown as { referenceAssetId?: string } | null)
       ?.referenceAssetId
@@ -562,8 +655,12 @@ export function WordLevelTtsModal({
     setFormParams(p.params ? JSON.stringify(p.params, null, 2) : '')
     const pm = (p as unknown as { modelId?: string }).modelId ?? ''
     const pp = (p as unknown as { provider?: string }).provider ?? ''
-    setFormModelId(pm || ttsModel || DEFAULT_MODEL_ID)
-    setFormProvider(pp || ttsProviderId || DEFAULT_PROVIDER)
+    const [pairedModel, pairedProvider] = pairFormModelProvider(
+      pm || ttsModel || DEFAULT_MODEL_ID,
+      pp || ttsProviderId || DEFAULT_PROVIDER,
+    )
+    setFormModelId(pairedModel)
+    setFormProvider(pairedProvider)
     setFormError(null)
     setShowCreate(true)
   }
@@ -622,6 +719,11 @@ export function WordLevelTtsModal({
   useEffect(() => {
     if (!showCreate) return
     if (!formVoice) return
+    if (isFormCartesia) {
+      // Cartesia voice ids pass through (server validates)
+      setFormVoiceWarning(null)
+      return
+    }
     if (!isFormVoiceEnabled) {
       setFormVoice('')
       setFormVoiceWarning(null)
@@ -641,7 +743,7 @@ export function WordLevelTtsModal({
       : `Unknown voice '${formVoice}' — using default (${def})`
     setFormVoiceWarning(warning)
     setFormVoice('')
-  }, [formModelId, formSpeakers, isFormVoiceEnabled, showCreate]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [formModelId, formSpeakers, isFormVoiceEnabled, isFormCartesia, showCreate]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeletePrompt = async () => {
     if (!selectedPromptId) return
@@ -680,19 +782,22 @@ export function WordLevelTtsModal({
         return
       }
     }
-    // Merge slider TTS params (sliders override advanced JSON)
+    // Merge slider TTS params (sliders override advanced JSON).
+    // Cartesia ignores local generation params — keep advanced JSON as-is.
     let mergedParams: Record<string, unknown> | undefined = params ? { ...params } : undefined
-    const sliderTts: Record<string, number> = {
-      temperature: formTemperature,
-      top_k: formTopK,
-      top_p: formTopP,
-      repetition_penalty: formRepetition,
-      max_tokens: formMaxTokens,
+    if (!isFormCartesia) {
+      const sliderTts: Record<string, number> = {
+        temperature: formTemperature,
+        top_k: formTopK,
+        top_p: formTopP,
+        repetition_penalty: formRepetition,
+        max_tokens: formMaxTokens,
+      }
+      mergedParams = mergeTtsParams(
+        mergedParams,
+        sliderTts as Partial<Record<keyof typeof TTS_PARAM_RANGES, number>>,
+      )
     }
-    mergedParams = mergeTtsParams(
-      mergedParams,
-      sliderTts as Partial<Record<keyof typeof TTS_PARAM_RANGES, number>>,
-    )
     if (isFormReferenceEnabled) {
       if (formVoiceReference) {
         mergedParams = { ...(mergedParams ?? {}), referenceAssetId: formVoiceReference }
@@ -879,23 +984,35 @@ export function WordLevelTtsModal({
                   marginTop: 4,
                 }}
               >
-                {LANGUAGE_OPTIONS.map((opt) => (
+                {(isFormCartesia ? CARTESIA_LANGUAGE_OPTIONS : LANGUAGE_OPTIONS).map((opt) => (
                   <option key={opt.value || 'auto'} value={opt.value}>
                     {opt.label}
                   </option>
                 ))}
               </select>
               <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
-                Auto uses automatic language detection
+                {isFormCartesia
+                  ? 'Cartesia speaks 44 languages with the saved voice'
+                  : 'Auto uses automatic language detection'}
               </div>
-              {editingPrompt && migrateStoredLanguage(editingPrompt.language).isUnknown && (
-                <div
-                  data-testid="voice-prompt-language-warning"
-                  style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
-                >
-                  {migrateStoredLanguage(editingPrompt.language).warning}
-                </div>
-              )}
+              {editingPrompt &&
+                (isFormCartesia
+                  ? migrateStoredCartesiaLanguage(editingPrompt.language).isUnknown && (
+                      <div
+                        data-testid="voice-prompt-language-warning"
+                        style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
+                      >
+                        {migrateStoredCartesiaLanguage(editingPrompt.language).warning}
+                      </div>
+                    )
+                  : migrateStoredLanguage(editingPrompt.language).isUnknown && (
+                      <div
+                        data-testid="voice-prompt-language-warning"
+                        style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
+                      >
+                        {migrateStoredLanguage(editingPrompt.language).warning}
+                      </div>
+                    ))}
             </label>
             <label style={{ fontSize: 11, opacity: isFormVoiceEnabled ? 1 : 0.5 }}>
               Voice (optional){' '}
@@ -922,21 +1039,48 @@ export function WordLevelTtsModal({
                   marginTop: 4,
                 }}
               >
-                <option value="">— Default (auto) —</option>
-                {formSpeakers.map((v) => {
-                  const hint = getHintForSpeaker(v, formModelId || ttsModel || DEFAULT_MODEL_ID)
-                  return (
-                    <option key={v} value={v}>
-                      {hint ? `${v} (${hint})` : v}
-                    </option>
-                  )
-                })}
+                {isFormCartesia ? (
+                  <>
+                    <option value="">{cartesiaDefaultLabel}</option>
+                    {cartesiaVoices.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {(v.name ?? 'Unnamed voice') +
+                          (v.language ? ` (${v.language})` : '') +
+                          ` — ${v.id.slice(0, 8)}`}
+                      </option>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    <option value="">— Default (auto) —</option>
+                    {formSpeakers.map((v) => {
+                      const hint = getHintForSpeaker(v, formModelId || ttsModel || DEFAULT_MODEL_ID)
+                      return (
+                        <option key={v} value={v}>
+                          {hint ? `${v} (${hint})` : v}
+                        </option>
+                      )
+                    })}
+                  </>
+                )}
               </select>
               <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-                {isFormVoiceEnabled
-                  ? '9 canonical voices — any language'
-                  : 'Voice not applicable for this model'}
+                {isFormCartesia
+                  ? 'Saved Cartesia voices — default is Mike'
+                  : isFormVoiceEnabled
+                    ? '9 canonical voices — any language'
+                    : 'Voice not applicable for this model'}
               </div>
+              {isFormCartesia && cartesiaVoicesLoading && (
+                <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+                  Loading saved voices…
+                </div>
+              )}
+              {isFormCartesia && !cartesiaVoicesLoading && cartesiaVoicesError && (
+                <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>
+                  Saved voices unavailable ({cartesiaVoicesError}) — Default (Mike) still works.
+                </div>
+              )}
               {formVoiceWarning && (
                 <div
                   data-testid="voice-prompt-voice-warning"
@@ -945,7 +1089,8 @@ export function WordLevelTtsModal({
                   {formVoiceWarning}
                 </div>
               )}
-              {editingPrompt &&
+              {!isFormCartesia &&
+                editingPrompt &&
                 (() => {
                   const mig = migrateStoredVoice(
                     editingPrompt.voice ?? null,
@@ -1002,6 +1147,7 @@ export function WordLevelTtsModal({
                 <select
                   data-testid="voice-prompt-model"
                   value={formModelId}
+                  disabled={isFormCartesia}
                   onChange={(e) => setFormModelId(e.target.value)}
                   style={{
                     width: '100%',
@@ -1019,21 +1165,41 @@ export function WordLevelTtsModal({
                     </option>
                   ))}
                 </select>
-                {formModelId && downloadedMap[formModelId] === false && (
-                  <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>
-                    ↓ Needs download
+                {formModelId && isCartesiaModel(formModelId) && (
+                  <div style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}>
+                    ✓ Remote model — no download needed
                   </div>
                 )}
-                {formModelId && downloadedMap[formModelId] === true && (
-                  <div style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}>✓ Downloaded</div>
-                )}
+                {formModelId &&
+                  !isCartesiaModel(formModelId) &&
+                  downloadedMap[formModelId] === false && (
+                    <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>
+                      ↓ Needs download
+                    </div>
+                  )}
+                {formModelId &&
+                  !isCartesiaModel(formModelId) &&
+                  downloadedMap[formModelId] === true && (
+                    <div style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}>✓ Downloaded</div>
+                  )}
               </label>
               <label style={{ fontSize: 11 }}>
                 Provider
                 <select
                   data-testid="voice-prompt-provider"
                   value={formProvider}
-                  onChange={(e) => setFormProvider(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value
+                    const crossing = isCartesiaProvider(next) !== isFormCartesia
+                    const [pairedModel] = pairFormModelProvider(formModelId, next)
+                    setFormProvider(next)
+                    setFormModelId(pairedModel)
+                    if (crossing) {
+                      setFormVoice('')
+                      setFormLanguage('')
+                      setFormVoiceWarning(null)
+                    }
+                  }}
                   style={{
                     width: '100%',
                     padding: '6px 8px',
@@ -1056,191 +1222,198 @@ export function WordLevelTtsModal({
               Stored model/provider recalled next time this Voice Prompt is selected. Per-generation
               dropdown overrides it.
             </div>
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-                padding: 8,
-                background: '#1e1e1e',
-                border: '1px solid #333',
-                borderRadius: 4,
-              }}
-            >
-              <label style={{ fontSize: 11 }}>
-                Params preset
-                <select
-                  data-testid="voice-prompt-preset"
-                  value={formPreset}
-                  onChange={(e) => handlePresetChange(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '6px 8px',
-                    background: '#252525',
-                    border: '1px solid #444',
-                    borderRadius: 4,
-                    color: '#e0e0e0',
-                    marginTop: 4,
-                  }}
-                >
-                  {TTS_PRESET_NAMES.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                  {formPreset === 'Custom' && <option value="Custom">Custom</option>}
-                </select>
-              </label>
-              <div style={{ display: 'grid', gap: 6 }}>
-                <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span>
-                    temperature {formTemperature.toFixed(2)}{' '}
-                    <span style={{ color: '#888' }}>
-                      ({TTS_PARAM_RANGES.temperature.min}–{TTS_PARAM_RANGES.temperature.max})
-                    </span>
-                  </span>
-                  <input
-                    data-testid="voice-prompt-temperature"
-                    type="range"
-                    min={TTS_PARAM_RANGES.temperature.min}
-                    max={TTS_PARAM_RANGES.temperature.max}
-                    step={TTS_PARAM_RANGES.temperature.step}
-                    value={formTemperature}
-                    onChange={(e) =>
-                      handleTtsSliderChange('temperature', parseFloat(e.target.value))
-                    }
-                  />
-                </label>
-                <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span>
-                    top_k {formTopK}{' '}
-                    <span style={{ color: '#888' }}>
-                      ({TTS_PARAM_RANGES.top_k.min}–{TTS_PARAM_RANGES.top_k.max})
-                    </span>
-                  </span>
-                  <input
-                    data-testid="voice-prompt-top-k"
-                    type="range"
-                    min={TTS_PARAM_RANGES.top_k.min}
-                    max={TTS_PARAM_RANGES.top_k.max}
-                    step={TTS_PARAM_RANGES.top_k.step}
-                    value={formTopK}
-                    onChange={(e) => handleTtsSliderChange('top_k', parseInt(e.target.value, 10))}
-                  />
-                </label>
-                <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span>
-                    top_p {formTopP.toFixed(2)}{' '}
-                    <span style={{ color: '#888' }}>
-                      ({TTS_PARAM_RANGES.top_p.min}–{TTS_PARAM_RANGES.top_p.max})
-                    </span>
-                  </span>
-                  <input
-                    data-testid="voice-prompt-top-p"
-                    type="range"
-                    min={TTS_PARAM_RANGES.top_p.min}
-                    max={TTS_PARAM_RANGES.top_p.max}
-                    step={TTS_PARAM_RANGES.top_p.step}
-                    value={formTopP}
-                    onChange={(e) => handleTtsSliderChange('top_p', parseFloat(e.target.value))}
-                  />
-                </label>
-                <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span>
-                    repetition_penalty {formRepetition.toFixed(2)}{' '}
-                    <span style={{ color: '#888' }}>
-                      ({TTS_PARAM_RANGES.repetition_penalty.min}–
-                      {TTS_PARAM_RANGES.repetition_penalty.max})
-                    </span>
-                  </span>
-                  <input
-                    data-testid="voice-prompt-repetition-penalty"
-                    type="range"
-                    min={TTS_PARAM_RANGES.repetition_penalty.min}
-                    max={TTS_PARAM_RANGES.repetition_penalty.max}
-                    step={TTS_PARAM_RANGES.repetition_penalty.step}
-                    value={formRepetition}
-                    onChange={(e) =>
-                      handleTtsSliderChange('repetition_penalty', parseFloat(e.target.value))
-                    }
-                  />
-                </label>
-                <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span>
-                    max_tokens {formMaxTokens}{' '}
-                    <span style={{ color: '#888' }}>
-                      ({TTS_PARAM_RANGES.max_tokens.min}–{TTS_PARAM_RANGES.max_tokens.max})
-                    </span>
-                  </span>
-                  <input
-                    data-testid="voice-prompt-max-tokens"
-                    type="range"
-                    min={TTS_PARAM_RANGES.max_tokens.min}
-                    max={TTS_PARAM_RANGES.max_tokens.max}
-                    step={TTS_PARAM_RANGES.max_tokens.step}
-                    value={formMaxTokens}
-                    onChange={(e) =>
-                      handleTtsSliderChange('max_tokens', parseInt(e.target.value, 10))
-                    }
-                  />
-                </label>
+            {isFormCartesia ? (
+              <div style={{ fontSize: 10, color: '#888' }}>
+                Cartesia ignores local generation params (temperature, top_k, …) — voice and
+                language above are all it needs.
               </div>
-              <button
-                data-testid="voice-prompt-advanced-toggle"
-                type="button"
-                onClick={() => setFormShowAdvanced((v) => !v)}
+            ) : (
+              <div
                 style={{
-                  padding: '4px 8px',
-                  fontSize: 11,
-                  background: '#333',
-                  border: '1px solid #444',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  padding: 8,
+                  background: '#1e1e1e',
+                  border: '1px solid #333',
                   borderRadius: 4,
-                  color: '#e0e0e0',
-                  cursor: 'pointer',
-                  alignSelf: 'flex-start',
                 }}
               >
-                {formShowAdvanced ? 'Hide advanced JSON' : 'Show advanced JSON'}
-              </button>
-              {formShowAdvanced && (
                 <label style={{ fontSize: 11 }}>
-                  Advanced params JSON (optional)
-                  <textarea
-                    data-testid="voice-prompt-params"
-                    value={formParams}
-                    onChange={(e) => handleAdvancedJsonChange(e.target.value)}
-                    placeholder='{"temperature":0.9, "custom":1}'
+                  Params preset
+                  <select
+                    data-testid="voice-prompt-preset"
+                    value={formPreset}
+                    onChange={(e) => handlePresetChange(e.target.value)}
                     style={{
                       width: '100%',
-                      minHeight: 60,
                       padding: '6px 8px',
                       background: '#252525',
                       border: '1px solid #444',
                       borderRadius: 4,
                       color: '#e0e0e0',
                       marginTop: 4,
-                      fontFamily: 'monospace',
-                      fontSize: 11,
                     }}
-                  />
-                  <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-                    Arbitrary keys allowed, validated as JSON object. Sliders override TTS keys on
-                    save.
-                  </div>
+                  >
+                    {TTS_PRESET_NAMES.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                    {formPreset === 'Custom' && <option value="Custom">Custom</option>}
+                  </select>
                 </label>
-              )}
-              {!formShowAdvanced && (
-                <textarea
-                  data-testid="voice-prompt-params"
-                  value={formParams}
-                  onChange={(e) => handleAdvancedJsonChange(e.target.value)}
-                  placeholder='{"temperature":0.9}'
-                  style={{ display: 'none' }}
-                  aria-hidden="true"
-                  tabIndex={-1}
-                />
-              )}
-            </div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span>
+                      temperature {formTemperature.toFixed(2)}{' '}
+                      <span style={{ color: '#888' }}>
+                        ({TTS_PARAM_RANGES.temperature.min}–{TTS_PARAM_RANGES.temperature.max})
+                      </span>
+                    </span>
+                    <input
+                      data-testid="voice-prompt-temperature"
+                      type="range"
+                      min={TTS_PARAM_RANGES.temperature.min}
+                      max={TTS_PARAM_RANGES.temperature.max}
+                      step={TTS_PARAM_RANGES.temperature.step}
+                      value={formTemperature}
+                      onChange={(e) =>
+                        handleTtsSliderChange('temperature', parseFloat(e.target.value))
+                      }
+                    />
+                  </label>
+                  <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span>
+                      top_k {formTopK}{' '}
+                      <span style={{ color: '#888' }}>
+                        ({TTS_PARAM_RANGES.top_k.min}–{TTS_PARAM_RANGES.top_k.max})
+                      </span>
+                    </span>
+                    <input
+                      data-testid="voice-prompt-top-k"
+                      type="range"
+                      min={TTS_PARAM_RANGES.top_k.min}
+                      max={TTS_PARAM_RANGES.top_k.max}
+                      step={TTS_PARAM_RANGES.top_k.step}
+                      value={formTopK}
+                      onChange={(e) => handleTtsSliderChange('top_k', parseInt(e.target.value, 10))}
+                    />
+                  </label>
+                  <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span>
+                      top_p {formTopP.toFixed(2)}{' '}
+                      <span style={{ color: '#888' }}>
+                        ({TTS_PARAM_RANGES.top_p.min}–{TTS_PARAM_RANGES.top_p.max})
+                      </span>
+                    </span>
+                    <input
+                      data-testid="voice-prompt-top-p"
+                      type="range"
+                      min={TTS_PARAM_RANGES.top_p.min}
+                      max={TTS_PARAM_RANGES.top_p.max}
+                      step={TTS_PARAM_RANGES.top_p.step}
+                      value={formTopP}
+                      onChange={(e) => handleTtsSliderChange('top_p', parseFloat(e.target.value))}
+                    />
+                  </label>
+                  <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span>
+                      repetition_penalty {formRepetition.toFixed(2)}{' '}
+                      <span style={{ color: '#888' }}>
+                        ({TTS_PARAM_RANGES.repetition_penalty.min}–
+                        {TTS_PARAM_RANGES.repetition_penalty.max})
+                      </span>
+                    </span>
+                    <input
+                      data-testid="voice-prompt-repetition-penalty"
+                      type="range"
+                      min={TTS_PARAM_RANGES.repetition_penalty.min}
+                      max={TTS_PARAM_RANGES.repetition_penalty.max}
+                      step={TTS_PARAM_RANGES.repetition_penalty.step}
+                      value={formRepetition}
+                      onChange={(e) =>
+                        handleTtsSliderChange('repetition_penalty', parseFloat(e.target.value))
+                      }
+                    />
+                  </label>
+                  <label style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span>
+                      max_tokens {formMaxTokens}{' '}
+                      <span style={{ color: '#888' }}>
+                        ({TTS_PARAM_RANGES.max_tokens.min}–{TTS_PARAM_RANGES.max_tokens.max})
+                      </span>
+                    </span>
+                    <input
+                      data-testid="voice-prompt-max-tokens"
+                      type="range"
+                      min={TTS_PARAM_RANGES.max_tokens.min}
+                      max={TTS_PARAM_RANGES.max_tokens.max}
+                      step={TTS_PARAM_RANGES.max_tokens.step}
+                      value={formMaxTokens}
+                      onChange={(e) =>
+                        handleTtsSliderChange('max_tokens', parseInt(e.target.value, 10))
+                      }
+                    />
+                  </label>
+                </div>
+                <button
+                  data-testid="voice-prompt-advanced-toggle"
+                  type="button"
+                  onClick={() => setFormShowAdvanced((v) => !v)}
+                  style={{
+                    padding: '4px 8px',
+                    fontSize: 11,
+                    background: '#333',
+                    border: '1px solid #444',
+                    borderRadius: 4,
+                    color: '#e0e0e0',
+                    cursor: 'pointer',
+                    alignSelf: 'flex-start',
+                  }}
+                >
+                  {formShowAdvanced ? 'Hide advanced JSON' : 'Show advanced JSON'}
+                </button>
+                {formShowAdvanced && (
+                  <label style={{ fontSize: 11 }}>
+                    Advanced params JSON (optional)
+                    <textarea
+                      data-testid="voice-prompt-params"
+                      value={formParams}
+                      onChange={(e) => handleAdvancedJsonChange(e.target.value)}
+                      placeholder='{"temperature":0.9, "custom":1}'
+                      style={{
+                        width: '100%',
+                        minHeight: 60,
+                        padding: '6px 8px',
+                        background: '#252525',
+                        border: '1px solid #444',
+                        borderRadius: 4,
+                        color: '#e0e0e0',
+                        marginTop: 4,
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                      }}
+                    />
+                    <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+                      Arbitrary keys allowed, validated as JSON object. Sliders override TTS keys on
+                      save.
+                    </div>
+                  </label>
+                )}
+                {!formShowAdvanced && (
+                  <textarea
+                    data-testid="voice-prompt-params"
+                    value={formParams}
+                    onChange={(e) => handleAdvancedJsonChange(e.target.value)}
+                    placeholder='{"temperature":0.9}'
+                    style={{ display: 'none' }}
+                    aria-hidden="true"
+                    tabIndex={-1}
+                  />
+                )}
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
             <button
@@ -1432,6 +1605,7 @@ export function WordLevelTtsModal({
             <select
               data-testid="tts-model"
               value={ttsModel}
+              disabled={isTtsCartesia}
               onChange={(e) => {
                 setTtsModel(e.target.value)
                 setHasEditedModel(true)
@@ -1453,7 +1627,9 @@ export function WordLevelTtsModal({
               ))}
             </select>
             <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-              Per-generation override; stored prompt model is fallback
+              {isTtsCartesia
+                ? 'Remote Cartesia model (fixed sonic-3.6)'
+                : 'Per-generation override; stored prompt model is fallback'}
             </div>
             {ttsModel && downloadedMap[ttsModel] === false && (
               <div
@@ -1499,12 +1675,20 @@ export function WordLevelTtsModal({
                 {downloadingModel ? 'Downloading… (do not close)' : 'Download model'}
               </button>
             )}
-            {ttsModel && downloadedMap[ttsModel] === true && (
+            {ttsModel && downloadedMap[ttsModel] === true && !isCartesiaModel(ttsModel) && (
               <div
                 data-testid="tts-model-download-ok"
                 style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}
               >
                 ✓ Cached locally — ready to use
+              </div>
+            )}
+            {ttsModel && isCartesiaModel(ttsModel) && (
+              <div
+                data-testid="tts-model-download-ok"
+                style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}
+              >
+                ✓ Remote model — no download needed
               </div>
             )}
           </label>
@@ -1514,8 +1698,18 @@ export function WordLevelTtsModal({
               data-testid="tts-provider"
               value={ttsProviderId}
               onChange={(e) => {
-                setTtsProviderId(e.target.value)
+                const next = e.target.value
+                const crossing = isCartesiaProvider(next) !== isTtsCartesia
+                setTtsProviderId(next)
                 setHasEditedProvider(true)
+                // cartesia ⟺ sonic-3.6 pairing; voice/language namespaces differ per side
+                if (isCartesiaProvider(next)) setTtsModel(CARTESIA_MODEL_ID)
+                else if (isCartesiaModel(ttsModel)) setTtsModel(DEFAULT_MODEL_ID)
+                if (crossing) {
+                  setVoice('')
+                  setLanguage('')
+                  setTtsVoiceWarning(null)
+                }
               }}
               style={{
                 width: '100%',
@@ -1553,14 +1747,16 @@ export function WordLevelTtsModal({
                 marginTop: 4,
               }}
             >
-              {LANGUAGE_OPTIONS.map((opt) => (
+              {(isTtsCartesia ? CARTESIA_LANGUAGE_OPTIONS : LANGUAGE_OPTIONS).map((opt) => (
                 <option key={opt.value || 'auto'} value={opt.value}>
                   {opt.label}
                 </option>
               ))}
             </select>
             <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-              Auto uses automatic language detection
+              {isTtsCartesia
+                ? 'Cartesia speaks 44 languages with your saved voice'
+                : 'Auto uses automatic language detection'}
             </div>
           </label>
           <label style={{ fontSize: 11, opacity: isTtsVoiceEnabled ? 1 : 0.5 }}>
@@ -1588,22 +1784,50 @@ export function WordLevelTtsModal({
                 marginTop: 4,
               }}
             >
-              <option value="">— Default (auto) —</option>
-              {ttsSpeakers.map((v) => {
-                const hint = getHintForSpeaker(v, ttsModel || DEFAULT_MODEL_ID)
-                return (
-                  <option key={v} value={v}>
-                    {hint ? `${v} (${hint})` : v}
-                  </option>
-                )
-              })}
+              {isTtsCartesia ? (
+                <>
+                  <option value="">{cartesiaDefaultLabel}</option>
+                  {cartesiaVoices.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {(v.name ?? 'Unnamed voice') +
+                        (v.language ? ` (${v.language})` : '') +
+                        ` — ${v.id.slice(0, 8)}`}
+                    </option>
+                  ))}
+                </>
+              ) : (
+                <>
+                  <option value="">— Default (auto) —</option>
+                  {ttsSpeakers.map((v) => {
+                    const hint = getHintForSpeaker(v, ttsModel || DEFAULT_MODEL_ID)
+                    return (
+                      <option key={v} value={v}>
+                        {hint ? `${v} (${hint})` : v}
+                      </option>
+                    )
+                  })}
+                </>
+              )}
             </select>
             <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-              {isTtsVoiceEnabled
-                ? '9 canonical voices — any language'
-                : 'Voice not applicable for this model'}
+              {isTtsCartesia
+                ? 'Saved Cartesia voices — default is Mike'
+                : isTtsVoiceEnabled
+                  ? '9 canonical voices — any language'
+                  : 'Voice not applicable for this model'}
             </div>
-            {effectiveTtsVoiceWarning && (
+            {isTtsCartesia && cartesiaVoicesLoading && (
+              <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>Loading saved voices…</div>
+            )}
+            {isTtsCartesia && !cartesiaVoicesLoading && cartesiaVoicesError && (
+              <div
+                data-testid="tts-voice-warning"
+                style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
+              >
+                Saved voices unavailable ({cartesiaVoicesError}) — Default (Mike) still works.
+              </div>
+            )}
+            {!isTtsCartesia && effectiveTtsVoiceWarning && (
               <div
                 data-testid="tts-voice-warning"
                 style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}

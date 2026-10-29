@@ -10,6 +10,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator
 
+from app.tts.cartesia import (
+    CartesiaError,
+    CartesiaNotConfiguredError,
+    CartesiaRequestError,
+    list_cartesia_voices,
+)
 from app.tts.languages import normalize_language_code
 
 router = APIRouter()
@@ -66,6 +72,15 @@ def _get_reference_status() -> dict[str, Any]:
         return {"audioConfigured": False, "textConfigured": False}
 
 
+def _is_cartesia_configured() -> bool:
+    try:
+        from app.tts.cartesia import get_cartesia_api_key
+
+        return get_cartesia_api_key() is not None
+    except Exception:
+        return False
+
+
 class TTSGenerateRequest(BaseModel):
     text: str = Field(description="text to synthesize")
     promptId: str | None = Field(default=None, description="voice prompt id")
@@ -86,7 +101,9 @@ class TTSGenerateRequest(BaseModel):
     modelId: str | None = Field(
         default=None, alias="modelId", description="HuggingFace model id override"
     )
-    provider: str | None = Field(default=None, description="tts provider override: auto, sine, mlx")
+    provider: str | None = Field(
+        default=None, description="tts provider override: auto, sine, mlx, cartesia"
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -140,7 +157,9 @@ class TTSGenerateRequest(BaseModel):
 
 
 class TtsSettingsUpdate(BaseModel):
-    provider: str | None = Field(default=None, description="tts provider: auto, sine, mlx")
+    provider: str | None = Field(
+        default=None, description="tts provider: auto, sine, mlx, cartesia"
+    )
     modelId: str | None = Field(default=None, alias="modelId", description="HuggingFace model id")
     # also allow snake for compatibility
     model_id: str | None = Field(default=None, alias="model_id")
@@ -262,7 +281,7 @@ def _get_registry_defaults() -> tuple[
         default_model = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
         default_provider = "auto"
         models = [default_model]
-        providers = ["auto", "sine", "mlx"]
+        providers = ["auto", "sine", "mlx", "cartesia"]
 
         def cap():  # type: ignore
             return {
@@ -343,6 +362,7 @@ def get_tts_models(request: Request) -> dict[str, Any]:
         "modelsStatus": [{"id": m, "downloaded": download_statuses.get(m, False)} for m in models],
         "reference": _get_reference_status(),
         "mlxAvailable": _is_mlx_available(),
+        "cartesiaConfigured": _is_cartesia_configured(),
     }
 
 
@@ -391,6 +411,46 @@ def get_tts_capabilities(request: Request) -> dict[str, Any]:
         "modelsStatus": [{"id": m, "downloaded": download_statuses.get(m, False)} for m in models],
         "reference": _get_reference_status(),
         "mlxAvailable": _is_mlx_available(),
+        "cartesiaConfigured": _is_cartesia_configured(),
+    }
+
+
+@router.get("/tts/voices")
+def list_tts_voices(
+    request: Request,
+    q: str | None = None,
+    limit: int = 100,
+    is_owner: bool = True,
+) -> dict[str, Any]:
+    """List saved Cartesia voices for the voice dropdowns.
+
+    Proxied server-side so the API key never reaches the browser.
+    Returns the user's default voice id (Mike) alongside the list.
+    """
+    try:
+        from app.tts.registry import DEFAULT_CARTESIA_VOICE_ID as _default_voice
+    except Exception:
+        _default_voice = "f6184e65-98f2-4e3d-84e5-a2eb198b8688"
+    try:
+        voices = list_cartesia_voices(query=q, limit=limit, is_owner=is_owner)
+    except CartesiaNotConfiguredError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except CartesiaError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    simplified = [
+        {
+            "id": v.get("id"),
+            "name": v.get("name"),
+            "language": v.get("language"),
+            "description": v.get("description"),
+        }
+        for v in voices
+        if isinstance(v, dict) and v.get("id")
+    ]
+    return {
+        "voices": simplified,
+        "defaultVoiceId": _default_voice,
+        "cartesiaConfigured": True,
     }
 
 
@@ -435,8 +495,16 @@ async def download_tts_model(body: TtsModelDownloadRequest) -> dict[str, Any]:
 
     Without this, the weights are fetched implicitly inside the first
     /tts/generate call (blocking it for minutes with no progress feedback).
+    Remote models (Cartesia) need no download and return immediately.
     """
     model_id = (body.modelId or "").strip()
+    try:
+        from app.tts.registry import CARTESIA_MODEL_ID as _CARTESIA_MID
+
+        if model_id == _CARTESIA_MID:
+            return {"modelId": model_id, "downloaded": True, "path": "remote"}
+    except Exception:
+        pass
     async with _tts_lock:
         try:
             path: str = await asyncio.to_thread(_snapshot_download_model, model_id)
@@ -470,6 +538,7 @@ def get_tts_settings(request: Request) -> dict[str, Any]:
         "modelsStatus": [{"id": m, "downloaded": download_statuses.get(m, False)} for m in models],
         "reference": _get_reference_status(),
         "mlxAvailable": _is_mlx_available(),
+        "cartesiaConfigured": _is_cartesia_configured(),
     }
 
 
@@ -774,6 +843,12 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
                 raise
             from app.tts.engine import MlxNotAvailableError, TtsInferenceError, TtsModelLoadError
 
+            if isinstance(exc, CartesiaNotConfiguredError):
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            if isinstance(exc, CartesiaRequestError):
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            if isinstance(exc, CartesiaError):
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
             if isinstance(exc, MlxNotAvailableError):
                 # auto: fallback silently to sine if mlx package missing;
                 # mlx provider: surface 503 so caller can retry/install

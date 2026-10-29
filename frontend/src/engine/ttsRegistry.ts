@@ -4,11 +4,24 @@ export const SUPPORTED_MODELS: readonly string[] = [
   'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16',
   'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16',
   'mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16',
+  'sonic-3.6',
 ] as const
 
 export const DEFAULT_MODEL_ID: string = SUPPORTED_MODELS[0]
 export const DEFAULT_PROVIDER = 'auto' as const
-export const SUPPORTED_PROVIDERS: readonly string[] = ['auto', 'sine', 'mlx'] as const
+export const SUPPORTED_PROVIDERS: readonly string[] = ['auto', 'sine', 'mlx', 'cartesia'] as const
+
+/** Remote Cartesia model (no local weights) + user's saved "Mike" voice default. */
+export const CARTESIA_MODEL_ID = 'sonic-3.6' as const
+export const DEFAULT_CARTESIA_VOICE_ID = 'f6184e65-98f2-4e3d-84e5-a2eb198b8688' as const
+
+export function isCartesiaProvider(provider: string | null | undefined): boolean {
+  return (provider ?? '').trim().toLowerCase() === 'cartesia'
+}
+
+export function isCartesiaModel(modelId: string | null | undefined): boolean {
+  return (modelId ?? '').trim() === CARTESIA_MODEL_ID
+}
 
 export type TtsProviderId = (typeof SUPPORTED_PROVIDERS)[number]
 
@@ -19,7 +32,7 @@ export interface ModelCapabilities {
   speakerHints?: Record<string, string>
   speakerMeta?: Record<string, { description: string; nativeLanguage: string; iso: string }>
   downloaded?: boolean
-  mode?: 'custom_voice' | 'voice_clone' | 'voice_design' | string
+  mode?: 'custom_voice' | 'voice_clone' | 'voice_design' | 'cartesia' | string
 }
 
 // Static fallback capabilities (mirrors backend registry)
@@ -27,13 +40,33 @@ export interface ModelCapabilities {
 const FALLBACK_CAPABILITIES: Record<string, ModelCapabilities> = {
   'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16': {
     languages: ['zh', 'en', 'ja', 'ko', 'de', 'fr', 'ru', 'pt', 'es', 'it'],
-    speakers: ['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric', 'Ryan', 'Aiden', 'Ono_Anna', 'Sohee'],
+    speakers: [
+      'Vivian',
+      'Serena',
+      'Uncle_Fu',
+      'Dylan',
+      'Eric',
+      'Ryan',
+      'Aiden',
+      'Ono_Anna',
+      'Sohee',
+    ],
     instructionSupported: false,
     mode: 'custom_voice',
   },
   'mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16': {
     languages: ['zh', 'en', 'ja', 'ko', 'de', 'fr', 'ru', 'pt', 'es', 'it'],
-    speakers: ['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric', 'Ryan', 'Aiden', 'Ono_Anna', 'Sohee'],
+    speakers: [
+      'Vivian',
+      'Serena',
+      'Uncle_Fu',
+      'Dylan',
+      'Eric',
+      'Ryan',
+      'Aiden',
+      'Ono_Anna',
+      'Sohee',
+    ],
     instructionSupported: true,
     mode: 'custom_voice',
   },
@@ -54,6 +87,57 @@ const FALLBACK_CAPABILITIES: Record<string, ModelCapabilities> = {
     speakers: [],
     instructionSupported: true,
     mode: 'voice_design',
+  },
+  'sonic-3.6': {
+    languages: [
+      'en',
+      'fr',
+      'de',
+      'es',
+      'pt',
+      'zh',
+      'ja',
+      'hi',
+      'ko',
+      'it',
+      'nl',
+      'pl',
+      'ru',
+      'sv',
+      'tr',
+      'tl',
+      'bg',
+      'ro',
+      'ar',
+      'cs',
+      'el',
+      'fi',
+      'hr',
+      'ms',
+      'sk',
+      'da',
+      'ta',
+      'uk',
+      'hu',
+      'no',
+      'vi',
+      'bn',
+      'th',
+      'he',
+      'ka',
+      'id',
+      'te',
+      'gu',
+      'kn',
+      'ml',
+      'mr',
+      'pa',
+      'or',
+      'ur',
+    ],
+    speakers: [],
+    instructionSupported: false,
+    mode: 'cartesia',
   },
 }
 

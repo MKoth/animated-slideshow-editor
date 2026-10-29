@@ -1,17 +1,21 @@
 from __future__ import annotations
 
-# Supported HuggingFace model ids for Qwen3-TTS 12Hz family
+# Supported HuggingFace model ids for Qwen3-TTS 12Hz family, plus remote Cartesia.
+# CARTESIA_MODEL_ID is a remote API model (no local weights, no download).
+CARTESIA_MODEL_ID: str = "sonic-3.6"
+
 SUPPORTED_MODELS: list[str] = [
     "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16",
     "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16",
     "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16",
     "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
     "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16",
+    CARTESIA_MODEL_ID,
 ]
 
 DEFAULT_MODEL_ID: str = SUPPORTED_MODELS[0]
 
-SUPPORTED_PROVIDERS: list[str] = ["auto", "sine", "mlx"]
+SUPPORTED_PROVIDERS: list[str] = ["auto", "sine", "mlx", "cartesia"]
 
 DEFAULT_PROVIDER: str = "auto"
 
@@ -60,9 +64,60 @@ LEGACY_VOICE_TO_CANONICAL: dict[str, str] = {
     "nova": "Ryan",
 }
 
-# Languages supported per model – all support the same 10. Auto is UI-only (not in this list);
-# see languages.py LANGUAGE_OPTIONS / ISO_TO_QWEN for Auto handling.
+# Languages supported per model – local Qwen models all support the same 10.
+# Auto is UI-only (not in this list); see languages.py LANGUAGE_OPTIONS / ISO_TO_QWEN
+# for Auto handling. Cartesia sonic-3.6 supports 44 base language codes.
 _SUPPORTED_LANGUAGES: list[str] = ["zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"]
+
+CARTESIA_LANGUAGES: list[str] = [
+    "en",
+    "fr",
+    "de",
+    "es",
+    "pt",
+    "zh",
+    "ja",
+    "hi",
+    "ko",
+    "it",
+    "nl",
+    "pl",
+    "ru",
+    "sv",
+    "tr",
+    "tl",
+    "bg",
+    "ro",
+    "ar",
+    "cs",
+    "el",
+    "fi",
+    "hr",
+    "ms",
+    "sk",
+    "da",
+    "ta",
+    "uk",
+    "hu",
+    "no",
+    "vi",
+    "bn",
+    "th",
+    "he",
+    "ka",
+    "id",
+    "te",
+    "gu",
+    "kn",
+    "ml",
+    "mr",
+    "pa",
+    "or",
+    "ur",
+]
+
+#: Default Cartesia voice (user's saved "Mike" voice) used when no voice is chosen.
+DEFAULT_CARTESIA_VOICE_ID: str = "f6184e65-98f2-4e3d-84e5-a2eb198b8688"
 
 # Auto is not part of _SUPPORTED_LANGUAGES; UI exposes it as "" (empty selects Auto).
 LANGUAGE_AUTO = "auto"
@@ -76,6 +131,7 @@ MODEL_MODE: dict[str, str] = {
     "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16": "voice_clone",
     "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16": "voice_clone",
     "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16": "voice_design",
+    CARTESIA_MODEL_ID: "cartesia",
 }
 
 SPEAKERS_BY_MODEL: dict[str, list[str]] = {
@@ -86,9 +142,12 @@ SPEAKERS_BY_MODEL: dict[str, list[str]] = {
     "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16": [],
     # VoiceDesign = voice described via prompt, no fixed speakers
     "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16": [],
+    # Cartesia = remote saved voices fetched via GET /voices, no fixed speakers
+    CARTESIA_MODEL_ID: [],
 }
 
 LANGUAGES_BY_MODEL: dict[str, list[str]] = {m: list(_SUPPORTED_LANGUAGES) for m in SUPPORTED_MODELS}
+LANGUAGES_BY_MODEL[CARTESIA_MODEL_ID] = list(CARTESIA_LANGUAGES)
 
 # Instruction support per model – 0.6B does NOT support instruction, 1.7B does
 INSTRUCTION_SUPPORTED_BY_MODEL: dict[str, bool] = {
@@ -97,6 +156,7 @@ INSTRUCTION_SUPPORTED_BY_MODEL: dict[str, bool] = {
     "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16": False,
     "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16": False,
     "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16": True,
+    CARTESIA_MODEL_ID: False,
 }
 
 
@@ -262,6 +322,9 @@ def normalize_model_id(raw: str | None) -> str | None:
 
 def is_model_downloaded(model_id: str) -> bool:
     """Check if model weights are fully cached locally (no download needed)."""
+    if model_id == CARTESIA_MODEL_ID:
+        # Remote API model — nothing to download.
+        return True
     if model_id not in SUPPORTED_MODELS:
         return False
     try:

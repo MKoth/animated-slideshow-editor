@@ -67,7 +67,10 @@ export function getFallbackSpeakersForModel(modelId: string): string[] {
   return FALLBACK[modelId] ?? [...CANONICAL_CUSTOMVOICE_SPEAKERS]
 }
 
-export function getModelMode(modelId: string): 'custom_voice' | 'voice_clone' | 'voice_design' {
+export function getModelMode(
+  modelId: string,
+): 'custom_voice' | 'voice_clone' | 'voice_design' | 'cartesia' {
+  if (modelId.trim() === 'sonic-3.6') return 'cartesia'
   if (modelId.includes('-Base-')) return 'voice_clone'
   if (modelId.includes('-VoiceDesign-')) return 'voice_design'
   return 'custom_voice'
@@ -79,6 +82,10 @@ export function isCustomVoiceModel(modelId: string): boolean {
 
 export function isVoiceCloneModel(modelId: string): boolean {
   return getModelMode(modelId) === 'voice_clone'
+}
+
+export function isCartesiaModel(modelId: string): boolean {
+  return getModelMode(modelId) === 'cartesia'
 }
 
 export function defaultSpeakerForModel(modelId: string, language?: string | null): string {
@@ -147,7 +154,9 @@ export function migrateStoredVoice(
     }
   }
   const speakers = backendSpeakers ?? getFallbackSpeakersForModel(mid)
-  const lowerMap: Record<string, string> = Object.fromEntries(speakers.map((s) => [s.toLowerCase(), s]))
+  const lowerMap: Record<string, string> = Object.fromEntries(
+    speakers.map((s) => [s.toLowerCase(), s]),
+  )
   if (key in lowerMap) {
     return { value: lowerMap[key]!, isUnknown: false, warning: null, normalized: lowerMap[key]! }
   }
@@ -191,6 +200,7 @@ export function filterSpeakersByLanguage(
   speakers: string[],
   _languageIso: string | null | undefined,
 ): { filtered: string[]; isExact: boolean } {
+  void _languageIso
   return { filtered: speakers, isExact: true }
 }
 

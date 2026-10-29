@@ -7,7 +7,20 @@ export interface ModelCapabilities {
   downloaded?: boolean
   speakerHints?: Record<string, string>
   speakerMeta?: Record<string, { description: string; nativeLanguage: string; iso: string }>
-  mode?: 'custom_voice' | 'voice_clone' | 'voice_design' | string
+  mode?: 'custom_voice' | 'voice_clone' | 'voice_design' | 'cartesia' | string
+}
+
+export interface CartesiaVoice {
+  id: string
+  name?: string | null
+  language?: string | null
+  description?: string | null
+}
+
+export interface CartesiaVoicesResponse {
+  voices: CartesiaVoice[]
+  defaultVoiceId: string
+  cartesiaConfigured: boolean
 }
 
 export interface TtsModelsResponse {
@@ -24,6 +37,7 @@ export interface TtsModelsResponse {
   modelsStatus?: Array<{ id: string; downloaded: boolean }>
   mlxAvailable?: boolean
   reference?: { audioConfigured: boolean; textConfigured: boolean }
+  cartesiaConfigured?: boolean
 }
 
 export interface TtsCapabilitiesResponse {
@@ -40,6 +54,7 @@ export interface TtsCapabilitiesResponse {
   downloaded?: Record<string, boolean>
   modelsStatus?: Array<{ id: string; downloaded: boolean }>
   mlxAvailable?: boolean
+  cartesiaConfigured?: boolean
 }
 
 export interface TtsSettings {
@@ -51,6 +66,7 @@ export interface TtsSettings {
   downloaded?: Record<string, boolean>
   modelsStatus?: Array<{ id: string; downloaded: boolean }>
   mlxAvailable?: boolean
+  cartesiaConfigured?: boolean
 }
 
 export class TtsSettingsApi {
@@ -70,6 +86,14 @@ export class TtsSettingsApi {
 
   async getSettings(): Promise<TtsSettings> {
     return this.client.get<TtsSettings>('/api/tts/settings')
+  }
+
+  async getVoices(params?: { q?: string; limit?: number }): Promise<CartesiaVoicesResponse> {
+    const search = new URLSearchParams()
+    if (params?.q) search.set('q', params.q)
+    if (params?.limit) search.set('limit', String(params.limit))
+    const suffix = search.toString() ? `?${search.toString()}` : ''
+    return this.client.get<CartesiaVoicesResponse>(`/api/tts/voices${suffix}`)
   }
 
   async updateSettings(input: { provider?: string; modelId?: string }): Promise<TtsSettings> {

@@ -24,9 +24,7 @@ function arrayBufferToBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-export function parseWavHeader(
-  bytes: Uint8Array,
-): {
+export function parseWavHeader(bytes: Uint8Array): {
   sampleRate: number
   channels: number
   byteRate: number
@@ -56,6 +54,18 @@ export function parseWavHeader(
         bytes[offset + 3],
       )
       const chunkSize = view.getUint32(offset + 4, true)
+      if (chunkId === 'data') {
+        // Streaming encoders (Cartesia) write 0xFFFFFFFF ("unknown length") for
+        // the data chunk — clamp to the bytes actually present instead of
+        // bailing out, otherwise duration falls back to a text heuristic and
+        // clips get truncated at commit.
+        dataSize = Math.max(0, bytes.length - offset - 8)
+        // don't break – there may be fmt after data in malformed files, but usually fmt before data
+        // we need both, so continue scanning if fmt not yet found
+        if (sampleRate !== null && byteRate !== null) break
+        offset = bytes.length
+        continue
+      }
       // Guard against insane size
       if (chunkSize > bytes.length) break
       if (chunkId === 'fmt ') {
@@ -66,11 +76,6 @@ export function parseWavHeader(
           byteRate = view.getUint32(offset + 8 + 8, true)
           bitsPerSample = view.getUint16(offset + 8 + 14, true)
         }
-      } else if (chunkId === 'data') {
-        dataSize = chunkSize
-        // don't break – there may be fmt after data in malformed files, but usually fmt before data
-        // we need both, so continue scanning if fmt not yet found
-        if (sampleRate !== null && byteRate !== null) break
       }
       // chunk data is padded to even byte boundary
       offset += 8 + chunkSize + (chunkSize % 2)

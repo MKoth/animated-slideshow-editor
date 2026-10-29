@@ -305,6 +305,42 @@ class SineTtsEngine:
         return _wav_bytes_for_text_sine(text, None, language, voice, instruction)
 
 
+class CartesiaTtsEngine:
+    """Remote TTS via the Cartesia API (sonic-3.6, saved voice clones).
+
+    Requires CARTESIA_API_KEY. No local weights — construction never fails;
+    missing/invalid keys and bad requests surface from generate().
+    """
+
+    def __init__(self, model_id: str = "sonic-3.6") -> None:
+        self._model_id = model_id or "sonic-3.6"
+
+    def generate(
+        self,
+        text: str,
+        language: str | None = None,
+        voice: str | None = None,
+        instruction: str | None = None,
+        params: dict[str, object] | None = None,
+    ) -> bytes:
+        # instruction/params are local-Qwen concepts; Cartesia ignores them.
+        from app.tts.cartesia import synthesize_cartesia
+
+        voice_id: str | None = None
+        if isinstance(voice, str) and voice.strip():
+            voice_id = voice.strip()
+        elif isinstance(params, dict):
+            maybe = params.get("voiceId") or params.get("voice_id")
+            if isinstance(maybe, str) and maybe.strip():
+                voice_id = maybe.strip()
+        return synthesize_cartesia(
+            text,
+            voice_id=voice_id,
+            language=language,
+            model_id=self._model_id,
+        )
+
+
 def _is_spanish_language(language: str | None) -> bool:
     """Whether a TTS language selects the Spanish default reference."""
     if not language:
@@ -730,7 +766,7 @@ def get_tts_engine(
         _DEF_MID = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
         _DEF_PROV = "auto"
         _is_valid_model = lambda x: True  # type: ignore
-        _is_valid_provider = lambda x: x in ("auto", "sine", "mlx")  # type: ignore
+        _is_valid_provider = lambda x: x in ("auto", "sine", "mlx", "cartesia")  # type: ignore
 
     raw_provider = provider if provider is not None else os.getenv("TTS_PROVIDER", _DEF_PROV)
     eff_provider = (raw_provider or _DEF_PROV).strip().lower()
@@ -752,6 +788,14 @@ def get_tts_engine(
 
         if eff_provider == "sine":
             engine: TtsEngine = SineTtsEngine()
+        elif eff_provider == "cartesia":
+            # Remote API — no local weights; key checked at generate time so
+            # settings can be saved and voices listed before a key exists.
+            try:
+                from app.tts.registry import CARTESIA_MODEL_ID as _CARTESIA_MID
+            except Exception:
+                _CARTESIA_MID = "sonic-3.6"
+            engine = CartesiaTtsEngine(eff_model_id if eff_model_id else _CARTESIA_MID)
         elif eff_provider == "mlx":
             # force mlx – if not importable, raise immediately as 503 should be surfaced
             if not _is_mlx_importable():

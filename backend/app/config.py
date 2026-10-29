@@ -404,6 +404,7 @@ class Settings:
     tts_model_id: str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
     tts_ref_audio: str | None = None
     tts_ref_text: str | None = None
+    cartesia_api_key: str | None = None
     opencode_base_url: str = DEFAULT_ZEN_URL
     ai_fallback_models: tuple[str, ...] = DEFAULT_FALLBACK_MODELS
     ai_context_budget: int = DEFAULT_CONTEXT_BUDGET
@@ -536,6 +537,8 @@ def load_settings() -> Settings:
     )
     secret_raw = os.getenv("AI_SECRET_KEY")
     secret = secret_raw.strip() if secret_raw and secret_raw.strip() else None
+    cartesia_raw = os.getenv("CARTESIA_API_KEY")
+    cartesia_key = cartesia_raw.strip() if cartesia_raw and cartesia_raw.strip() else None
     ref_audio_env = os.getenv("TTS_REF_AUDIO")
     if ref_audio_env is not None and ref_audio_env.strip():
         tts_ref_audio: str | None = ref_audio_env.strip()
@@ -551,6 +554,7 @@ def load_settings() -> Settings:
         tts_model_id=tts_model_id,
         tts_ref_audio=tts_ref_audio,
         tts_ref_text=_load_tts_ref_text(),
+        cartesia_api_key=cartesia_key,
         opencode_base_url=os.getenv("OPENCODE_BASE_URL", DEFAULT_ZEN_URL).strip()
         or DEFAULT_ZEN_URL,
         ai_fallback_models=_parse_fallback_models(os.getenv("AI_FALLBACK_MODELS_OPENCODE")),

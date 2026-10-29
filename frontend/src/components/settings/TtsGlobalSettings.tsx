@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { apiClient } from '../../api'
 import { TtsSettingsApi } from '../../api/ttsSettingsApi'
 import {
+  CARTESIA_MODEL_ID,
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
   SUPPORTED_MODELS,
   SUPPORTED_PROVIDERS,
+  isCartesiaModel,
   modelDownloadLabel,
   shortModelLabel,
 } from '../../engine/ttsRegistry'
@@ -26,6 +28,7 @@ export function TtsGlobalSettings() {
   const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [cartesiaConfigured, setCartesiaConfigured] = useState<boolean | null>(null)
   // Default voice mismatch handling (batch TTS + single TTS "don't ask
   // again" share this): stretch fits the clip to the text via playbackRate
   // (prompter timing untouched), trim fits the text to the clip (part
@@ -76,12 +79,16 @@ export function TtsGlobalSettings() {
           if (Object.keys(dl).length) setDownloadedMap(dl)
           const mlx = (modelsData as unknown as { mlxAvailable?: boolean }).mlxAvailable
           if (typeof mlx === 'boolean') setMlxAvailable(mlx)
+          const cartesia = (modelsData as unknown as { cartesiaConfigured?: boolean })
+            .cartesiaConfigured
+          if (typeof cartesia === 'boolean') setCartesiaConfigured(cartesia)
         }
         if (settingsData) {
           const sd = settingsData as unknown as {
             downloaded?: Record<string, boolean>
             modelsStatus?: Array<{ id: string; downloaded: boolean }>
             mlxAvailable?: boolean
+            cartesiaConfigured?: boolean
           }
           if (sd.downloaded) setDownloadedMap((prev) => ({ ...prev, ...sd.downloaded }))
           else if (sd.modelsStatus) {
@@ -90,6 +97,8 @@ export function TtsGlobalSettings() {
             setDownloadedMap((prev) => ({ ...prev, ...dl }))
           }
           if (typeof sd.mlxAvailable === 'boolean') setMlxAvailable(sd.mlxAvailable)
+          if (typeof sd.cartesiaConfigured === 'boolean')
+            setCartesiaConfigured(sd.cartesiaConfigured)
         }
         // Prefer settings endpoint for defaults, fallback to models endpoint
         const defModel =
@@ -184,7 +193,7 @@ export function TtsGlobalSettings() {
         Changing here triggers engine singleton reload; next generation uses new id (fallback to
         sine on missing mlx).
       </p>
-      {mlxAvailable === false && (
+      {mlxAvailable === false && provider !== 'cartesia' && (
         <div
           data-testid="tts-global-mlx-warning"
           style={{
@@ -199,6 +208,23 @@ export function TtsGlobalSettings() {
           Backend TTS engine (mlx-audio) is not installed — all models fall back to sine beeps and
           selection does nothing. Install it with: <code>uv sync --extra tts</code> in{' '}
           <code>backend/</code>, then restart the backend.
+        </div>
+      )}
+      {provider === 'cartesia' && cartesiaConfigured === false && (
+        <div
+          data-testid="tts-global-cartesia-warning"
+          style={{
+            padding: 8,
+            background: '#3a2a1a',
+            border: '1px solid #5a4a22',
+            borderRadius: 4,
+            fontSize: 11,
+            color: '#ffb74d',
+          }}
+        >
+          Cartesia API key is not configured — set <code>CARTESIA_API_KEY</code> in{' '}
+          <code>backend/.env</code> (see <code>backend/.env.example</code>) and restart the backend.
+          Voice list and generation need it.
         </div>
       )}
       {error && (
@@ -255,40 +281,51 @@ export function TtsGlobalSettings() {
             ))}
           </select>
           <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>{modelId}</div>
-          {modelId && downloadedMap[modelId] === false && (
-            <div
-              data-testid="tts-global-model-warning"
-              style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}
-            >
-              ↓ Not downloaded — press Download (1–4 GB, may take a few minutes) or generate to
-              fetch on demand
-            </div>
-          )}
-          {modelId && downloadedMap[modelId] === false && (
-            <button
-              data-testid="tts-global-download"
-              onClick={() => void handleDownload()}
-              disabled={downloading}
-              style={{
-                marginTop: 6,
-                padding: '6px 12px',
-                borderRadius: 4,
-                border: '1px solid #7c5cff',
-                background: downloading ? '#444' : 'transparent',
-                color: '#fff',
-                cursor: downloading ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {downloading ? 'Downloading… (do not close)' : 'Download model'}
-            </button>
-          )}
-          {modelId && downloadedMap[modelId] === true && (
+          {isCartesiaModel(modelId) ? (
             <div
               data-testid="tts-global-model-ok"
               style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}
             >
-              ✓ Cached locally — ready to use
+              ✓ Remote model ({CARTESIA_MODEL_ID}) — no download needed
             </div>
+          ) : (
+            <>
+              {modelId && downloadedMap[modelId] === false && (
+                <div
+                  data-testid="tts-global-model-warning"
+                  style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}
+                >
+                  ↓ Not downloaded — press Download (1–4 GB, may take a few minutes) or generate to
+                  fetch on demand
+                </div>
+              )}
+              {modelId && downloadedMap[modelId] === false && (
+                <button
+                  data-testid="tts-global-download"
+                  onClick={() => void handleDownload()}
+                  disabled={downloading}
+                  style={{
+                    marginTop: 6,
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid #7c5cff',
+                    background: downloading ? '#444' : 'transparent',
+                    color: '#fff',
+                    cursor: downloading ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {downloading ? 'Downloading… (do not close)' : 'Download model'}
+                </button>
+              )}
+              {modelId && downloadedMap[modelId] === true && (
+                <div
+                  data-testid="tts-global-model-ok"
+                  style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}
+                >
+                  ✓ Cached locally — ready to use
+                </div>
+              )}
+            </>
           )}
         </label>
         <label style={{ fontSize: 11 }}>
@@ -296,7 +333,13 @@ export function TtsGlobalSettings() {
           <select
             data-testid="tts-global-provider"
             value={provider}
-            onChange={(e) => setProvider(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value
+              setProvider(next)
+              // Keep model/provider pairing valid: cartesia only serves sonic-3.6.
+              if (next === 'cartesia' && !isCartesiaModel(modelId)) setModelId(CARTESIA_MODEL_ID)
+              else if (next !== 'cartesia' && isCartesiaModel(modelId)) setModelId(DEFAULT_MODEL_ID)
+            }}
             style={{
               width: '100%',
               padding: '6px 8px',
@@ -314,7 +357,7 @@ export function TtsGlobalSettings() {
             ))}
           </select>
           <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
-            auto → mlx if available else sine
+            auto → mlx if available else sine · cartesia → remote Cartesia voices (needs API key)
           </div>
         </label>
       </div>
