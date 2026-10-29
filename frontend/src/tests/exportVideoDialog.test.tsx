@@ -6,6 +6,20 @@ import { createEngineInternal, toReadOnly } from '../engine/internal'
 import type { Engine } from '../engine/internal'
 import { ApiClient, ApiError } from '../api/apiClient'
 import { ExportApi } from '../api/exportApi'
+import { AddKeyframeCommand, CommandDispatcher, UndoStack } from '../engine/commands'
+
+function animateCamera(internal: Engine, slideId: string): void {
+  const slide = internal.getSlide(slideId)
+  const dispatcher = new CommandDispatcher(internal, new UndoStack(), () => {})
+  const result = dispatcher.dispatch(
+    new AddKeyframeCommand({
+      target: { kind: 'node', nodeId: slide.scene.camera.id, property: 'positionX' },
+      time: 0,
+      value: 0,
+    }),
+  )
+  if (!result.ok) throw result.error
+}
 
 function makeEngineWithSlides(): { internal: Engine; readonly: ReturnType<typeof toReadOnly> } {
   const internal = createEngineInternal()
@@ -183,7 +197,8 @@ describe('ExportVideoDialog', () => {
           new ApiError('conflict', 409, '/api/export/jobs', 'export already in progress'),
         ),
     } as unknown as Partial<ExportApi>)
-    const { readonly: ro2 } = makeEngineWithSlides()
+    const { internal: internal2, readonly: ro2 } = makeEngineWithSlides()
+    for (const slide of internal2.project!.slides) animateCamera(internal2, slide.id)
     render(<ExportVideoDialog engine={ro2} exportApi={api2} onClose={() => {}} />)
     const user = userEvent.setup()
     await user.click(await screen.findByTestId('export-start'))
@@ -194,6 +209,7 @@ describe('ExportVideoDialog', () => {
     const { internal, readonly } = makeEngineWithSlides()
     // Shrink durations so the frame loop stays fast in jsdom.
     for (const slide of internal.project!.slides) slide.duration = 0.2
+    for (const slide of internal.project!.slides) animateCamera(internal, slide.id)
     const api = makeApi()
     // Expected frames: 0.2*30=6 per slide, 12 total.
     render(
@@ -263,6 +279,7 @@ describe('ExportVideoDialog', () => {
       }),
     )
     const readonly = toReadOnly(internal)
+    for (const slide of internal.project!.slides) animateCamera(internal, slide.id)
     const api = makeApi()
     render(
       <ExportVideoDialog
@@ -285,9 +302,33 @@ describe('ExportVideoDialog', () => {
     )
   })
 
+  it('refuses export when a selected slide has no camera keyframes', async () => {
+    const { internal, readonly } = makeEngineWithSlides()
+    for (const slide of internal.project!.slides) slide.duration = 0.2
+    // Animate only the first slide's camera.
+    animateCamera(internal, internal.project!.slides[0]!.id)
+    const api = makeApi()
+    render(
+      <ExportVideoDialog
+        engine={readonly}
+        exportApi={api}
+        onClose={() => {}}
+        captureFrame={async () => 'data:image/png;base64,AAA'}
+      />,
+    )
+    // The dialog names the offending slide before anything is uploaded.
+    expect(await screen.findByTestId('export-camera-note')).toHaveTextContent('S2')
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('export-start'))
+    expect(await screen.findByTestId('export-error')).toHaveTextContent('Camera animation required')
+    expect(await screen.findByTestId('export-error')).toHaveTextContent('S2')
+    expect(api.createJob).not.toHaveBeenCalled()
+  })
+
   it('fails loudly when frames cannot be captured instead of uploading placeholders', async () => {
     const { internal, readonly } = makeEngineWithSlides()
     for (const slide of internal.project!.slides) slide.duration = 0.2
+    for (const slide of internal.project!.slides) animateCamera(internal, slide.id)
     const api = makeApi()
     render(
       <ExportVideoDialog

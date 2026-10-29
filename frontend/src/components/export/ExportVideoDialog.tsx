@@ -20,7 +20,9 @@ import {
   savePreviewSnapshot,
 } from '../../export/frameCapture'
 import { resolveExportAudioBytes } from '../../export/exportAudio'
+import { slidesMissingCameraKeyframes } from '../../export/exportCamera'
 import { usePlaybackController } from '../../stores/playbackStore'
+import { useUiStore } from '../../stores/uiStore'
 
 export type ExportFrameCapture = (slideId: string, timestamp: number) => Promise<string | null>
 
@@ -107,6 +109,13 @@ export function ExportVideoDialog({
     return map
   }, [selectable])
 
+  // Computed fresh on every render (not memoized): keyframes can be added
+  // while the dialog is open, and validation must see the live engine state.
+  const cameraMissingIds = new Set(
+    slidesMissingCameraKeyframes(engine, selectable).map((slide) => slide.id),
+  )
+  const cameraMissing = orderedSelected.filter((slide) => cameraMissingIds.has(slide.id))
+
   const totals = useMemo(() => {
     if (!project) return { cues: 0, duration: 0, frames: 0 }
     const cues = subtitlesOn
@@ -149,6 +158,18 @@ export function ExportVideoDialog({
     if (!project || orderedSelected.length === 0) return
     setError(null)
     setBlocked(null)
+    const missingCamera = slidesMissingCameraKeyframes(engine, orderedSelected)
+    if (missingCamera.length > 0) {
+      const names = missingCamera.map((slide) => `"${slide.name}"`).join(', ')
+      setPhase('error')
+      setError(
+        `Camera animation required: ${names} ${
+          missingCamera.length === 1 ? 'has' : 'have'
+        } no camera keyframes, so its desired position is unknown. ` +
+          `Animate the camera (camera animation mode) or deselect the slide.`,
+      )
+      return
+    }
     setPhase('working')
     cancelRequested.current = false
     setProgress({ received: 0, expected: totals.frames, status: 'queued' })
@@ -177,8 +198,12 @@ export function ExportVideoDialog({
       const expected = created.expectedFrameCount
       setProgress({ received: 0, expected, status: created.status })
       // Freeze the live preview while seeking: save times, pause, restore after.
+      // Force camera-animation evaluation so frames render exactly what the
+      // authored camera sees (not the ephemeral pan/zoom viewport).
       const snapshot = savePreviewSnapshot(engine)
       usePlaybackController.getState().pause()
+      const prevCameraMode = useUiStore.getState().cameraAnimationMode
+      useUiStore.getState().setCameraAnimationMode(true)
       // Upload real audio bytes so the backend can mix audible sound.
       // Embedded assets come from the project; library assets via original_url.
       // Missing/unresolvable assets are skipped — that slide renders silence.
@@ -237,6 +262,7 @@ export function ExportVideoDialog({
         }
         if (cancelRequested.current) return
       } finally {
+        useUiStore.getState().setCameraAnimationMode(prevCameraMode)
         restorePreviewSnapshot(engine, snapshot)
       }
       await exportApi.completeJob(created.jobId)
@@ -329,6 +355,9 @@ export function ExportVideoDialog({
                     <span>{slide.name}</span>
                     <span style={{ color: '#888' }}>
                       {slide.duration}s · {frames} frames · {cues} cues
+                      {cameraMissingIds.has(slide.id) && (
+                        <span style={{ color: '#ffb74d' }}> · no camera keyframes</span>
+                      )}
                     </span>
                   </label>
                 </li>
@@ -340,6 +369,16 @@ export function ExportVideoDialog({
         {zeroCount > 0 && (
           <p data-testid="export-zero-note" style={{ fontSize: 11, color: '#999' }}>
             {zeroCount} slide{zeroCount === 1 ? '' : 's'} with zero duration excluded.
+          </p>
+        )}
+
+        {cameraMissing.length > 0 && (
+          <p data-testid="export-camera-note" style={{ fontSize: 11, color: '#ffb74d' }}>
+            No camera keyframes on {cameraMissing.length} selected slide
+            {cameraMissing.length === 1 ? '' : 's'} (
+            {cameraMissing.map((slide) => slide.name).join(', ')}). Export renders exactly what the
+            animated camera sees — add at least one camera keyframe (a single keyframe fixes the
+            camera) or deselect the slide.
           </p>
         )}
 
