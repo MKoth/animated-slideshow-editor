@@ -185,7 +185,7 @@ A named, immutable alias declared in an Animation Script's prelude that resolves
 _Avoid_: Selector, reference, alias
 
 **Effect Target**:
-The renderable scene content affected by an authored reveal, mark, or wipe: a node target names only that node, a subtree target includes its parent and renderable descendants, and a semantic-group target unions the subtree of each member. Overlapping paths count each node once; table-cell text is renderable content, while empty cell layout slots are not.
+The renderable scene content affected by an authored reveal, mark, or wipe: a node target names only that node, a table binding defaults to the table and its renderable descendants, `nodeOnly(table)` restricts a table target to the table node itself, a subtree target includes its parent and renderable descendants, and a semantic-group target unions the subtree of each member. Overlapping paths count each node once; table-cell text is renderable content, while empty cell layout slots are not.
 _Avoid_: Effect selection
 
 **Composite Effect Target**:

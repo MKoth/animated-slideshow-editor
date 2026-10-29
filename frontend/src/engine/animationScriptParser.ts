@@ -408,7 +408,7 @@ export interface PointArrowAtNode {
   readonly span: SourceSpan
 }
 
-/** `reveal(node)`, `reveal(subtree(node))`, or `reveal(group)` authors a sweep. */
+/** `reveal(node)`, `reveal(nodeOnly(table))`, `reveal(subtree(node))`, or `reveal(group)` authors a sweep. */
 export interface RevealNode {
   readonly kind: 'reveal'
   readonly nameSpan: SourceSpan

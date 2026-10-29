@@ -510,6 +510,27 @@ describe('Animation Script reveal', () => {
     expect(result.effects[0].nodeIds).toEqual([first.id, second.id])
   })
 
+  it('supports a node-only table target so cell text can be revealed separately', () => {
+    const { system, slide } = setup()
+    const source = [
+      'script "Table" from 0',
+      'create table "Grid" as grid { columns: [100], rows: [[""]] }',
+      'create text "Cell text" as cellText at (5, 5) inside grid.cell(0, 0) { content: "hello", fontSize: 16 }',
+      'reveal(nodeOnly(grid), visual: none)',
+      'reveal(cellText, at: 2, visual: none)',
+    ].join('\n')
+
+    const result = checkAnimationScript(system.engine, slide.id, source)
+
+    expect(result.diagnostics.filter((item) => item.severity === 'error')).toEqual([])
+    expect(result.effects).toHaveLength(2)
+    expect(result.effects[0].kind).toBe('reveal')
+    expect(result.effects[0].nodeIds).toHaveLength(1)
+    expect(result.effects[1].kind).toBe('reveal')
+    expect(result.effects[1].nodeIds).toHaveLength(1)
+    expect(result.effects[0].nodeIds).not.toEqual(result.effects[1].nodeIds)
+  })
+
   it('includes text inside populated Table Cells and excludes empty cell layout nodes', () => {
     const { system, slide, group, first } = setup()
     const add = (

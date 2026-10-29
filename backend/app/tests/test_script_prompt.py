@@ -70,6 +70,9 @@ def test_script_prompt_teaches_cursor_setup_and_reveal_pairing() -> None:
     # Table teardown is one subtree wipe, never cell-by-cell plus table.
     assert "wipe(subtree(" in lowered
     assert "never cell by cell" in lowered
+    assert "nodeonly(table)" in lowered
+    assert "reveal(table)" in lowered and "descendant cell text" in lowered
+    assert "do not add mask-setup wipes" in lowered
 
 
 def test_script_focus_renders_source_blocks_and_diagnostics() -> None:

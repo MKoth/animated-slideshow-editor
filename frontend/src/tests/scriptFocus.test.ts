@@ -72,6 +72,8 @@ describe('script assistant prompts', () => {
   it('improve prompt asks for narration-fit timing and questions on ambiguity', () => {
     expect(IMPROVE_SCRIPT_PROMPT).toContain('narration')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('mark()')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('reveal(nodeOnly(table))')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('do not add mask-setup wipes')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('choice buttons')
   })
 

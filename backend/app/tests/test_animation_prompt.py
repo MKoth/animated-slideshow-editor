@@ -152,6 +152,7 @@ def test_scenario_audio_blackboard_prompts_scope_to_their_stages() -> None:
     assert "[remove" in scenario
     assert "[place" in scenario
     assert "[reveal" in scenario
+    assert "writes each cell at its narration time" in scenario
     assert "text1" in scenario
     assert "[wipe:" in scenario
     assert "blank lines" in scenario
@@ -179,6 +180,9 @@ def test_scenario_audio_blackboard_prompts_scope_to_their_stages() -> None:
 
     board = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "blackboard").lower()
     assert "blackboard" in board
+    assert "reveal(nodeonly(table1))" in board
+    assert "never use it when cells have separate reveals" in board
+    assert "do not add mask-setup wipes" in board
     assert "never claim a mutation happened before approval" in board
     assert ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS not in _system_prompt_for_mode(
         DEFAULT_SYSTEM_PROMPT, "blackboard"

@@ -79,6 +79,9 @@ export const IMPROVE_SCRIPT_PROMPT =
   'Improve this script so the visuals fit the narration better: ' +
   'no visual appears before the narrator mentions it; labels appear when their text is pronounced; ' +
   'tables are drawn on a general mention and each cell fills as its text is spoken; ' +
+  'for a table with separately timed cell reveals, use reveal(nodeOnly(table)) for the border: ' +
+  'reveal(table) also reveals all descendant cell text, and per-cell future reveal masks hide text ' +
+  'until its turn, so do not add mask-setup wipes; use reveal(table) only for a composite reveal; ' +
   'use mark() to re-emphasize things already on screen instead of recreating them; ' +
   'for long spoken stretches with no visual, add one short phrase that appears at the stretch start ' +
   'and leaves at its end. ' +

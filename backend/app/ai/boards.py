@@ -184,8 +184,9 @@ def build_template_source(parts: list[dict[str, Any]], title: str = "Board middl
         lines.append(f'mark("{mark}")')
         alias = f"line{index}"
         # Chalk-board placeholder: script-created text, then a reveal sweep
-        # inside the owning narration window. Tables follow the same shape:
-        # `create table "Grid{i}" as grid{i} {{ ... }}` then reveal(subtree(...)).
+        # inside the owning narration window. For tables with separately timed
+        # cell text, reveal only the border with nodeOnly(grid); each cell's
+        # future reveal mask holds its text until its own narration window.
         lines.append(f'create text "Board line {index + 1}" as {alias}')
         lines.append(
             f'reveal({alias}, visual: chalkHand, visualScale: 4, visualAnchor: "top-center", '

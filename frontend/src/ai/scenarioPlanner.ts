@@ -25,13 +25,13 @@
  *   then effects reference them — never the reverse.
  * - Content-sized sweeps: reveal/wipe `over:` ≈ 0.1s per character clamped
  *   to [0.4, 4.0]; carries 1.5s with a 0.8s approach; table borders 1.2s;
- *   mask-setup wipes 0.01s with `visual: none`; temporary marks 0.6s;
+ *   temporary marks 0.6s;
  *   subtree wipes 1.0s. A 0.5s breath separates consecutive sweeps.
  * - Fixture staging: backdrop asset first, title top-center (64pt centered
  *   card when the step stages nothing, else 40/36/32pt), carried cards at
  *   y 360 (0.34 scale, split across 340/750 for pairs), labels stacked at
  *   y 505 + 43, tables centered below the content with empty cells plus
- *   per-cell text (mask wipes, then chained cell reveals), kind-matched
+ *   per-cell text (node-only border reveal, then chained cell reveals), kind-matched
  *   teardown in reverse appearance order with `wipe(subtree(...))` for
  *   tables. Reveals carry the chalk hand, wobbles, `visualScale: 4`,
  *   `visualAnchor: "top-center"` and sounds (write/erase); carries and
@@ -574,7 +574,6 @@ function buildBoardSource(input: {
         toY: number
       }
     | { kind: 'table-border'; alias: string; name: string; tableAlias: string }
-    | { kind: 'table-mask'; alias: string; tableAlias: string }
     | { kind: 'table-cell'; alias: string; name: string; content: string; tableAlias: string }
     | { kind: 'reveal'; alias: string; name: string; content: string }
     | { kind: 'mark'; alias: string; name: string }
@@ -866,7 +865,7 @@ function buildBoardSource(input: {
     const height = plan.rows.length
     const columns = Array.from({ length: width }, () => `${TABLE_COLUMN_WIDTH}`).join(', ')
     // Empty cells: content lives in per-cell text nodes (fixture style) so
-    // each cell reveals on its own chained sweep after a mask-setup wipe.
+    // each cell reveals on its own chained sweep after the table-only border.
     const emptyRows = Array.from(
       { length: height },
       () => `[${Array.from({ length: width }, () => `""`).join(', ')}]`,
@@ -914,7 +913,6 @@ function buildBoardSource(input: {
           `create text "${escapeQuoted(cellName)}" as ${cellAlias} at (5, 5) inside ${alias}.cell(${r}, ${c}) { content: "${escapeQuoted(cell)}", fontSize: 17 }`,
         )
         tintAlias(cellAlias)
-        effects.push({ kind: 'table-mask', alias: cellAlias, tableAlias: alias })
         effects.push({
           kind: 'table-cell',
           alias: cellAlias,
@@ -1020,7 +1018,7 @@ function buildBoardSource(input: {
   // Cell ownership for subtree coverage (cell alias → table alias).
   const cellOwner = new Map<string, string>()
   effects.forEach((effect) => {
-    if (effect.kind === 'table-mask' || effect.kind === 'table-cell') {
+    if (effect.kind === 'table-cell') {
       cellOwner.set(effect.alias, effect.tableAlias)
     }
   })
@@ -1030,12 +1028,7 @@ function buildBoardSource(input: {
     'table-border',
     'table-cell',
   ])
-  const WIPE_LIKE: ReadonlySet<Effect['kind']> = new Set([
-    'wipe',
-    'wipe-subtree',
-    'table-mask',
-    'carry-away',
-  ])
+  const WIPE_LIKE: ReadonlySet<Effect['kind']> = new Set(['wipe', 'wipe-subtree', 'carry-away'])
   /** Aliases a removal sweep covers: itself, plus table cells for subtrees. */
   function coveredMembers(alias: string, subtree: boolean): string[] {
     if (!subtree) return [alias]
@@ -1045,11 +1038,7 @@ function buildBoardSource(input: {
     })
     return out
   }
-  /**
-   * Whether every covered member's latest visibility effect is a wipe: the
-   * border sweep also uncovers cell texts while drawing, so it counts as a
-   * reveal for its table's cells.
-   */
+  /** Whether every covered member's latest visibility effect is a wipe. */
   function isAlreadyHidden(alias: string, subtree: boolean): boolean {
     return coveredMembers(alias, subtree).every((member) => {
       const ownerTable = cellOwner.get(member)
@@ -1057,13 +1046,9 @@ function buildBoardSource(input: {
       let lastWipe = -1
       effects.forEach((effect, index) => {
         const onMember = effect.alias === member
-        const onTable =
-          ownerTable !== undefined &&
-          effect.kind === 'table-border' &&
-          effect.tableAlias === ownerTable
         const inSubtree =
           effect.kind === 'wipe-subtree' && (effect.alias === member || effect.alias === ownerTable)
-        if ((onMember && REVEAL_LIKE.has(effect.kind)) || onTable) lastReveal = index
+        if (onMember && REVEAL_LIKE.has(effect.kind)) lastReveal = index
         if ((onMember && WIPE_LIKE.has(effect.kind)) || inSubtree) lastWipe = index
       })
       return lastWipe > lastReveal
@@ -1132,7 +1117,7 @@ function buildBoardSource(input: {
 
   // Own each effect to the prompt block holding its proportional voice
   // position: effect i of n sits at (i + 0.5) / n of the voice timeline.
-  // A table's border, mask wipes, cell reveals and preceding grid wipe pin to
+  // A table's border, cell reveals and preceding grid wipe pin to
   // the border's owner so the grid builds in one chained sweep instead of
   // scattering.
   const effectOwners: number[] = effects.map((_, index) =>
@@ -1149,7 +1134,6 @@ function buildBoardSource(input: {
     effects.forEach((effect, index) => {
       const tableAlias =
         effect.kind === 'table-border' ||
-        effect.kind === 'table-mask' ||
         effect.kind === 'table-cell' ||
         effect.kind === 'wipe-subtree'
           ? effect.tableAlias
@@ -1163,7 +1147,7 @@ function buildBoardSource(input: {
   // Global first starts at zero: pin the opening action to part-0 so the
   // slide never opens mid-timeline when proportional ownership lands the
   // first effect in a later block. A leading table border carries its whole
-  // chain (masks, cells, grid wipe) with it. Teardown sweeps are never first
+  // chain (cells, grid wipe) with it. Teardown sweeps are never first
   // (they need board items, so a build always precedes them).
   if (effects.length > 0 && !teardownEffects.has(effects[0]!)) {
     effectOwners[0] = 0
@@ -1173,7 +1157,6 @@ function buildBoardSource(input: {
       effects.forEach((effect, index) => {
         if (
           (effect.kind === 'table-border' ||
-            effect.kind === 'table-mask' ||
             effect.kind === 'table-cell' ||
             effect.kind === 'wipe-subtree') &&
           effect.tableAlias === alias
@@ -1210,7 +1193,7 @@ function buildBoardSource(input: {
   lines.push(...tints)
 
   // Content-sized overs (fixture economy): writes scale with text length,
-  // carries, masks and borders use fixed fixture beats.
+  // carries and borders use fixed fixture beats.
   function overFor(effect: Effect): number {
     switch (effect.kind) {
       case 'carry-in':
@@ -1218,8 +1201,6 @@ function buildBoardSource(input: {
         return 1.5
       case 'table-border':
         return 1.2
-      case 'table-mask':
-        return 0.01
       case 'table-cell':
       case 'reveal':
         return contentOver(effect.content)
@@ -1272,7 +1253,7 @@ function buildBoardSource(input: {
   const buildByOwner: number[][] = byOwner.map((group) =>
     group.filter((index) => !isTeardown(index)),
   )
-  // Packed estimate first: minimal gaps (0.5, 0 for masks) chained from each
+  // Packed estimate first: minimal gaps (0.5s) chained from each
   // window start with a never-rewinding cursor. Sets the initial slide total
   // (voice vs board overrun) that space-between then distributes within.
   let packedEnd = 0
@@ -1287,8 +1268,7 @@ function buildBoardSource(input: {
           start = windowStart
           firstOverall = false
         } else {
-          const gap = effects[index]!.kind === 'table-mask' ? 0 : BOARD_GAP
-          start = Math.max(windowStart, cursor + gap)
+          start = Math.max(windowStart, cursor + BOARD_GAP)
         }
         cursor = start + (spans[index] ?? 0)
       }
@@ -1327,16 +1307,11 @@ function buildBoardSource(input: {
       if (isGlobalLast) lastStart = windowEnd - Math.round(lastSpan)
       else lastStart = windowEnd - lastSpan
       lastStart = Math.max(lastStart, windowStart)
-      // Equal gaps between the packed spans; masks take 0 gap.
+      // Equal gaps between the packed spans.
       const intervals = group.length - 1
-      let maskGaps = 0
-      for (let i = 1; i < group.length; i += 1) {
-        if (effects[group[i]!]!.kind === 'table-mask') maskGaps += 1
-      }
-      const freeGaps = intervals - maskGaps
       let packedSpans = 0
       for (let i = 0; i < group.length - 1; i += 1) packedSpans += spans[group[i]!] ?? 0
-      const gap = freeGaps > 0 ? (lastStart - windowStart - packedSpans) / freeGaps : 0
+      const gap = intervals > 0 ? (lastStart - windowStart - packedSpans) / intervals : 0
       if (!(gap >= 0) || !Number.isFinite(gap)) {
         // Window too tight for even spacing: fall back to packed chaining so
         // sweeps never overlap; the cursor carries the overrun forward.
@@ -1348,8 +1323,7 @@ function buildBoardSource(input: {
             start = runStart
             first = false
           } else {
-            const g = effects[index]!.kind === 'table-mask' ? 0 : BOARD_GAP
-            start = runStart + g
+            start = runStart + BOARD_GAP
           }
           effectAt[index] = start
           runStart = start + (spans[index] ?? 0)
@@ -1362,8 +1336,7 @@ function buildBoardSource(input: {
         if (position === 0) {
           effectAt[index] = run
         } else {
-          const g = effects[index]!.kind === 'table-mask' ? 0 : gap
-          run = run + g
+          run = run + gap
           effectAt[index] = run
         }
         run = (effectAt[index] ?? 0) + (spans[index] ?? 0)
@@ -1372,24 +1345,6 @@ function buildBoardSource(input: {
       const drift = lastStart - (effectAt[lastIndex] ?? 0)
       if (Math.abs(drift) > 1e-9) effectAt[lastIndex] = lastStart
       cursor = (effectAt[lastIndex] ?? 0) + lastSpan
-    })
-  }
-  // Mask-setup wipes fire together just after their border starts drawing, so
-  // cell contents stay hidden for the whole border sweep and appear exactly
-  // once, via their own reveal — never prefilled, never disappearing and
-  // reappearing. (The chained layout above still spaces the reveals; only
-  // the mask pins move.)
-  {
-    const borderStartByTable = new Map<string, number>()
-    effects.forEach((effect, index) => {
-      if (effect.kind === 'table-border')
-        borderStartByTable.set(effect.tableAlias, effectAt[index] ?? 0)
-    })
-    effects.forEach((effect, index) => {
-      if (effect.kind === 'table-mask') {
-        const borderStart = borderStartByTable.get(effect.tableAlias)
-        if (borderStart !== undefined) effectAt[index] = borderStart + 0.01
-      }
     })
   }
   // Teardown cluster: removal sweeps stack right before the slide end with 1s
@@ -1484,11 +1439,8 @@ function buildBoardSource(input: {
         break
       case 'table-border':
         lines.push(
-          `reveal(${effect.alias}${atText}${overText}, visual: chalkHand${VISUAL_SUFFIX}${tableBorderWobble(tableRowCounts.get(effect.alias) ?? 3)}, sound: writeSfx)`,
+          `reveal(nodeOnly(${effect.alias})${atText}${overText}, visual: chalkHand${VISUAL_SUFFIX}${tableBorderWobble(tableRowCounts.get(effect.alias) ?? 3)}, sound: writeSfx)`,
         )
-        break
-      case 'table-mask':
-        lines.push(`wipe(${effect.alias}${atText}${overText}, visual: none)`)
         break
       case 'table-cell':
       case 'reveal':
@@ -1523,12 +1475,12 @@ function buildBoardSource(input: {
       case 'carry-away':
         return `carry(${effect.alias})`
       case 'table-border':
+        return `reveal(nodeOnly(${effect.alias}))`
       case 'table-cell':
       case 'reveal':
         return `reveal(${effect.alias})`
       case 'mark':
         return `mark(${effect.alias})`
-      case 'table-mask':
       case 'wipe':
       case 'wipe-subtree':
         return `wipe(${effect.alias})`

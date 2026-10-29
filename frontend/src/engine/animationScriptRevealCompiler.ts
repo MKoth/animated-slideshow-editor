@@ -125,6 +125,7 @@ export function compileAnimationScriptReveal(
 
   let targetExpression = statement.target
   let includeDescendants = false
+  let nodeOnly = false
   if (statement.target.kind === 'call' && statement.target.callee === 'subtree') {
     if (statement.target.args.length !== 1) {
       context.reportError('subtree(target) takes exactly one node binding', statement.target.span)
@@ -132,11 +133,18 @@ export function compileAnimationScriptReveal(
     }
     targetExpression = statement.target.args[0]
     includeDescendants = true
+  } else if (statement.target.kind === 'call' && statement.target.callee === 'nodeOnly') {
+    if (statement.target.args.length !== 1) {
+      context.reportError('nodeOnly(target) takes exactly one node binding', statement.target.span)
+      return { cursor: Math.max(cursor, end) }
+    }
+    targetExpression = statement.target.args[0]
+    nodeOnly = true
   }
   const target = context.resolveTarget(targetExpression, true, label)
   if (!target) return { cursor: Math.max(cursor, end) }
   const bindingKind = context.bindingKind(targetExpression)
-  includeDescendants ||= bindingKind === 'group' || bindingKind === 'table'
+  includeDescendants ||= !nodeOnly && (bindingKind === 'group' || bindingKind === 'table')
   const sampledTarget = sampleAnimationScriptRevealTarget({
     nodes: context.nodes,
     rootNodeIds: target.members.map((member) => member.nodeId),

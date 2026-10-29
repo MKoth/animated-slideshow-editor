@@ -220,7 +220,7 @@ describe('Scenario planner tables, teardown, overflow, fractions (issue #470)', 
     '',
   ].join('\n')
 
-  it('chains table cells after mask-setup wipes with content-sized overs', () => {
+  it('reveals the table border alone before chained cell-text reveals', () => {
     const result = planScenarioDraft(TABLE_DOC, 0.1, [])
     const slide = result.slides[0]
     expect(slide).toBeDefined()
@@ -228,24 +228,23 @@ describe('Scenario planner tables, teardown, overflow, fractions (issue #470)', 
     // Empty cells plus per-cell text (fixture style): the border draws first.
     expect(slide?.source).toContain('rows: [["", ""], ["", ""], ["", ""]]')
     expect(slide?.source).toContain('inside table1.cell(0, 0)')
-    expect(slide?.source).toMatch(/reveal\(table1, at: markTime\("part-0"\), over: 1\.2/)
+    expect(slide?.source).toMatch(
+      /reveal\(nodeOnly\(table1\), at: markTime\("part-0"\), over: 1\.2/,
+    )
     // Border wobble scales with row count (3 rows → 1.5x the {8-18} base);
     // cells scale with their text.
-    expect(slide?.source).toMatch(/reveal\(table1,.*wobbleY: \{ from: 12, to: 27 \}/)
+    expect(slide?.source).toMatch(/reveal\(nodeOnly\(table1\),.*wobbleY: \{ from: 12, to: 27 \}/)
     expect(slide?.source).toMatch(/reveal\(table1c00,.*over: 0\.7,.*sound: writeSfx\)/)
     expect(slide?.source).toMatch(/reveal\(table1c10,.*over: 0\.4,.*sound: writeSfx\)/)
-    // Invisible mask-setup wipes fire together just after the border starts,
-    // hiding cell contents for the whole border draw.
-    expect(slide?.source).toMatch(
-      /wipe\(table1c00, at: markTime\("part-0"\) \+ 0\.01, over: 0\.01, visual: none\)/,
-    )
-    // Chained order: border, mask, cell, mask, cell...
+    // Each cell's reveal mask keeps it hidden until its narration-timed sweep;
+    // no table-wide border effect or setup wipe pre-reveals its text.
+    expect(slide?.source).not.toContain('wipe(table1c00')
+    // Chained order: table-only border, then individual cells.
     const actions = slide?.fractions.map((f) => f.action) ?? []
     expect(actions.filter((a) => a.startsWith('reveal('))).toHaveLength(7)
-    expect(actions.filter((a) => a.startsWith('wipe('))).toHaveLength(6)
-    expect(actions[0]).toBe('reveal(table1)')
-    expect(actions[1]).toBe('wipe(table1c00)')
-    expect(actions[2]).toBe('reveal(table1c00)')
+    expect(actions.filter((a) => a.startsWith('wipe('))).toHaveLength(0)
+    expect(actions[0]).toBe('reveal(nodeOnly(table1))')
+    expect(actions[1]).toBe('reveal(table1c00)')
     // Overs stay short and content-sized.
     for (const over of [...(slide?.source ?? '').matchAll(/over: ([\d.]+)/g)].map((m) =>
       Number(m[1]),
@@ -499,7 +498,7 @@ describe('Scenario planner space-between board timing', () => {
     expect(last.offset + span).toBeCloseTo((slide?.duration ?? 0) - 1, 6)
   })
 
-  it('spreads table cells evenly with all mask-setup wipes at the border start', () => {
+  it('spreads table border and cell reveals evenly without setup wipes', () => {
     const result = planScenarioDraft(TABLE_DOC, 0.1, [])
     const slide = result.slides[0]
     expect(slide).toBeDefined()
@@ -510,22 +509,13 @@ describe('Scenario planner space-between board timing', () => {
     // Last cell reveal (over 0.7) ends one second before the slide end.
     const last = items[items.length - 1]!
     expect(last.offset + last.over).toBeCloseTo((slide?.duration ?? 0) - 1, 6)
-    // Mask-setup wipes (visual none, 0.01s) all fire together just after the
-    // border starts drawing — cell contents stay hidden for the whole border
-    // sweep and appear exactly once, via their own reveal. No prefilled grid,
-    // no disappear-then-reappear cycle.
-    const lines = (slide?.source ?? '').split('\n')
-    const atLines = lines.filter((line) => /at: markTime/.test(line) && /over:/.test(line))
-    const borderOffset = items[0]!.offset
-    for (const line of atLines) {
-      if (!/visual: none/.test(line)) continue
-      const at = line.match(/at: markTime\("part-\d+"\)(?: \+ ([\d.]+))?/)
-      const offset = at?.[1] !== undefined ? Number(at[1]) : 0
-      expect(offset).toBeCloseTo(borderOffset + 0.01, 6)
-    }
-    // Even spacing: gaps between consecutive reveals (masks excluded — they
-    // all fire at the border start now) are equal.
-    const reveals = items.filter((item) => !/visual: none/.test(item.line))
+    // The table-only border does not uncover its cell text. Each cell's own
+    // future reveal mask keeps it hidden until its turn; no setup wipe can
+    // flash it visible before that reveal.
+    expect(slide?.source).toContain('reveal(nodeOnly(table1)')
+    expect(slide?.source).not.toContain('visual: none')
+    // Even spacing: the table-only border and each cell reveal are chained.
+    const reveals = items
     const gaps: number[] = []
     for (let i = 1; i < reveals.length; i += 1) {
       const prevItem = reveals[i - 1]!
@@ -862,8 +852,8 @@ describe('Scenario planner table layout', () => {
     const result = planScenarioDraft(TWO_TABLE_DOC, 0.1, [])
     const source = result.slides[0]?.source ?? ''
     // 4-row table → 2x the {8-18} base; 6-row table → 3x.
-    expect(source).toMatch(/reveal\(table1,.*wobbleY: \{ from: 16, to: 36 \}/)
-    expect(source).toMatch(/reveal\(table2,.*wobbleY: \{ from: 24, to: 54 \}/)
+    expect(source).toMatch(/reveal\(nodeOnly\(table1\),.*wobbleY: \{ from: 16, to: 36 \}/)
+    expect(source).toMatch(/reveal\(nodeOnly\(table2\),.*wobbleY: \{ from: 24, to: 54 \}/)
     // The subtree wipes ride their own table's wobble.
     expect(source).toMatch(/wipe\(subtree\(table1\).*wobbleY: \{ from: 16, to: 36 \}/)
   })
@@ -884,7 +874,9 @@ describe('Scenario planner table layout', () => {
       '',
     ].join('\n')
     const result = planScenarioDraft(doc, 0.1, [])
-    expect(result.slides[0]?.source).toMatch(/reveal\(table1,.*wobbleY: \{ from: 8, to: 18 \}/)
+    expect(result.slides[0]?.source).toMatch(
+      /reveal\(nodeOnly\(table1\),.*wobbleY: \{ from: 8, to: 18 \}/,
+    )
   })
 
   it('drops the teardown wipe of a table already cleared mid-slide', () => {
