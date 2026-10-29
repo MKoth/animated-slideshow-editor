@@ -5,13 +5,10 @@ import {
   TICK_MS,
   DRIFT_POLL_MS,
   DRIFT_THRESHOLD_MS,
-  SCRUB_SETTLE_MS,
-  SCRUB_DEBOUNCE_MS,
   computeAudioTime,
   computePlayhead,
   shouldCorrectDrift,
   getAudibleClips,
-  getScrubAuditionClip,
   getClippedPlaybackDuration,
   isClipAudibleWithSoloMute,
 } from '../engine/audioSync'
@@ -76,8 +73,6 @@ export interface SyncedAudioControllerOptions {
   tickMs?: number
   driftPollMs?: number
   driftThresholdMs?: number
-  scrubDebounceMs?: number
-  scrubSettleMs?: number
   getAudioContext?: AudioContextFactory
   getPerformanceNow?: () => number
   masterGain?: number
@@ -105,8 +100,6 @@ export class SyncedAudioController {
   private readonly tickMs: number
   private readonly driftPollMs: number
   private readonly driftThresholdMs: number
-  private readonly scrubDebounceMs: number
-  private readonly scrubSettleMs: number
   private readonly getAudioContext: AudioContextFactory
   private readonly getPerformanceNow: () => number
 
@@ -117,10 +110,6 @@ export class SyncedAudioController {
   private tickTimer: ReturnType<typeof setInterval> | null = null
   private driftTimer: ReturnType<typeof setInterval> | null = null
   private rafId: number | null = null
-  private scrubTimer: ReturnType<typeof setTimeout> | null = null
-  private scrubSettleTimer: ReturnType<typeof setTimeout> | null = null
-  private pendingScrubTime: number | null = null
-  private pendingScrubSlideId: string | null = null
   private isPlaying = false
 
   private _activeSlideId: string | null = null
@@ -157,8 +146,6 @@ export class SyncedAudioController {
     this.tickMs = options.tickMs ?? TICK_MS
     this.driftPollMs = options.driftPollMs ?? DRIFT_POLL_MS
     this.driftThresholdMs = options.driftThresholdMs ?? DRIFT_THRESHOLD_MS
-    this.scrubDebounceMs = options.scrubDebounceMs ?? SCRUB_DEBOUNCE_MS
-    this.scrubSettleMs = options.scrubSettleMs ?? SCRUB_SETTLE_MS
     this.getAudioContext = options.getAudioContext ?? (() => null)
     this.getPerformanceNow = options.getPerformanceNow ?? (() => performance.now())
     this.cache = new AudioBufferCache()
@@ -425,16 +412,9 @@ export class SyncedAudioController {
         this.handlePauseOrStop()
       } else if (event.type === 'PlaybackLooped') {
         this.handleLooped(event.slideId, event.time)
-      } else if (event.type === 'CurrentTimeChanged') {
-        // Scrub seek when not playing — silent drag then debounced blip
-        if (!this.isPlaying) {
-          this.handleScrubSeek(event.slideId, event.time)
-        } else {
-          // When playing, if CurrentTimeChanged is due to seek during playback, update base times?
-          // We treat scrub during playback as seek: rebase
-          // For now, ignore unless isPlaying and time jump > threshold
-        }
       }
+      // Seeking (timeline drag, export frame capture) is silent by design:
+      // sound plays only while actually playing. No scrub audition blip.
     })
     this.unsubs.push(unsubEvents)
 
@@ -449,7 +429,6 @@ export class SyncedAudioController {
 
   detach(): void {
     this.teardownScheduling()
-    this.clearScrubTimers()
     for (const unsub of this.unsubs) unsub()
     this.unsubs.length = 0
     this._cachedCtx = null
@@ -539,7 +518,6 @@ export class SyncedAudioController {
     this.isPlaying = false
     this.baseTimes = null
     this.teardownScheduling()
-    this.clearScrubTimers()
     this.activeSlideId = nextSlideId
     // LRU eviction on slide switch — keep only buffers for next slide's clips
     try {
@@ -967,129 +945,6 @@ export class SyncedAudioController {
     } catch {
       return 0
     }
-  }
-
-  // -------------------------------------------------------------------------
-  // Scrub audition — silent drag + debounced 50–120 ms blip (30 ms settle)
-  // -------------------------------------------------------------------------
-
-  private handleScrubSeek(slideId: string, time: number): void {
-    // Cancel previous timers — scrub stays silent while dragging
-    this.clearScrubTimers()
-    this.pendingScrubTime = time
-    this.pendingScrubSlideId = slideId
-    // Debounce: after settle + debounce, emit audition blip if inside clip
-    this.scrubSettleTimer = setTimeout(() => {
-      this.scrubTimer = setTimeout(() => this.emitScrubBlip(), this.scrubDebounceMs)
-    }, this.scrubSettleMs)
-  }
-
-  private clearScrubTimers(): void {
-    if (this.scrubTimer) {
-      clearTimeout(this.scrubTimer)
-      this.scrubTimer = null
-    }
-    if (this.scrubSettleTimer) {
-      clearTimeout(this.scrubSettleTimer)
-      this.scrubSettleTimer = null
-    }
-  }
-
-  private emitScrubBlip(): void {
-    const slideId = this.pendingScrubSlideId
-    const time = this.pendingScrubTime
-    if (slideId === null || time === null) return
-    let clips: readonly import('../engine/audioClip').AudioClip[] = []
-    let slideDuration = 0
-    try {
-      const slide = this.engine.getSlide(slideId)
-      clips = slide.audio.clips
-      slideDuration = slide.duration
-    } catch {
-      return
-    }
-    const clip = getScrubAuditionClip(clips, slideDuration, time)
-    if (!clip) return
-    // Respect muted/solo preview
-    const mutedTracks = useAudioPlaybackStore.getState().mutedTracks
-    const soloTracks = useAudioPlaybackStore.getState().soloTracks
-    if (!isClipAudibleWithSoloMute(clip, mutedTracks, soloTracks)) return
-    // Emit audition blip — a short 30–120ms playback of the clip at time
-    // For test seam, record as scheduledHistory or set audition state
-    useAudioPlaybackStore.getState().setAuditioning(clip.id)
-    // Schedule a short blip via AudioContext if available
-    const ctx = this.getCtx()
-    if (ctx) {
-      try {
-        const rate = clip.playbackRate || 1
-        const needsEffects = this.hasClipEffects(clip)
-        const stretched = needsEffects ? this.getStretchedBufferForClip(clip) : null
-        // Try to ensure stretched for next time
-        if (needsEffects && !stretched) {
-          void this.ensureStretchedBufferForClip(clip)
-        }
-        let buffer: AudioBuffer | null = null
-        let playbackRateForSource = rate
-        let offset: number
-        const clippedForClip =
-          getClippedPlaybackDuration(clip, slideDuration) - (time - clip.timelineStart)
-        const blipDuration = Math.min(0.12, clippedForClip)
-        if (blipDuration <= 0) {
-          useAudioPlaybackStore.getState().setAuditioning(null)
-          return
-        }
-        let blipSourceDuration: number
-        if (stretched) {
-          buffer = stretched.buffer
-          playbackRateForSource = 1
-          const timeRatio = getTimeRatioForPlaybackRate(rate)
-          offset = clip.sourceStart * timeRatio + (time - clip.timelineStart)
-          // stretched source duration == wall
-          blipSourceDuration = blipDuration
-        } else {
-          const cached = this.cache.get(clip.assetId)
-          if (!cached) {
-            // Lazy decode for scrub audition
-            void this.ensureBufferForAsset(clip.assetId)
-            useAudioPlaybackStore.getState().setAuditioning(null)
-            return
-          }
-          buffer = cached.buffer as AudioBuffer
-          playbackRateForSource = rate
-          offset = clip.sourceStart + (time - clip.timelineStart) * rate
-          blipSourceDuration = blipDuration * rate
-        }
-        const source = ctx.createBufferSource()
-        const gainNode = ctx.createGain()
-        source.buffer = buffer as AudioBuffer
-        source.playbackRate.value = playbackRateForSource
-        gainNode.gain.value = clip.volume
-        source.connect(gainNode)
-        gainNode.connect(ctx.destination)
-        if (blipDuration > 0) {
-          source.start(ctx.currentTime, offset, blipSourceDuration)
-          setTimeout(
-            () => {
-              try {
-                source.stop()
-                source.disconnect?.()
-                gainNode.disconnect?.()
-              } catch {
-                // ignore
-              }
-              useAudioPlaybackStore.getState().setAuditioning(null)
-            },
-            blipDuration * 1000 + 20,
-          )
-        }
-      } catch {
-        useAudioPlaybackStore.getState().setAuditioning(null)
-      }
-    } else {
-      setTimeout(() => useAudioPlaybackStore.getState().setAuditioning(null), 120)
-    }
-    this.pendingScrubTime = null
-    this.pendingScrubSlideId = null
   }
 
   // Exposed for tests
