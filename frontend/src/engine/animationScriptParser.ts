@@ -250,6 +250,15 @@ export interface SetTextNode {
   readonly span: SourceSpan
 }
 
+/** `setCamera(x, y, zoom)` sets the rendered slide camera's starting framing. */
+export interface SetCameraNode {
+  readonly kind: 'setCamera'
+  readonly x: ScriptExpression
+  readonly y: ScriptExpression
+  readonly zoom: ScriptExpression
+  readonly span: SourceSpan
+}
+
 /** `let name = expression` declares an immutable, block-scoped compile-time value. */
 export interface LetNode {
   readonly kind: 'let'
@@ -497,6 +506,7 @@ export type ScriptStatementNode =
   | LetNode
   | StatementNode
   | SetTextNode
+  | SetCameraNode
   | CreateNode
   | FunctionDefNode
   | FunctionCallNode
@@ -698,6 +708,9 @@ class Parser {
     if (this.#isIdentifier('setText') && this.#nextIsPunctuation('(')) {
       return this.#parseSetText()
     }
+    if (this.#isIdentifier('setCamera') && this.#nextIsPunctuation('(')) {
+      return this.#parseSetCamera()
+    }
     if (this.#isIdentifier('pointArrowAt') && this.#nextIsPunctuation('(')) {
       return this.#parsePointArrowAt()
     }
@@ -832,6 +845,29 @@ class Parser {
     this.#expectPunctuation(')')
     if (content === null) return null
     return { kind: 'setText', target, content, span: { start, end: this.#previousEnd() } }
+  }
+
+  /** `setCamera(x, y, zoom)` pins the output camera at the start of the slide. */
+  #parseSetCamera(): SetCameraNode | null {
+    const start = this.#peek().span.start
+    this.#advance()
+    if (!this.#expectPunctuation('(')) return null
+    const x = this.#parseExpression('the camera x position')
+    if (x === null) return null
+    if (!this.#matchPunctuation(',')) {
+      this.#report('Expected "," after the camera x position', this.#peek().span)
+      return null
+    }
+    const y = this.#parseExpression('the camera y position')
+    if (y === null) return null
+    if (!this.#matchPunctuation(',')) {
+      this.#report('Expected "," after the camera y position', this.#peek().span)
+      return null
+    }
+    const zoom = this.#parseExpression('the camera zoom')
+    this.#expectPunctuation(')')
+    if (zoom === null) return null
+    return { kind: 'setCamera', x, y, zoom, span: { start, end: this.#previousEnd() } }
   }
 
   /**
@@ -1410,7 +1446,7 @@ class Parser {
 
   /**
    * `name(arg, ...)` invokes a local function as a statement. Parsed whenever
-   * an identifier is followed by `(` (except the `setText` free call); the
+   * an identifier is followed by `(` (except the `setText`/`setCamera` free calls); the
    * compiler owns unknown-name and arity diagnostics.
    */
   #parseFunctionCall(): FunctionCallNode | null {
@@ -2269,7 +2305,11 @@ class Parser {
     if (token.text === 'create' && next?.kind !== 'punctuation') {
       return true
     }
-    if (token.text === 'setText' && next?.kind === 'punctuation' && next.text === '(') {
+    if (
+      (token.text === 'setText' || token.text === 'setCamera') &&
+      next?.kind === 'punctuation' &&
+      next.text === '('
+    ) {
       return true
     }
     if (next?.kind === 'punctuation' && next.text === '(') {

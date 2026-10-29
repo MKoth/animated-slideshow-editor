@@ -608,6 +608,26 @@ describe('Animation Script write surface — re-run on the new track kinds', () 
 })
 
 describe('Animation Script write surface — static text', () => {
+  it('sets the rendered camera starting framing with replaceable time-zero keyframes', () => {
+    const { system, slideId } = setup()
+    const cameraId = system.engine.getSlide(slideId).scene.camera.id
+    const source = ['script "Demo" from 0', 'setCamera(120, -45, 1.5)'].join('\n')
+    dispatchOk(system, new SetSlideAnimationScriptCommand({ slideId, source }))
+
+    runOk(system, slideId, source)
+
+    expect(system.engine.evaluateNode(cameraId, 0).transform).toMatchObject({
+      x: 120,
+      y: -45,
+      scaleX: 1.5,
+      scaleY: 1.5,
+    })
+    expect(system.engine.getKeyframes(cameraId, 'positionX')).toHaveLength(1)
+    expect(system.engine.getKeyframes(cameraId, 'scaleX')).toHaveLength(1)
+    expect(system.dispatcher.undo()).toBe(true)
+    expect(system.engine.getKeyframes(cameraId, 'positionX')).toHaveLength(0)
+  })
+
   it('changes text content in the run Transaction and undo reverts it with the run', () => {
     const { system, slideId } = setup()
     const captionId = addNode(system, slideId, 'Caption', {

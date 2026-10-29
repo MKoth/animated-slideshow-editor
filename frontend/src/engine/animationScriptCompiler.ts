@@ -58,6 +58,7 @@ import type {
   ScriptProgram,
   ScriptStatementNode,
   SelectorNode,
+  SetCameraNode,
   SetTextNode,
   SourceSpan,
   StaggerNode,
@@ -128,7 +129,7 @@ export type ScriptProperty = (typeof SCRIPT_PROPERTY_NAMES)[number]
 export type ScriptNodeProperty = (typeof SCRIPT_NODE_PROPERTY_NAMES)[number]
 
 /** Names the language reserves for statements rather than bindings. */
-export const SCRIPT_RESERVED_NAMES = ['setText', 'create'] as const
+export const SCRIPT_RESERVED_NAMES = ['setText', 'setCamera', 'create'] as const
 
 /**
  * The engine track a script write lands on, resolved by node kind. The
@@ -775,7 +776,7 @@ export interface AnimationScriptExistingControl {
 
 /**
  * Names a `function` definition may not take: expression and statement
- * built-ins, `setText`, and the statement keywords. Collisions are errors.
+ * built-ins, `setText`/`setCamera`, and the statement keywords. Collisions are errors.
  */
 const SCRIPT_STATEMENT_BUILTIN_NAMES: readonly string[] = [
   'pointArrowAt',
@@ -790,6 +791,7 @@ const SCRIPT_FUNCTION_RESERVED_NAMES: readonly string[] = [
   ...SCRIPT_BUILTIN_NAMES,
   ...SCRIPT_STATEMENT_BUILTIN_NAMES,
   'setText',
+  'setCamera',
   'create',
   'bind',
   'let',
@@ -2053,6 +2055,8 @@ class Compiler {
           return this.#lowerStagger(statement, cursor)
         case 'setText':
           return this.#lowerSetText(statement, cursor)
+        case 'setCamera':
+          return this.#lowerSetCamera(statement, cursor)
         case 'create':
           return this.#lowerCreate(statement, cursor)
         case 'pointArrowAt':
@@ -5466,6 +5470,45 @@ class Compiler {
   }
 
   /**
+   * `setCamera(x, y, zoom)` writes the output camera's starting transform as
+   * script-owned time-zero keyframes, keeping it editable and replaceable.
+   */
+  #lowerSetCamera(statement: SetCameraNode, cursor: number): number {
+    const x = this.#evaluateNumber(statement.x, 'a camera x position')
+    const y = this.#evaluateNumber(statement.y, 'a camera y position')
+    const zoom = this.#evaluateNumber(statement.zoom, 'a camera zoom')
+    if (x === null || y === null || zoom === null) return cursor
+    if (zoom <= 0) {
+      this.#error('Camera zoom must be greater than 0', statement.zoom.span)
+      return cursor
+    }
+    const camera = this.#context.nodes.find((node) => node.isCamera)
+    if (camera === undefined) {
+      this.#error('This slide has no camera node to set', statement.span)
+      return cursor
+    }
+    this.#currentSpan = statement.span
+    const ease = resolveScriptEase(DEFAULT_SCRIPT_EASE)
+    if (ease === null) return cursor
+    for (const [property, value] of [
+      ['x', x],
+      ['y', y],
+      ['scaleX', zoom],
+      ['scaleY', zoom],
+    ] as const) {
+      this.#addPlanned({
+        nodeId: camera.id,
+        nodeName: camera.name,
+        track: { kind: 'node', property },
+        time: 0,
+        value,
+        ease,
+      })
+    }
+    return cursor
+  }
+
+  /**
    * `alias.material(mat)`: assign a library material to every addressed node.
    * Static, like `setText` — never emits a keyframe and never advances the
    * cursor. Group targets broadcast per member. The referenced material joins
@@ -7559,7 +7602,7 @@ class Compiler {
   /**
    * The cursor a timed statement would have reached had it lowered cleanly.
    * Recovery paths use it so later statements keep sensible times without
-   * re-reporting the failure; `set` and `setText` never advance. Bare
+   * re-reporting the failure; `set`, `setText`, and `setCamera` never advance. Bare
    * `tint(color)` is a set, so it never advances on recovery either.
    */
   #advanceCursorByResolvedDuration(statement: StatementNode, cursor: number): number {
