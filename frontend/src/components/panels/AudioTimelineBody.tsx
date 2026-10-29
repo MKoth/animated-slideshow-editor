@@ -25,6 +25,7 @@ import {
   SplitPrompterWordsCommand,
   TransactionCommand,
   TrimAudioClipCommand,
+  UnitePrompterPartsCommand,
   UpdatePrompterPartCommand,
   UpdatePrompterPartWithShiftCommand,
 } from '../../engine/commands'
@@ -254,6 +255,11 @@ export function AudioTimelineBody({
     x: number
     y: number
     partId: string
+  } | null>(null)
+  // Unite (merge) two adjacent prompter blocks — pending confirm when audio exists
+  const [uniteConfirm, setUniteConfirm] = useState<{
+    leftId: string
+    rightId: string
   } | null>(null)
   const [audioClipContextMenu, setAudioClipContextMenu] = useState<{
     x: number
@@ -1112,6 +1118,63 @@ export function AudioTimelineBody({
     },
     [engine, slide.id, dispatch],
   )
+
+  // Unite two adjacent prompter blocks. Their timeline clips (voice + word
+  // segments) become obsolete once the texts merge, so they are deleted as
+  // part of the same undoable Transaction; the merged block ends up with no
+  // audio, ready for a fresh whole-block TTS pass.
+  const collectPrompterPartClipIds = useCallback(
+    (partId: string): string[] => {
+      const part = slide.prompter?.parts.find((p) => p.id === partId)
+      if (!part) return []
+      const ids: string[] = []
+      if (part.audioClipId) ids.push(part.audioClipId)
+      if (part.segments) {
+        for (const seg of part.segments) ids.push(seg.audioClipId)
+      }
+      const existing = new Set(slide.audio.clips.map((c) => c.id))
+      return [...new Set(ids)].filter((id) => existing.has(id))
+    },
+    [slide.prompter, slide.audio.clips],
+  )
+
+  const executePrompterUnite = (leftId: string, rightId: string) => {
+    const clipIds = [
+      ...collectPrompterPartClipIds(leftId),
+      ...collectPrompterPartClipIds(rightId),
+    ].filter((id, i, arr) => arr.indexOf(id) === i)
+    const unite = new UnitePrompterPartsCommand({
+      slideId: slide.id,
+      leftPartId: leftId,
+      rightPartId: rightId,
+    })
+    const result =
+      clipIds.length === 0
+        ? dispatch(unite)
+        : dispatch(
+            new TransactionCommand([
+              ...clipIds.map((clipId) => new DeleteAudioClipCommand({ slideId: slide.id, clipId })),
+              unite,
+            ]),
+          )
+    if (!result.ok) {
+      useNotificationStore.getState().notify(result.error.message)
+      return
+    }
+    setUniteConfirm(null)
+    setFocusedId(leftId)
+    setWordSelection((sel) =>
+      sel && (sel.partId === leftId || sel.partId === rightId) ? null : sel,
+    )
+  }
+
+  const handlePrompterUniteRequest = (leftId: string, rightId: string) => {
+    const clipIds = [...collectPrompterPartClipIds(leftId), ...collectPrompterPartClipIds(rightId)]
+    // No audio attached — merge immediately; otherwise ask for confirmation
+    // since the attached recordings/TTS clips will be deleted.
+    if (clipIds.length === 0) executePrompterUnite(leftId, rightId)
+    else setUniteConfirm({ leftId, rightId })
+  }
 
   // Keyboard shortcuts for duplicate/delete/split + nudging + roving
   const nudgeSelected = useCallback(
@@ -2596,45 +2659,100 @@ export function AudioTimelineBody({
                       gapX = prompterParts[prompterParts.length - 1].endTime * pps
                     }
                     const isDragTarget = prompterMovePreview?.newIndex === gapIndex
+                    const isInternalGap = gapIndex >= 1 && gapIndex <= prompterParts.length - 1
+                    const leftPart = isInternalGap ? prompterParts[gapIndex - 1] : null
+                    const rightPart = isInternalGap ? prompterParts[gapIndex] : null
+                    const uniteHasAudio = Boolean(
+                      leftPart &&
+                      rightPart &&
+                      (leftPart.audioClipId ||
+                        (leftPart.segments && leftPart.segments.length > 0) ||
+                        rightPart.audioClipId ||
+                        (rightPart.segments && rightPart.segments.length > 0)),
+                    )
                     return (
-                      <button
-                        key={`gap-${gapIndex}`}
-                        data-testid={`prompter-insert-${gapIndex}`}
-                        aria-label={`Insert prompter part at ${gapIndex}`}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handlePrompterInsertAt(gapIndex)
-                        }}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        style={{
-                          position: 'absolute',
-                          left: gapX - 10,
-                          top: 11,
-                          width: 20,
-                          height: 20,
-                          borderRadius: 999,
-                          border: isDragTarget ? '1px solid #fff' : '1px solid #7c5cff',
-                          background: isDragTarget ? '#7c5cff' : 'rgba(124,92,255,0.15)',
-                          color: isDragTarget ? '#fff' : '#7c5cff',
-                          fontSize: 13,
-                          fontWeight: 700,
-                          lineHeight: '1',
-                          padding: 0,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          cursor: 'pointer',
-                          zIndex: isDragTarget ? 8 : 6,
-                          boxShadow: isDragTarget
-                            ? '0 2px 8px rgba(124,92,255,0.5)'
-                            : '0 1px 4px rgba(0,0,0,0.2)',
-                          opacity: prompterMovePreview ? (isDragTarget ? 1 : 0.35) : 0.9,
-                          transition: 'all 120ms ease',
-                        }}
-                        title={`Insert empty part at ${gapIndex === 0 ? 'start' : gapIndex === prompterParts.length ? 'end' : `between ${gapIndex - 1}–${gapIndex}`}`}
-                      >
-                        +
-                      </button>
+                      <span key={`gap-${gapIndex}`} style={{ display: 'contents' }}>
+                        <button
+                          data-testid={`prompter-insert-${gapIndex}`}
+                          aria-label={`Insert prompter part at ${gapIndex}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handlePrompterInsertAt(gapIndex)
+                          }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          style={{
+                            position: 'absolute',
+                            left: gapX - 10,
+                            top: 11,
+                            width: 20,
+                            height: 20,
+                            borderRadius: 999,
+                            border: isDragTarget ? '1px solid #fff' : '1px solid #7c5cff',
+                            background: isDragTarget ? '#7c5cff' : 'rgba(124,92,255,0.15)',
+                            color: isDragTarget ? '#fff' : '#7c5cff',
+                            fontSize: 13,
+                            fontWeight: 700,
+                            lineHeight: '1',
+                            padding: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            zIndex: isDragTarget ? 8 : 6,
+                            boxShadow: isDragTarget
+                              ? '0 2px 8px rgba(124,92,255,0.5)'
+                              : '0 1px 4px rgba(0,0,0,0.2)',
+                            opacity: prompterMovePreview ? (isDragTarget ? 1 : 0.35) : 0.9,
+                            transition: 'all 120ms ease',
+                          }}
+                          title={`Insert empty part at ${gapIndex === 0 ? 'start' : gapIndex === prompterParts.length ? 'end' : `between ${gapIndex - 1}–${gapIndex}`}`}
+                        >
+                          +
+                        </button>
+                        {isInternalGap && leftPart && rightPart && (
+                          <button
+                            data-testid={`prompter-unite-${gapIndex}`}
+                            aria-label={`Unite prompter parts ${gapIndex} and ${gapIndex + 1}`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handlePrompterUniteRequest(leftPart.id, rightPart.id)
+                            }}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            style={{
+                              position: 'absolute',
+                              left: gapX + 12,
+                              top: 12,
+                              width: 18,
+                              height: 18,
+                              borderRadius: 999,
+                              border: '1px solid #2e9a6a',
+                              background: uniteHasAudio
+                                ? 'rgba(46,154,106,0.30)'
+                                : 'rgba(46,154,106,0.12)',
+                              color: '#7de0a8',
+                              fontSize: 11,
+                              fontWeight: 700,
+                              lineHeight: '1',
+                              padding: 0,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              cursor: 'pointer',
+                              zIndex: 6,
+                              boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                              opacity: prompterMovePreview ? 0.35 : 0.9,
+                              transition: 'all 120ms ease',
+                            }}
+                            title={
+                              uniteHasAudio
+                                ? `Unite blocks ${gapIndex}–${gapIndex + 1} (deletes their audio — confirmation required)`
+                                : `Unite blocks ${gapIndex}–${gapIndex + 1} into one`
+                            }
+                          >
+                            ⋈
+                          </button>
+                        )}
+                      </span>
                     )
                   })}
                   {prompterMovePreview && (
@@ -3217,6 +3335,137 @@ export function AudioTimelineBody({
           }}
         />
       )}
+      {uniteConfirm &&
+        (() => {
+          const left = slide.prompter?.parts.find((p) => p.id === uniteConfirm.leftId)
+          const right = slide.prompter?.parts.find((p) => p.id === uniteConfirm.rightId)
+          if (!left || !right) return null
+          const leftClips = collectPrompterPartClipIds(left.id)
+          const rightClips = collectPrompterPartClipIds(right.id)
+          const totalClips = leftClips.length + rightClips.length
+          const describePart = (
+            label: string,
+            text: string,
+            clipCount: number,
+            segCount: number,
+          ) => (
+            <li key={label} style={{ marginBottom: 4 }}>
+              <span style={{ color: '#e0d8ff' }}>{label}: </span>
+              <span style={{ color: '#a0a0b8' }}>
+                &quot;{text.length > 80 ? `${text.slice(0, 80)}…` : text}&quot;
+              </span>{' '}
+              <span style={{ color: '#ff9d6b' }}>
+                — {clipCount} clip{clipCount === 1 ? '' : 's'}
+                {segCount > 0 ? ` (${segCount} word segment${segCount === 1 ? '' : 's'})` : ''}
+              </span>
+            </li>
+          )
+          return (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Unite prompter blocks"
+              data-testid="prompter-unite-confirm"
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(0,0,0,0.6)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 100,
+              }}
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setUniteConfirm(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setUniteConfirm(null)
+              }}
+            >
+              <div
+                style={{
+                  background: '#2a2a2a',
+                  border: '1px solid #444',
+                  borderRadius: 8,
+                  width: 440,
+                  padding: 16,
+                  color: '#e0e0e0',
+                }}
+              >
+                <h3 style={{ margin: '0 0 8px', fontSize: 13 }}>Unite into one block?</h3>
+                <p style={{ fontSize: 11, color: '#aaa', margin: '0 0 8px' }}>
+                  &quot;
+                  {`${left.text} ${right.text}`.length > 140
+                    ? `${`${left.text} ${right.text}`.slice(0, 140)}…`
+                    : `${left.text} ${right.text}`}
+                  &quot;
+                </p>
+                {totalClips > 0 ? (
+                  <>
+                    <p style={{ fontSize: 11, color: '#ff9d6b', margin: '0 0 6px' }}>
+                      Their timeline audio becomes obsolete and will be deleted (audio files stay in
+                      the library):
+                    </p>
+                    <ul style={{ fontSize: 11, margin: '0 0 8px', paddingLeft: 18 }}>
+                      {describePart(
+                        'Left block',
+                        left.text,
+                        leftClips.length,
+                        left.segments?.length ?? 0,
+                      )}
+                      {describePart(
+                        'Right block',
+                        right.text,
+                        rightClips.length,
+                        right.segments?.length ?? 0,
+                      )}
+                    </ul>
+                  </>
+                ) : null}
+                <p style={{ fontSize: 11, color: '#888', margin: '0 0 12px' }}>
+                  The merged block will have no audio — run TTS again for one continuous pass. Undo
+                  restores everything.
+                </p>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button
+                    data-testid="prompter-unite-cancel-btn"
+                    autoFocus
+                    onClick={() => setUniteConfirm(null)}
+                    style={{
+                      padding: '6px 12px',
+                      background: '#2a2a3a',
+                      color: '#ccc',
+                      border: '1px solid #444',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      fontSize: 11,
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    data-testid="prompter-unite-confirm-btn"
+                    onClick={() => executePrompterUnite(left.id, right.id)}
+                    style={{
+                      padding: '6px 12px',
+                      background: '#b35c1e',
+                      color: '#fff',
+                      border: '1px solid #ff8c42',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {totalClips > 0
+                      ? `Unite & delete ${totalClips} clip${totalClips === 1 ? '' : 's'}`
+                      : 'Unite blocks'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
       {resizePending && (
         <AudioClipResizeDialog
           trackId={resizePending.trackId}
