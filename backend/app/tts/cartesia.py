@@ -171,11 +171,12 @@ def synthesize_cartesia(
     *,
     voice_id: str | None = None,
     language: str | None = None,
+    locale: str | None = None,
     model_id: str = "sonic-3.6",
     api_key: str | None = None,
 ) -> bytes:
     """Synthesize speech via Cartesia POST /tts/bytes. Returns WAV bytes."""
-    from app.tts.registry import DEFAULT_CARTESIA_VOICE_ID
+    from app.tts.registry import DEFAULT_CARTESIA_VOICE_ID, normalize_cartesia_locale
 
     key = _require_key(api_key)
     content = text.strip() if isinstance(text, str) else ""
@@ -186,15 +187,20 @@ def synthesize_cartesia(
         if isinstance(voice_id, str) and voice_id.strip()
         else DEFAULT_CARTESIA_VOICE_ID
     )
-    locale = _normalize_language(language)
+    normalized_locale = normalize_cartesia_locale(locale)
+    normalized_language = _normalize_language(language)
     body: dict[str, Any] = {
         "model_id": model_id,
         "transcript": content,
         "voice": {"id": voice},
         "output_format": {"container": "wav", "encoding": "pcm_s16le", "sample_rate": 44100},
     }
-    if locale is not None:
-        body["language"] = locale
+    # Cartesia accepts `language` OR `locale`, never both (400). Locale wins
+    # when both are given; the HTTP API layer rejects the combination earlier.
+    if normalized_locale is not None:
+        body["locale"] = normalized_locale
+    elif normalized_language is not None:
+        body["language"] = normalized_language
     import httpx
 
     try:

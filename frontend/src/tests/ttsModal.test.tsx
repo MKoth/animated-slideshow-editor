@@ -247,6 +247,93 @@ describe('TtsModal seam + mocked voice prompts & TTS', () => {
     expect(callCount).toBe(2)
   })
 
+  it('Cartesia locale override is sent instead of language, mutually exclusive', async () => {
+    const { readOnly, dispatcher, slideId, partId } = makeEngineWithPrompter(
+      'The Spanish verb is correr.',
+      2.0,
+    )
+    const wav = wavBytesForDuration(2.0)
+    let sentBody: Record<string, unknown> | null = null
+    const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.startsWith('/api/voice-prompts'))
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      if (url === '/api/tts/generate') {
+        sentBody = JSON.parse(init?.body as string) as Record<string, unknown>
+        return new Response(wav.buffer as ArrayBuffer, {
+          status: 200,
+          headers: { 'Content-Type': 'audio/wav' },
+        })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', mockFetch)
+    const client = new ApiClient()
+    const tts = new TtsApi(client)
+    const voiceApi = new VoicePromptsApi(client)
+    const onClose = vi.fn()
+    const dispatch = (cmd: Parameters<CommandDispatcher['dispatch']>[0]) => dispatcher.dispatch(cmd)
+
+    const { container } = render(
+      <EngineContext.Provider
+        value={{
+          engine: readOnly,
+          undoStack: new UndoStack(),
+          dispatch: dispatch as unknown as never,
+          persistence: noopPersistence,
+        }}
+      >
+        <TtsModal
+          slideId={slideId}
+          partId={partId}
+          partText="The Spanish verb is correr."
+          partStartTime={0}
+          plannedDuration={2.0}
+          onClose={onClose}
+          ttsProvider={tts}
+          voicePromptsApi={voiceApi}
+        />
+      </EngineContext.Provider>,
+    )
+    await waitFor(() =>
+      expect(container.querySelector('[data-testid="tts-prompt-picker"]')).toBeInTheDocument(),
+    )
+    // Locale picker only exists for the Cartesia provider
+    expect(container.querySelector('[data-testid="tts-locale"]')).toBeNull()
+    fireEvent.change(container.querySelector('[data-testid="tts-provider"]') as HTMLElement, {
+      target: { value: 'cartesia' },
+    })
+    const localeSel = (await waitFor(() => {
+      const el = container.querySelector('[data-testid="tts-locale"]')
+      expect(el).toBeInTheDocument()
+      return el
+    })) as unknown as HTMLSelectElement
+    const languageSel = container.querySelector('[data-testid="tts-language"]') as HTMLSelectElement
+
+    // Picking a locale clears the language override and vice versa
+    fireEvent.change(localeSel, { target: { value: 'en-GB' } })
+    expect(localeSel.value).toBe('en-GB')
+    expect(languageSel.value).toBe('')
+    fireEvent.change(languageSel, { target: { value: 'es' } })
+    expect(languageSel.value).toBe('es')
+    expect((container.querySelector('[data-testid="tts-locale"]') as HTMLSelectElement).value).toBe(
+      '',
+    )
+    fireEvent.change(container.querySelector('[data-testid="tts-locale"]') as HTMLElement, {
+      target: { value: 'en-GB' },
+    })
+
+    fireEvent.click(container.querySelector('[data-testid="tts-generate"]') as HTMLElement)
+    await waitFor(() => expect(onClose).toHaveBeenCalled(), { timeout: 2000 })
+    expect(sentBody).not.toBeNull()
+    expect(sentBody!.locale).toBe('en-GB')
+    // Never send both — Cartesia rejects the combination with a 400
+    expect(sentBody!.language).toBeUndefined()
+  })
+
   it('Voice Prompt CRU via modal: create and share across Slides', async () => {
     const store: Array<Record<string, unknown>> = []
     const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

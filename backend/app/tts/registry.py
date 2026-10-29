@@ -119,6 +119,103 @@ CARTESIA_LANGUAGES: list[str] = [
 #: Default Cartesia voice (user's saved "Mike" voice) used when no voice is chosen.
 DEFAULT_CARTESIA_VOICE_ID: str = "f6184e65-98f2-4e3d-84e5-a2eb198b8688"
 
+#: Regional locale codes accepted by Cartesia `locale` (and `language`) on
+#: POST /tts/bytes, per docs "Locale codes". Base codes from
+#: CARTESIA_LANGUAGES are also accepted; combining `language` + `locale`
+#: in one request is a 400 — our API layer rejects that combination early.
+CARTESIA_LOCALES: list[str] = [
+    "en-GB",
+    "en-US",
+    "en-IN",
+    "en-IE",
+    "en-ZA",
+    "en-NZ",
+    "en-SG",
+    "en-AU",
+    "en-CA",
+    "es-ES",
+    "es-MX",
+    "es-US",
+    "fr-FR",
+    "fr-CA",
+    "nl-NL",
+    "nl-BE",
+    "pt-PT",
+    "pt-BR",
+    "bg-BG",
+    "bn-IN",
+    "cs-CZ",
+    "da-DK",
+    "de-DE",
+    "el-GR",
+    "fi-FI",
+    "gu-IN",
+    "he-IL",
+    "hi-IN",
+    "hr-HR",
+    "hu-HU",
+    "id-ID",
+    "it-IT",
+    "ja-JP",
+    "ka-GE",
+    "kn-IN",
+    "ko-KR",
+    "ml-IN",
+    "mr-IN",
+    "ms-MY",
+    "no-NO",
+    "or-IN",
+    "pa-IN",
+    "pl-PL",
+    "ro-RO",
+    "ru-RU",
+    "sk-SK",
+    "sv-SE",
+    "ta-IN",
+    "te-IN",
+    "th-TH",
+    "tl-PH",
+    "tr-TR",
+    "uk-UA",
+    "ur-IN",
+    "vi-VN",
+    "zh-CN",
+]
+
+
+def normalize_cartesia_locale(raw: str | None) -> str | None:
+    """Normalize to a Cartesia locale/language code, or None (Auto/omit).
+
+    Accepts base codes (``en``) and regional locales (``en-GB``, case- and
+    ``_``-insensitive). Returns the canonical form (``en-GB``). Raises
+    ValueError for unknown codes.
+    """
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped or stripped.lower() == "auto":
+        return None
+    normalized = stripped.replace("_", "-")
+    chunks = normalized.split("-")
+    primary = chunks[0].lower()
+    if primary not in CARTESIA_LANGUAGES:
+        raise ValueError(
+            f"unknown Cartesia locale '{raw}'; base language must be one of "
+            f"{', '.join(sorted(CARTESIA_LANGUAGES))}"
+        )
+    if len(chunks) == 1:
+        return primary
+    if len(chunks) == 2 and chunks[1]:
+        candidate = f"{primary}-{chunks[1].upper()}"
+        if candidate in CARTESIA_LOCALES:
+            return candidate
+        raise ValueError(
+            f"unknown Cartesia locale '{raw}'; supported regional locales include "
+            f"{', '.join(CARTESIA_LOCALES)}"
+        )
+    raise ValueError(f"unknown Cartesia locale '{raw}'")
+
+
 # Auto is not part of _SUPPORTED_LANGUAGES; UI exposes it as "" (empty selects Auto).
 LANGUAGE_AUTO = "auto"
 

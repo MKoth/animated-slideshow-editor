@@ -19,9 +19,11 @@ import { MismatchDialog } from './MismatchDialog'
 import type { EmbeddedAsset } from '../../engine/embeddedAsset'
 import {
   CARTESIA_LANGUAGE_OPTIONS,
+  CARTESIA_LOCALE_OPTIONS,
   LANGUAGE_OPTIONS,
   migrateStoredCartesiaLanguage,
   migrateStoredLanguage,
+  normalizeCartesiaLocale,
 } from '../../engine/ttsLanguages'
 import {
   defaultSpeakerForModel,
@@ -96,6 +98,9 @@ export function TtsModal({
 
   const [selectedPromptId, setSelectedPromptId] = useState<string>('')
   const [language, setLanguage] = useState('')
+  // Cartesia `locale` (e.g. en-GB): what language + region the voice speaks
+  // in. Mutually exclusive with Language — Cartesia 400s when both are sent.
+  const [locale, setLocale] = useState('')
   const [voice, setVoice] = useState('')
   const [voiceReference, setVoiceReference] = useState<string>(TTS_STANDARD_REFERENCE)
   const [hasEditedReference, setHasEditedReference] = useState(false)
@@ -637,11 +642,16 @@ export function TtsModal({
       }
       setStatus('generating')
       setError(null)
+      // Canonicalize locale once so payload + exclusivity below agree.
+      const normalizedLocale = normalizeCartesiaLocale(locale)
       try {
         const asset = await provider.generate({
           text: partText,
           promptId: selectedPromptId || undefined,
-          language: language || undefined,
+          // Locale and language are mutually exclusive on the wire
+          // (Cartesia 400s on both); locale wins when both are set.
+          language: normalizedLocale ? undefined : language || undefined,
+          locale: normalizedLocale || undefined,
           voice: voice || undefined,
           instruction: instruction || undefined,
           referenceAssetId:
@@ -720,6 +730,7 @@ export function TtsModal({
       partText,
       selectedPromptId,
       language,
+      locale,
       voice,
       instruction,
       voiceReference,
@@ -1910,6 +1921,7 @@ export function TtsModal({
                 if (crossing) {
                   setVoice('')
                   setLanguage('')
+                  setLocale('')
                   setTtsVoiceWarning(null)
                 }
               }}
@@ -1943,7 +1955,11 @@ export function TtsModal({
             <select
               data-testid="tts-language"
               value={language}
-              onChange={(e) => setLanguage(e.target.value)}
+              onChange={(e) => {
+                setLanguage(e.target.value)
+                // `language` and `locale` are mutually exclusive on the wire.
+                if (e.target.value) setLocale('')
+              }}
               style={{
                 width: '100%',
                 padding: '6px 8px',
@@ -1962,7 +1978,9 @@ export function TtsModal({
             </select>
             <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
               {isTtsCartesia
-                ? 'Cartesia speaks 44 languages with your saved voice'
+                ? locale
+                  ? 'Cleared — Locale override below takes precedence'
+                  : 'Cartesia speaks 44 languages with your saved voice'
                 : 'Auto uses automatic language detection'}
             </div>
           </label>
@@ -2044,6 +2062,43 @@ export function TtsModal({
             )}
           </label>
         </div>
+        {isTtsCartesia && (
+          <div style={{ marginBottom: 8 }}>
+            <label style={{ fontSize: 11 }}>
+              Locale override (Cartesia)
+              <select
+                data-testid="tts-locale"
+                value={locale}
+                onChange={(e) => {
+                  setLocale(e.target.value)
+                  // `locale` and `language` are mutually exclusive on the wire.
+                  if (e.target.value) setLanguage('')
+                }}
+                style={{
+                  width: '100%',
+                  padding: '6px 8px',
+                  background: '#1e1e1e',
+                  border: '1px solid #444',
+                  borderRadius: 4,
+                  color: '#e0e0e0',
+                  marginTop: 4,
+                }}
+              >
+                {CARTESIA_LOCALE_OPTIONS.map((opt) => (
+                  <option key={opt.value || 'auto'} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+                Sets what language + region the voice speaks in (e.g. en-GB speaks English, foreign
+                words with an English accent). One locale per generation — true code-switching
+                mid-sentence is only guaranteed for Hinglish/Taglish. Clears Language override
+                above.
+              </div>
+            </label>
+          </div>
+        )}
         <div style={{ marginBottom: 8 }}>
           <label style={{ fontSize: 11, opacity: isTtsReferenceEnabled ? 1 : 0.5 }}>
             Voice reference (Base only)

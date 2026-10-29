@@ -376,6 +376,97 @@ def test_cartesia_generate_bad_language_is_422(
     assert r.status_code == 422
 
 
+def test_cartesia_generate_locale_passthrough(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-key-123")
+
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+        content = _fake_wav_bytes()
+        text = ""
+
+    def _fake_post(*a: object, **k: object) -> _Resp:
+        seen["json"] = k.get("json")
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", _fake_post)
+    r = client.post(
+        "/api/tts/generate",
+        json={
+            "text": "The Spanish verb is correr.",
+            "provider": "cartesia",
+            "modelId": "sonic-3.6",
+            "voice": "f6184e65-98f2-4e3d-84e5-a2eb198b8688",
+            "locale": "en-GB",
+        },
+    )
+    assert r.status_code == 200, r.text
+    payload = seen["json"]
+    assert isinstance(payload, dict)
+    # Locale is sent verbatim; language must be absent (Cartesia 400s on both).
+    assert payload["locale"] == "en-GB"
+    assert "language" not in payload
+
+
+def test_cartesia_generate_language_and_locale_is_422(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-key-123")
+    r = client.post(
+        "/api/tts/generate",
+        json={"text": "hi", "provider": "cartesia", "language": "en", "locale": "en-GB"},
+    )
+    assert r.status_code == 422
+
+
+def test_cartesia_generate_bad_locale_is_422(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-key-123")
+    r = client.post(
+        "/api/tts/generate",
+        json={"text": "hi", "provider": "cartesia", "locale": "xx-YY"},
+    )
+    assert r.status_code == 422
+
+
+def test_cartesia_generate_cartesia_only_language_reaches_cartesia(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-key-123")
+
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+        content = _fake_wav_bytes()
+        text = ""
+
+    def _fake_post(*a: object, **k: object) -> _Resp:
+        seen["json"] = k.get("json")
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", _fake_post)
+    # `tl` is Cartesia-only (outside the Qwen 10) — it must pass the API
+    # boundary and be forwarded, not 422.
+    r = client.post(
+        "/api/tts/generate",
+        json={"text": "Kumusta", "provider": "cartesia", "language": "tl"},
+    )
+    assert r.status_code == 200, r.text
+    payload = seen["json"]
+    assert isinstance(payload, dict)
+    assert payload["language"] == "tl"
+    assert "locale" not in payload
+
+
 def _cartesia_style_wav_bytes(seconds: float = 1.0) -> bytes:
     import struct
 

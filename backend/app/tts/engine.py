@@ -287,6 +287,7 @@ class TtsEngine(Protocol):
         voice: str | None = None,
         instruction: str | None = None,
         params: dict[str, object] | None = None,
+        locale: str | None = None,
     ) -> bytes: ...
 
 
@@ -300,8 +301,9 @@ class SineTtsEngine:
         voice: str | None = None,
         instruction: str | None = None,
         params: dict[str, object] | None = None,
+        locale: str | None = None,
     ) -> bytes:
-        # params currently ignored for sine (could affect duration/freq in future)
+        # params/locale currently ignored for sine (could affect duration/freq in future)
         return _wav_bytes_for_text_sine(text, None, language, voice, instruction)
 
 
@@ -322,6 +324,7 @@ class CartesiaTtsEngine:
         voice: str | None = None,
         instruction: str | None = None,
         params: dict[str, object] | None = None,
+        locale: str | None = None,
     ) -> bytes:
         # instruction/params are local-Qwen concepts; Cartesia ignores them.
         from app.tts.cartesia import synthesize_cartesia
@@ -337,6 +340,7 @@ class CartesiaTtsEngine:
             text,
             voice_id=voice_id,
             language=language,
+            locale=locale,
             model_id=self._model_id,
         )
 
@@ -525,9 +529,10 @@ class MlxQwenTtsEngine:
         voice: str | None = None,
         instruction: str | None = None,
         params: dict[str, object] | None = None,
+        locale: str | None = None,
     ) -> bytes:
         model = self._ensure_model()
-        # Map to Qwen conventions
+        # Map to Qwen conventions (locale is a Cartesia-only concept; ignored here)
         qwen_lang = map_language(language)
         qwen_speaker = map_speaker(voice, language)
         # instruction may be None -> default None

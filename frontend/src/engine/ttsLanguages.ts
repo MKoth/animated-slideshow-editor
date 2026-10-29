@@ -101,6 +101,139 @@ export const CARTESIA_LANGUAGE_OPTIONS: Array<{ value: string; label: string }> 
   })),
 ]
 
+/** Regional locale codes accepted by Cartesia `locale` (docs "Locale codes"). */
+export const CARTESIA_LOCALES: readonly string[] = [
+  'en-GB',
+  'en-US',
+  'en-IN',
+  'en-IE',
+  'en-ZA',
+  'en-NZ',
+  'en-SG',
+  'en-AU',
+  'en-CA',
+  'es-ES',
+  'es-MX',
+  'es-US',
+  'fr-FR',
+  'fr-CA',
+  'nl-NL',
+  'nl-BE',
+  'pt-PT',
+  'pt-BR',
+  'bg-BG',
+  'bn-IN',
+  'cs-CZ',
+  'da-DK',
+  'de-DE',
+  'el-GR',
+  'fi-FI',
+  'gu-IN',
+  'he-IL',
+  'hi-IN',
+  'hr-HR',
+  'hu-HU',
+  'id-ID',
+  'it-IT',
+  'ja-JP',
+  'ka-GE',
+  'kn-IN',
+  'ko-KR',
+  'ml-IN',
+  'mr-IN',
+  'ms-MY',
+  'no-NO',
+  'or-IN',
+  'pa-IN',
+  'pl-PL',
+  'ro-RO',
+  'ru-RU',
+  'sk-SK',
+  'sv-SE',
+  'ta-IN',
+  'te-IN',
+  'th-TH',
+  'tl-PH',
+  'tr-TR',
+  'uk-UA',
+  'ur-IN',
+  'vi-VN',
+  'zh-CN',
+]
+
+const CARTESIA_REGION_NAMES: Record<string, string> = {
+  GB: 'UK',
+  US: 'US',
+  IN: 'India',
+  IE: 'Ireland',
+  ZA: 'South Africa',
+  NZ: 'New Zealand',
+  SG: 'Singapore',
+  AU: 'Australia',
+  CA: 'Canada',
+  ES: 'Spain',
+  MX: 'Mexico',
+  FR: 'France',
+  NL: 'Netherlands',
+  BE: 'Belgium',
+  PT: 'Portugal',
+  BR: 'Brazil',
+  BG: 'Bulgaria',
+  CZ: 'Czechia',
+  DK: 'Denmark',
+  DE: 'Germany',
+  GR: 'Greece',
+  FI: 'Finland',
+  IL: 'Israel',
+  HR: 'Croatia',
+  HU: 'Hungary',
+  ID: 'Indonesia',
+  IT: 'Italy',
+  JP: 'Japan',
+  GE: 'Georgia',
+  KR: 'Korea',
+  MY: 'Malaysia',
+  NO: 'Norway',
+  PL: 'Poland',
+  RO: 'Romania',
+  RU: 'Russia',
+  SK: 'Slovakia',
+  SE: 'Sweden',
+  TH: 'Thailand',
+  PH: 'Philippines',
+  TR: 'Türkiye',
+  UA: 'Ukraine',
+  VN: 'Vietnam',
+  CN: 'China',
+}
+
+/** Locale dropdown options for the Cartesia provider (Auto + regional). */
+export const CARTESIA_LOCALE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: 'Auto (same as Language)' },
+  ...CARTESIA_LOCALES.map((locale) => {
+    const [primary, region] = locale.split('-')
+    const base = CARTESIA_LANGUAGE_NAMES[primary] ?? primary
+    const where = (region && CARTESIA_REGION_NAMES[region]) ?? region ?? ''
+    return { value: locale, label: `${base} — ${where} (${locale})` }
+  }),
+]
+
+const CARTESIA_LOCALE_SET = new Set<string>(CARTESIA_LOCALES)
+
+/** Canonicalize a Cartesia locale (`en-gb` → `en-GB`); '' when empty/unknown. */
+export function normalizeCartesiaLocale(raw: string | null | undefined): string {
+  if (raw == null) return ''
+  const stripped = String(raw).trim().replace('_', '-')
+  if (stripped === '' || stripped.toLowerCase() === 'auto') return ''
+  const [primary, region] = stripped.split('-')
+  if (!region) {
+    const iso = primary.toLowerCase()
+    return CARTESIA_ALLOWED_SET.has(iso) ? iso : ''
+  }
+  const candidate = `${primary.toLowerCase()}-${region.toUpperCase()}`
+  return CARTESIA_LOCALE_SET.has(candidate) ? candidate : ''
+}
+
 export function isCartesiaLanguageCode(raw: string | null | undefined): boolean {
   if (raw == null) return false
   return CARTESIA_ALLOWED_SET.has(String(raw).trim().toLowerCase().split('-')[0].split('_')[0])

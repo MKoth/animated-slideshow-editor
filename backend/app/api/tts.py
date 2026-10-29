@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.tts.cartesia import (
     CartesiaError,
@@ -85,6 +85,13 @@ class TTSGenerateRequest(BaseModel):
     text: str = Field(description="text to synthesize")
     promptId: str | None = Field(default=None, description="voice prompt id")
     language: str | None = None
+    locale: str | None = Field(
+        default=None,
+        description=(
+            "Cartesia locale override (e.g. en-GB, es-MX): sets what language "
+            "and region the voice speaks in. Mutually exclusive with language."
+        ),
+    )
     voice: str | None = None
     instruction: str | None = None
     referenceAssetId: str | None = Field(
@@ -116,8 +123,45 @@ class TTSGenerateRequest(BaseModel):
             raise TypeError("language must be a string")
         try:
             return normalize_language_code(v)
+        except ValueError:
+            pass
+        # Fall back to the Cartesia code list: Cartesia-only languages
+        # (e.g. Tagalog `tl`, Hindi `hi`) must pass the API boundary so the
+        # Cartesia layer can forward them; local engines map unknown codes
+        # to Auto via map_language().
+        try:
+            from app.tts.registry import CARTESIA_LANGUAGES
+
+            primary = v.strip().lower().split("-")[0].split("_")[0]
+            if primary in CARTESIA_LANGUAGES:
+                return primary
+        except Exception:
+            pass
+        raise ValueError(
+            f"unknown language code '{v}'; must be Auto, a Qwen language, or a Cartesia language"
+        )
+
+    @field_validator("locale", mode="before")
+    @classmethod
+    def validate_locale(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise TypeError("locale must be a string")
+        try:
+            from app.tts.registry import normalize_cartesia_locale
+
+            return normalize_cartesia_locale(v)
         except ValueError as e:
             raise ValueError(str(e)) from e
+
+    @model_validator(mode="after")
+    def check_language_locale_exclusive(self) -> TTSGenerateRequest:
+        # Cartesia rejects requests carrying both `language` and `locale`
+        # (HTTP 400) — fail fast with a clear 422 instead.
+        if self.language is not None and self.locale is not None:
+            raise ValueError("set either language or locale, never both")
+        return self
 
     @field_validator("modelId", mode="before")
     @classmethod
@@ -669,6 +713,7 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
 
     # Resolve voice prompt if provided and merge overrides
     effective_language: str | None = body.language
+    effective_locale: str | None = body.locale
     effective_voice: str | None = body.voice
     effective_instruction: str | None = body.instruction
     effective_params: dict[str, Any] | None = None
@@ -836,6 +881,7 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
                 effective_voice,
                 effective_instruction,
                 effective_params,
+                effective_locale,
             )
         except Exception as exc:
             # Unwrap HTTPException already
