@@ -159,6 +159,9 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     )
 
     const desc = engine.buildPerSlideExportDescriptor(slide.id, { fps })
+    const sfx = desc.audio.clips.find((clip) => clip.trackId === 'sfx')!
+    expect(sfx.volume).toBeCloseTo(0.15)
+    expect(sfx.filterFragment).toContain('volume=0.15')
     // video+3 audio inputs
     expect(desc.audio.inputs).toEqual(['video', 'audio:voice', 'audio:sfx', 'audio:music'])
     expect(desc.audio.laneInputs).toBe(3)

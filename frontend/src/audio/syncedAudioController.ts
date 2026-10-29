@@ -18,6 +18,7 @@ import {
 import { AudioBufferCache } from '../engine/audioBufferCache'
 import type { EnginePublic } from '../engine'
 import { getAudioClipSourceDuration } from '../engine/audioClip'
+import { TRACK_GAINS } from './audioMix'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 import {
   getTimeRatioForPlaybackRate,
@@ -828,8 +829,8 @@ export class SyncedAudioController {
     if (duration <= 1e-9) return
     if (offset < clip.sourceStart || offset >= clip.sourceEnd) return
 
-    // Gain = volume*trackGain*masterGain (trackGain/masterGain default 1)
-    const gainValue = clip.volume * 1 * 1
+    // Keep SFX lower than narration consistently across every project/slide.
+    const gainValue = clip.volume * (TRACK_GAINS[clip.trackId] ?? 1)
 
     try {
       const source = ctx.createBufferSource()

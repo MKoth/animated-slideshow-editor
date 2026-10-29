@@ -10,6 +10,7 @@ import type { Slide } from './slide'
 import type { Project } from './project'
 import type { SceneEffect } from './sceneEffect'
 import { sceneEffectToJSON } from './sceneEffect'
+import { TRACK_GAINS } from '../audio/audioMix'
 
 // ---------------------------------------------------------------------------
 // Constants — Spec 15.11 contract
@@ -223,8 +224,8 @@ export interface ExportJobDescriptor {
 function buildPerClipFilter(clip: AudioClip, slideDuration: number): string {
   const parts: string[] = []
   parts.push(EXPORT_AFORMAT_FILTER)
-  // volume per-clip (deterministic lane mix volume*trackGain*masterGain, but mixer is later amix; here just volume)
-  parts.push(`volume=${clip.volume}`)
+  // Match preview: SFX is attenuated relative to voice and music.
+  parts.push(`volume=${clip.volume * (TRACK_GAINS[clip.trackId] ?? 1)}`)
   // rubberband when playbackRate !=1 or pitch !=0 (tempo preserves pitch, pitch shifts without duration change)
   const hasTempo = Math.abs(clip.playbackRate - 1) > 1e-9
   const hasPitch = Math.abs(clip.pitchSemitones ?? 0) > 1e-9
@@ -288,7 +289,7 @@ export function buildPerSlideExportDescriptor(
       timelineStart: clip.timelineStart,
       sourceStart: clip.sourceStart,
       sourceEnd: clip.sourceEnd,
-      volume: clip.volume,
+      volume: clip.volume * (TRACK_GAINS[clip.trackId] ?? 1),
       muted: clip.muted,
       playbackRate: rate,
       pitchSemitones: pitch,
