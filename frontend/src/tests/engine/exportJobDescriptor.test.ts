@@ -169,6 +169,7 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     expect(desc.audio.amix).toBe(EXPORT_AMIX_FILTER)
     expect(desc.audio.loudnorm).toBe(EXPORT_LOUDNORM_FILTER)
     expect(desc.audio.filterComplex).toContain(EXPORT_AMIX_FILTER)
+    expect(desc.audio.filterComplex).toContain('normalize=0')
     expect(desc.audio.filterComplex).toContain(EXPORT_LOUDNORM_FILTER)
     expect(desc.audio.filterComplex).toContain('aformat')
     expect(desc.audio.filterComplex).toContain('volume=')

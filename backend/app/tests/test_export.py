@@ -93,7 +93,9 @@ def _make_descriptor(fps: float = 30, durations: list[float] | None = None) -> d
         filter_complex_parts.append("aformat=sample_fmts=fltp:channel_layouts=stereo")
         filter_complex_parts.append("volume handling via per-clip fragments")
         filter_complex_parts.append(f"atrim=end={dur}")
-        filter_complex_parts.append("amix=inputs=3:duration=longest:dropout_transition=0")
+        filter_complex_parts.append(
+            "amix=inputs=3:duration=longest:dropout_transition=0:normalize=0"
+        )
         filter_complex_parts.append("loudnorm=I=-16:TP=-1.5:LRA=11")
         filter_complex = "; ".join(filter_complex_parts)
 
@@ -127,7 +129,7 @@ def _make_descriptor(fps: float = 30, durations: list[float] | None = None) -> d
                     "clips": clips,
                     "laneInputs": 3,
                     "filterComplex": filter_complex,
-                    "amix": "amix=inputs=3:duration=longest:dropout_transition=0",
+                    "amix": "amix=inputs=3:duration=longest:dropout_transition=0:normalize=0",
                     "loudnorm": "loudnorm=I=-16:TP=-1.5:LRA=11",
                     "atrim": f"atrim=end={dur}",
                     "inputs": ["video", "audio:voice", "audio:sfx", "audio:music"],
@@ -279,7 +281,9 @@ def test_export_descriptor_shape_validation_video_plus_3_audio_inputs(client: Te
     desc2["slides"][0]["audio"]["filterComplex"] = desc2["slides"][0]["audio"][
         "filterComplex"
     ].replace("amix=inputs=3", "amix=inputs=2")
-    desc2["slides"][0]["audio"]["amix"] = "amix=inputs=2:duration=longest:dropout_transition=0"
+    desc2["slides"][0]["audio"]["amix"] = (
+        "amix=inputs=2:duration=longest:dropout_transition=0:normalize=0"
+    )
     r2 = client.post("/api/export/jobs", json=desc2)
     assert r2.status_code == 422
 
@@ -301,7 +305,7 @@ def test_export_amix_loudnorm_concat_yuv420p_faststart_required(client: TestClie
     # remove amix from filterComplex
     desc["slides"][0]["audio"]["filterComplex"] = desc["slides"][0]["audio"][
         "filterComplex"
-    ].replace("amix=inputs=3:duration=longest:dropout_transition=0", "no-amix")
+    ].replace("amix=inputs=3:duration=longest:dropout_transition=0:normalize=0", "no-amix")
     r = client.post("/api/export/jobs", json=desc)
     assert r.status_code == 422
     assert "amix" in r.text.lower()

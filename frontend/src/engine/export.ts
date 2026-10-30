@@ -20,7 +20,8 @@ export const EXPORT_VIDEO_PIX_FMT = 'yuv420p' as const
 export const EXPORT_VIDEO_MOVFLAGS = '+faststart' as const
 export const EXPORT_VIDEO_CODEC = 'libx264' as const
 export const EXPORT_AUDIO_LANES = AUDIO_TRACK_IDS // ['voice','sfx','music'] fixed, no dynamic bus
-export const EXPORT_AMIX_FILTER = 'amix=inputs=3:duration=longest:dropout_transition=0' as const
+export const EXPORT_AMIX_FILTER =
+  'amix=inputs=3:duration=longest:dropout_transition=0:normalize=0' as const
 export const EXPORT_LOUDNORM_FILTER = 'loudnorm=I=-16:TP=-1.5:LRA=11' as const
 export const EXPORT_AFORMAT_FILTER = 'aformat=sample_fmts=fltp:channel_layouts=stereo' as const
 export const EXPORT_CONCAT_METHOD = 'concat demuxer' as const

@@ -81,7 +81,7 @@ def _make_descriptor(
             "aformat=sample_fmts=fltp:channel_layouts=stereo",
             "volume handling via per-clip fragments",
             f"atrim=end={dur}",
-            "amix=inputs=3:duration=longest:dropout_transition=0",
+            "amix=inputs=3:duration=longest:dropout_transition=0:normalize=0",
             "loudnorm=I=-16:TP=-1.5:LRA=11",
         ]
         slides.append(
@@ -114,7 +114,7 @@ def _make_descriptor(
                     "clips": clips,
                     "laneInputs": 3,
                     "filterComplex": "; ".join(parts),
-                    "amix": "amix=inputs=3:duration=longest:dropout_transition=0",
+                    "amix": "amix=inputs=3:duration=longest:dropout_transition=0:normalize=0",
                     "loudnorm": "loudnorm=I=-16:TP=-1.5:LRA=11",
                     "atrim": f"atrim=end={dur}",
                     "inputs": ["video", "audio:voice", "audio:sfx", "audio:music"],
@@ -219,6 +219,98 @@ def test_slide_audio_is_padded_to_slide_duration(
     command = ffmpeg_commands[0]
     filter_graph = command[command.index("-filter_complex") + 1]
     assert "apad=whole_dur=10.0" in filter_graph
+    if clip_count > 1:
+        # Multi-clip mixes must not rescale inputs (normalize=0): preview sums
+        # gains without division, and per-slide division caused boundary jumps.
+        assert "normalize=0" in filter_graph
+
+
+def test_multi_clip_mix_does_not_divide_levels(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ffmpeg_commands: list[list[str]] = []
+    monkeypatch.setattr(
+        export_module,
+        "_run_ffmpeg",
+        lambda args, timeout=120: ffmpeg_commands.append(args),
+    )
+    slide = {
+        "slideId": "slide-two-clips",
+        "duration": 4.0,
+        "audio": {
+            "clips": [
+                {
+                    "assetId": "a",
+                    "muted": False,
+                    "sourceStart": 0.0,
+                    "sourceEnd": 2.0,
+                    "timelineStart": 0.0,
+                    "volume": 1.0,
+                },
+                {
+                    "assetId": "b",
+                    "muted": False,
+                    "sourceStart": 0.0,
+                    "sourceEnd": 2.0,
+                    "timelineStart": 1.0,
+                    "volume": 0.5,
+                },
+            ]
+        },
+    }
+    export_module._build_slide_audio(
+        slide,
+        {"a": str(tmp_path / "a.wav"), "b": str(tmp_path / "b.wav")},
+        tmp_path,
+        use_rubberband=False,
+    )
+    filter_graph = ffmpeg_commands[0][ffmpeg_commands[0].index("-filter_complex") + 1]
+    assert "amix=inputs=2" in filter_graph
+    assert "normalize=0" in filter_graph
+
+
+def test_fade_out_starts_at_clip_end() -> None:
+    clip = {
+        "assetId": "a",
+        "muted": False,
+        "sourceStart": 0.0,
+        "sourceEnd": 2.0,
+        "timelineStart": 0.0,
+        "volume": 1.0,
+        "playbackRate": 1.0,
+        "fadeOut": 0.5,
+    }
+    chain, _ = export_module._clip_audio_filter(clip, 4.0, False)
+    # Regression: st=0 muted everything past the fade duration in export
+    # while the editor preview faded only at the end.
+    assert "afade=t=out:st=1.5:d=0.5" in chain
+    assert "afade=t=out:st=0:" not in chain
+
+
+def test_dual_pass_loudnorm_is_linear(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        export_module,
+        "_measure_loudnorm",
+        lambda _source: {
+            "input_i": "-21.75",
+            "input_tp": "-18.06",
+            "input_lra": "0.00",
+            "input_thresh": "-31.75",
+            "target_offset": "0.05",
+        },
+    )
+    args = export_module._dual_pass_loudnorm_args(__import__("pathlib").Path("x"))
+    assert args[0] == "-filter:a"
+    assert "linear=true" in args[1]
+    assert "measured_I=-21.75" in args[1]
+
+
+def test_dual_pass_loudnorm_falls_back_to_single_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(export_module, "_measure_loudnorm", lambda _source: None)
+    args = export_module._dual_pass_loudnorm_args(__import__("pathlib").Path("x"))
+    assert args == ["-filter:a", export_module.EXPECTED_LOUDNORM]
 
 
 def test_sanitize_basename() -> None:

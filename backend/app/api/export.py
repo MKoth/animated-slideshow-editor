@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import re
 import shutil
 import subprocess
@@ -218,7 +219,7 @@ class ExportAudioUploadResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 FIXED_LANES = {"voice", "sfx", "music"}
-EXPECTED_AMIX = "amix=inputs=3:duration=longest:dropout_transition=0"
+EXPECTED_AMIX = "amix=inputs=3:duration=longest:dropout_transition=0:normalize=0"
 EXPECTED_LOUDNORM = "loudnorm=I=-16:TP=-1.5:LRA=11"
 EXPECTED_PIX_FMT = "yuv420p"
 EXPECTED_MOVFLAGS = "+faststart"
@@ -560,7 +561,13 @@ def _run_ffmpeg(args: list[str], timeout: int = 120) -> None:
 def _encode_video_from_frames(
     frames_dir: Path, frame_count: int, fps: float, out_path: Path
 ) -> None:
-    """Encode 1920x1080 letterboxed H.264 from a %06d.png image sequence."""
+    """Encode 1920x1080 letterboxed H.264 from a %06d.png image sequence.
+
+    High-quality text settings (same 1920x1080 resolution): CRF 18 instead of
+    the libx264 default 23, preset slow, and lanczos upscale. yuv420p is kept
+    for MP4 compatibility — it halves chroma resolution, which is why sharp
+    text edges need the extra luma quality.
+    """
     pattern = str(frames_dir / "%06d.png")
     _run_ffmpeg(
         [
@@ -577,12 +584,16 @@ def _encode_video_from_frames(
             str(frame_count),
             "-vf",
             (
-                "scale=1920:1080:force_original_aspect_ratio=decrease,"
+                "scale=1920:1080:flags=lanczos:force_original_aspect_ratio=decrease,"
                 "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,"
                 "format=yuv420p"
             ),
             "-c:v",
             "libx264",
+            "-preset",
+            "slow",
+            "-crf",
+            "18",
             "-pix_fmt",
             "yuv420p",
             "-movflags",
@@ -637,9 +648,18 @@ def _clip_audio_filter(
     fade_in = clip.get("fadeIn")
     fade_out = clip.get("fadeOut")
     if isinstance(fade_in, (int, float)) and fade_in > 0:
-        parts.append(f"afade=t=in:st=0:d={fade_in}")
+        # Stored fades are source seconds (preview divides by playbackRate);
+        # the chain below already applied tempo, so convert to playback seconds.
+        fade_in_pb = fade_in / rate if rate else fade_in
+        parts.append(f"afade=t=in:st=0:d={fade_in_pb}")
     if isinstance(fade_out, (int, float)) and fade_out > 0:
-        parts.append(f"afade=t=out:st=0:d={fade_out}")
+        fade_out_pb = fade_out / rate if rate else fade_out
+        src_dur = max(0.0, source_end - source_start)
+        playback_dur = src_dur / rate if rate else src_dur
+        room = max(0.0, slide_duration - timeline_start)
+        trimmed_pb = min(playback_dur, room)
+        st_out = max(0.0, trimmed_pb - fade_out_pb)
+        parts.append(f"afade=t=out:st={st_out}:d={fade_out_pb}")
     delay_ms = max(0, round(timeline_start * 1000))
     parts.append(f"adelay={delay_ms}|{delay_ms}")
     parts.append(f"atrim=end={slide_duration}")
@@ -695,7 +715,7 @@ def _build_slide_audio(
             filter_parts.append(f"[{idx}:a]{chain}[c{idx}]")
         labels = "".join(f"[c{idx}]" for idx in range(len(clips)))
         filter_parts.append(
-            f"{labels}amix=inputs={len(clips)}:duration=longest:dropout_transition=0,"
+            f"{labels}amix=inputs={len(clips)}:duration=longest:dropout_transition=0:normalize=0,"
             f"atrim=end={duration},apad=whole_dur={duration},asetpts=PTS-STARTPTS[mix]"
         )
         filter_parts.append(
@@ -782,6 +802,66 @@ def _try_ffmpeg_mp4(slide_durations: list[float]) -> bytes | None:
         return None
 
 
+def _measure_loudnorm(source: Path) -> dict[str, str] | None:
+    """First loudnorm pass: measure integrated loudness. Returns None when unmeasurable."""
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-i",
+                str(source),
+                "-filter:a",
+                f"{EXPECTED_LOUDNORM}:print_format=json",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        text = (result.stderr or "") + (result.stdout or "")
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        data = json.loads(text[start : end + 1])
+        required = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
+        if any(k not in data for k in required):
+            return None
+        # Silence measures -inf; linear correction would produce NaN — bail out.
+        if any("inf" in str(data[k]).lower() or "nan" in str(data[k]).lower() for k in required):
+            return None
+        return {k: str(data[k]) for k in required}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _dual_pass_loudnorm_args(source: Path) -> list[str]:
+    """Static (linear) loudness correction from measured values.
+
+    Single-pass loudnorm rides the gain continuously, which pumps narration
+    with silence gaps up and down. The measured linear pass applies one
+    constant gain for the whole timeline, so per-slide levels stay as mixed.
+    Falls back to single-pass when measurement fails.
+    """
+    measured = _measure_loudnorm(source)
+    if measured is None:
+        return ["-filter:a", EXPECTED_LOUDNORM]
+    linear = (
+        "loudnorm=I=-16:TP=-1.5:LRA=11"
+        f":measured_I={measured['input_i']}"
+        f":measured_TP={measured['input_tp']}"
+        f":measured_LRA={measured['input_lra']}"
+        f":measured_thresh={measured['input_thresh']}"
+        f":offset={measured['target_offset']}"
+        ":linear=true"
+    )
+    return ["-filter:a", linear]
+
+
 def _encode_job_mp4(record: dict[str, Any]) -> bytes | None:
     """Real encode from uploaded frames + uploaded audio. Returns None when FFmpeg is missing.
 
@@ -840,10 +920,11 @@ def _encode_job_mp4(record: dict[str, Any]) -> bytes | None:
         if not c.get("muted") and c.get("assetId") in audio_files
     )
     # loudnorm on an all-silence track yields NaN (measured -inf); skip it there.
-    # Silence stays silence, still AAC + faststart.
+    # Silence stays silence, still AAC + faststart. Otherwise use the measured
+    # linear pass so narration levels stay flat instead of pumping.
     final_audio_args: list[str] = []
     if has_audio:
-        final_audio_args = ["-filter:a", EXPECTED_LOUDNORM]
+        final_audio_args = _dual_pass_loudnorm_args(full_audio)
     final_path = work_dir / "final.mp4"
     _run_ffmpeg(
         [

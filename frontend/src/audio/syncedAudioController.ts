@@ -886,7 +886,7 @@ export class SyncedAudioController {
     if (duration <= 1e-9) return
     if (offset < stretchedSourceStart || offset >= stretchedSourceEnd) return
 
-    const gainValue = clip.volume * 1 * 1
+    const gainValue = clip.volume * (TRACK_GAINS[clip.trackId] ?? 1)
     try {
       const source = ctx.createBufferSource()
       const gainNode = ctx.createGain()
