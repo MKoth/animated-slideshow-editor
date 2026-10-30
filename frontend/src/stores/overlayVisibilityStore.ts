@@ -7,6 +7,7 @@ export interface OverlayVisibilityState {
   readonly bonesVisible: boolean
   readonly ikHandlesVisible: boolean
   readonly poleHandlesVisible: boolean
+  readonly cameraFrameVisible: boolean
   readonly vertexSize: number
   setGridVisible(visible: boolean): void
   toggleGridVisible(): void
@@ -18,6 +19,8 @@ export interface OverlayVisibilityState {
   toggleIkHandlesVisible(): void
   setPoleHandlesVisible(visible: boolean): void
   togglePoleHandlesVisible(): void
+  setCameraFrameVisible(visible: boolean): void
+  toggleCameraFrameVisible(): void
   setVertexSize(size: number): void
 }
 
@@ -29,6 +32,7 @@ export const useOverlayVisibilityStore = create<OverlayVisibilityState>()(
       bonesVisible: true,
       ikHandlesVisible: true,
       poleHandlesVisible: true,
+      cameraFrameVisible: true,
       vertexSize: 6,
       setGridVisible: (visible) => set({ gridVisible: visible }),
       toggleGridVisible: () => set((state) => ({ gridVisible: !state.gridVisible })),
@@ -41,6 +45,9 @@ export const useOverlayVisibilityStore = create<OverlayVisibilityState>()(
       setPoleHandlesVisible: (visible) => set({ poleHandlesVisible: visible }),
       togglePoleHandlesVisible: () =>
         set((state) => ({ poleHandlesVisible: !state.poleHandlesVisible })),
+      setCameraFrameVisible: (visible) => set({ cameraFrameVisible: visible }),
+      toggleCameraFrameVisible: () =>
+        set((state) => ({ cameraFrameVisible: !state.cameraFrameVisible })),
       setVertexSize: (size) => set({ vertexSize: Math.min(12, Math.max(2, Math.round(size))) }),
     }),
     {
@@ -51,6 +58,7 @@ export const useOverlayVisibilityStore = create<OverlayVisibilityState>()(
         bonesVisible: state.bonesVisible,
         ikHandlesVisible: state.ikHandlesVisible,
         poleHandlesVisible: state.poleHandlesVisible,
+        cameraFrameVisible: state.cameraFrameVisible,
         vertexSize: state.vertexSize,
       }),
     },

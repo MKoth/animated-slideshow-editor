@@ -36,12 +36,16 @@ export function CanvasToolbar() {
   const bonesVisible = useOverlayVisibilityStore((state) => state.bonesVisible)
   const ikHandlesVisible = useOverlayVisibilityStore((state) => state.ikHandlesVisible)
   const poleHandlesVisible = useOverlayVisibilityStore((state) => state.poleHandlesVisible)
+  const cameraFrameVisible = useOverlayVisibilityStore((state) => state.cameraFrameVisible)
   const toggleGridVisible = useOverlayVisibilityStore((state) => state.toggleGridVisible)
   const toggleMeshVisible = useOverlayVisibilityStore((state) => state.toggleMeshVisible)
   const toggleBonesVisible = useOverlayVisibilityStore((state) => state.toggleBonesVisible)
   const toggleIkHandlesVisible = useOverlayVisibilityStore((state) => state.toggleIkHandlesVisible)
   const togglePoleHandlesVisible = useOverlayVisibilityStore(
     (state) => state.togglePoleHandlesVisible,
+  )
+  const toggleCameraFrameVisible = useOverlayVisibilityStore(
+    (state) => state.toggleCameraFrameVisible,
   )
 
   const handleModeChange = (newMode: EditingMode) => {
@@ -159,6 +163,14 @@ export function CanvasToolbar() {
         >
           <input type="checkbox" checked={poleHandlesVisible} onChange={togglePoleHandlesVisible} />
           Pole Vectors
+        </label>
+        <label
+          className="canvas-toolbar__toggle"
+          style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}
+          title="Show the animation camera frame (what export sees) while navigating freely"
+        >
+          <input type="checkbox" checked={cameraFrameVisible} onChange={toggleCameraFrameVisible} />
+          Camera frame
         </label>
         {boneEditing && (
           <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginLeft: 8 }}>

@@ -37,6 +37,7 @@ import { BoneEditOverlay } from './boneEditOverlay'
 import { OverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
 import { IkOverlay } from './ikOverlay'
 import { IkInteraction } from './ikInteraction'
+import { CameraFrameOverlay } from './cameraFrameOverlay'
 import { MarqueeOverlay } from './marqueeOverlay'
 import { PivotInteraction } from './pivotInteraction'
 import { HandleInteraction } from './handleInteraction'
@@ -104,6 +105,7 @@ export class Renderer {
   #ikOverlay: IkOverlay | null = null
   #ikInteraction: IkInteraction | null = null
   #marqueeOverlay: MarqueeOverlay | null = null
+  #cameraFrame: CameraFrameOverlay | null = null
   #pivotInteraction: PivotInteraction | null = null
   #handleInteraction: HandleInteraction | null = null
   #transformSource: EvaluatedWorldTransformSource | null = null
@@ -111,6 +113,7 @@ export class Renderer {
   readonly #cameraScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #viewportScratch: ViewportTransform = { x: 0, y: 0, scaleX: 1, scaleY: 1 }
   #cameraPreview: ViewportTransform | null = null
+  readonly #cameraFrameScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #viewportNavigations = new Map<string, ViewportTransform>()
   #unsubscribe: Unsubscribe | null = null
   #unsubscribeTime: Unsubscribe | null = null
@@ -226,12 +229,14 @@ export class Renderer {
         if (this.#grid) this.#grid.graphics.visible = state.gridVisible
         this.#sceneRenderer?.setBonesVisible(state.bonesVisible)
         this.#sceneRenderer?.setGhostsVisible(state.ikHandlesVisible, state.poleHandlesVisible)
+        this.#cameraFrame?.setVisible(state.cameraFrameVisible)
         this.#meshOverlay?.redraw()
         this.#shapeGhostOverlay?.redraw()
         this.#boneEditOverlay?.redraw()
       })
       // Initialize visibility
       this.#grid.graphics.visible = OverlayVisibilityStore.getState().gridVisible
+      this.#cameraFrame?.setVisible(OverlayVisibilityStore.getState().cameraFrameVisible)
       this.#sceneRenderer?.setBonesVisible(OverlayVisibilityStore.getState().bonesVisible)
       this.#sceneRenderer?.setGhostsVisible(
         OverlayVisibilityStore.getState().ikHandlesVisible,
@@ -300,6 +305,11 @@ export class Renderer {
       this.#guideOverlay = new GuideOverlay(this.#pixi, world, () => this.#cameraTransform())
       this.#guideOverlay.attach()
       this.#guideOverlay.bringToFront()
+
+      this.#cameraFrame = new CameraFrameOverlay(this.#pixi, world, () => this.#cameraTransform())
+      this.#cameraFrame.attach()
+      this.#cameraFrame.bringToFront()
+      this.#cameraFrame.setVisible(OverlayVisibilityStore.getState().cameraFrameVisible)
 
       this.#meshOverlay = new MeshOverlay({
         pixi: this.#pixi,
@@ -645,6 +655,10 @@ export class Renderer {
     this.#selectionOverlay = null
     this.#guideOverlay?.detach()
     this.#guideOverlay = null
+    this.#cameraFrame?.detach()
+    this.#cameraFrame = null
+    this.#marqueeOverlay?.detach()
+    this.#marqueeOverlay = null
     this.#meshOverlay?.detach()
     this.#meshOverlay = null
     this.#shapeGhostOverlay?.detach()
@@ -745,6 +759,7 @@ export class Renderer {
         nodeCount: sceneRenderer.renderedNodeCount,
       })
     }
+    this.#updateCameraFrameOverlay(app.screen.width, app.screen.height)
     this.#brushOverlay?.handleTick()
     this.#meshOverlay?.handleTick()
     this.#selectionOverlay?.handleTick()
@@ -752,6 +767,7 @@ export class Renderer {
     this.#boneEditOverlay?.handleTick()
     this.#guideOverlay?.handleTick()
     this.#marqueeOverlay?.handleTick()
+    this.#cameraFrame?.handleTick()
   }
 
   #cameraTransform(): ViewportTransform | null {
@@ -1028,6 +1044,7 @@ export class Renderer {
       this.#thumbnails.setBoundSlideId(slide ? slide.id : null)
       this.#selectionOverlay?.bringToFront()
       this.#guideOverlay?.bringToFront()
+      this.#cameraFrame?.bringToFront()
       this.#shapeGhostOverlay?.bringToFront()
       this.#meshOverlay?.bringToFront()
       this.#weightPaintOverlay?.bringToFront()
@@ -1038,6 +1055,69 @@ export class Renderer {
       this.#ikOverlay?.bringToFront()
       useSelectionStore.getState().clear()
     }
+  }
+
+  #updateCameraFrameOverlay(viewWidth: number, viewHeight: number): void {
+    const frame = this.#cameraFrame
+    if (!frame) {
+      return
+    }
+    if (!OverlayVisibilityStore.getState().cameraFrameVisible) {
+      frame.setVisible(false)
+      frame.clear()
+      return
+    }
+    if (useUiStore.getState().cameraAnimationMode) {
+      frame.setVisible(false)
+      frame.clear()
+      return
+    }
+    const cameraNode = this.#sceneRenderer?.boundCamera ?? null
+    const slideId = this.#sceneRenderer?.boundSlideId ?? null
+    if (!cameraNode || !slideId) {
+      frame.setVisible(false)
+      frame.clear()
+      return
+    }
+    let authored
+    try {
+      authored = this.#engine.evaluateNode(
+        cameraNode.id,
+        this.#currentTime.getTime(slideId),
+        this.#cameraFrameScratch,
+      )
+    } catch {
+      frame.setVisible(false)
+      frame.clear()
+      return
+    }
+    const ax = authored.transform.x
+    const ay = authored.transform.y
+    const asx = authored.transform.scaleX
+    const asy = authored.transform.scaleY
+    if (
+      !Number.isFinite(ax) ||
+      !Number.isFinite(ay) ||
+      !Number.isFinite(asx) ||
+      !Number.isFinite(asy) ||
+      asx <= 0 ||
+      asy <= 0 ||
+      !Number.isFinite(viewWidth) ||
+      !Number.isFinite(viewHeight) ||
+      viewWidth <= 0 ||
+      viewHeight <= 0
+    ) {
+      frame.setVisible(false)
+      frame.clear()
+      return
+    }
+    frame.setVisible(true)
+    frame.show({
+      minX: ax,
+      minY: ay,
+      maxX: ax + viewWidth / asx,
+      maxY: ay + viewHeight / asy,
+    })
   }
 
   /**
