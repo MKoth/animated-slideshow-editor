@@ -487,6 +487,8 @@ export interface BoardRelayoutInput {
   readonly basePromptBlockId: string
   readonly subBlockIds: readonly string[]
   readonly subMarkNames: readonly string[]
+  /** First live prompt time; normally zero, but retained on board re-apply. */
+  readonly promptStartTime?: number
   /**
    * Per-block voice windows. Estimates at plan time; live actuals (TTS
    * lengths) at board re-apply — the layout is a pure function of these
@@ -514,8 +516,15 @@ export function relayoutBoardSource(input: BoardRelayoutInput): {
   padded: boolean
   partDurations: readonly number[]
 } {
-  const prompterDuration = input.partDurations.reduce((sum, value) => sum + value, 0)
-  return buildBoardSource({ ...input, prompterDuration, partEstimates: input.partDurations })
+  const promptStartTime = input.promptStartTime ?? 0
+  const prompterDuration =
+    promptStartTime + input.partDurations.reduce((sum, value) => sum + value, 0)
+  return buildBoardSource({
+    ...input,
+    promptStartTime,
+    prompterDuration,
+    partEstimates: input.partDurations,
+  })
 }
 
 function buildBoardSource(input: {
@@ -537,6 +546,7 @@ function buildBoardSource(input: {
   basePromptBlockId: string
   subBlockIds: readonly string[]
   subMarkNames: readonly string[]
+  promptStartTime?: number
   partEstimates: readonly number[]
   assetNameForPlaced: (slug: string) => string
   stepIndex: number
@@ -556,6 +566,7 @@ function buildBoardSource(input: {
     basePromptBlockId,
     subBlockIds,
     subMarkNames,
+    promptStartTime = 0,
     partEstimates,
     assetNameForPlaced,
     stepIndex,
@@ -1093,7 +1104,7 @@ function buildBoardSource(input: {
   const partStarts: number[] = []
   const partEnds: number[] = []
   {
-    let cursor = 0
+    let cursor = promptStartTime
     for (const dur of partDurations) {
       partStarts.push(cursor)
       cursor += dur
@@ -1172,6 +1183,7 @@ function buildBoardSource(input: {
   const lines: string[] = []
   lines.push(`script "${escapeQuoted(slideName)}" from 0`)
   lines.push('defaults { duration: 0.5s, ease: easeInOut }')
+  lines.push('setCamera(-236, 10, 0.583)')
   lines.push(
     `create asset "${BG_ASSET}" as background at (${BG_AT.x}, ${BG_AT.y}) { scaleX: ${BG_SCALE}, scaleY: ${BG_SCALE} }`,
   )
@@ -1507,7 +1519,8 @@ function buildBoardSource(input: {
     lines.push(`mark("${markNameForPart(0)}")`)
   } else {
     subMarkNames.forEach((mark, partIndex) => {
-      if (partIndex === 0) lines.push(`mark("${mark}")`)
+      if (partIndex === 0 && promptStartTime <= 0) lines.push(`mark("${mark}")`)
+      else if (partIndex === 0) lines.push(`at(${fmt(promptStartTime)}) mark("${mark}")`)
       else lines.push(`at(${fmt(partStarts[partIndex] ?? 0)}) mark("${mark}")`)
     })
   }

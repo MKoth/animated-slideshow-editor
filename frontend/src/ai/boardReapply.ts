@@ -36,6 +36,8 @@ export interface BoardReapplyPlan {
   readonly padded: boolean
   /** Live prompts end (max part end — the variable length TTS produced). */
   readonly livePromptsEnd: number
+  /** Prompt marks were proportionally redistributed because part counts changed. */
+  readonly timingRedistributed: boolean
   /**
    * Slide length the re-apply writes: the prompts end plus the 1s tail
    * (board teardown included when it outruns the voice).
@@ -58,30 +60,49 @@ export type BoardReapplyPlanResult =
 export function planBoardReapply(input: BoardReapplyPlanInput): BoardReapplyPlanResult {
   const { planSlide, step, liveParts } = input
   const plannedCount = planSlide.prompterParts.length
-  if (liveParts.length !== plannedCount) {
-    return {
-      ok: false,
-      error:
-        `Step ${planSlide.position}: ${liveParts.length} live prompt block(s) vs ${plannedCount} planned — ` +
-        `blocks were split or merged since Step 1. Re-apply prompter text first (drops TTS audio), then TTS, then board. Nothing executed.`,
-    }
-  }
   if (liveParts.length === 0) {
     return {
       ok: false,
       error: `Step ${planSlide.position} has no prompt blocks — apply prompter text first. Nothing executed.`,
     }
   }
-  const durations = liveParts.map((part) => part.duration)
+  const liveStart = Math.min(...liveParts.map((part) => part.startTime))
+  const liveEnd = Math.max(...liveParts.map((part) => part.endTime))
+  const liveSpan = liveEnd - liveStart
   if (
-    durations.some((d) => typeof d !== 'number' || !Number.isFinite(d) || d < 0) ||
-    durations.reduce((sum, d) => sum + d, 0) <= 0
+    liveParts.some(
+      (part) =>
+        !Number.isFinite(part.startTime) ||
+        !Number.isFinite(part.endTime) ||
+        part.endTime < part.startTime,
+    ) ||
+    !Number.isFinite(liveSpan) ||
+    liveSpan <= 0
+  ) {
+    return {
+      ok: false,
+      error: `Step ${planSlide.position}: live prompt blocks have no usable time span. Nothing executed.`,
+    }
+  }
+  const timingRedistributed = liveParts.length !== plannedCount
+  const weights = timingRedistributed
+    ? planSlide.prompterParts.map((part) => part.duration)
+    : liveParts.map((part) => part.duration)
+  const weightTotal = weights.reduce((sum, weight) => sum + weight, 0)
+  if (
+    weights.some((weight) => !Number.isFinite(weight) || weight < 0) ||
+    !Number.isFinite(weightTotal) ||
+    weightTotal <= 0
   ) {
     return {
       ok: false,
       error: `Step ${planSlide.position}: live prompt blocks have no usable duration. Nothing executed.`,
     }
   }
+  // Keep known planned proportions when the user split/merged live prompt
+  // blocks. Otherwise retain actual relative TTS lengths. In both cases map
+  // those windows over the complete live prompt span (first start → last end).
+  const durations = weights.map((weight) => (weight / weightTotal) * liveSpan)
   const built = relayoutBoardSource({
     slideName: planSlide.slideName,
     step,
@@ -90,18 +111,19 @@ export function planBoardReapply(input: BoardReapplyPlanInput): BoardReapplyPlan
     subBlockIds: planSlide.prompterParts.map((part) => part.promptBlockId),
     subMarkNames: planSlide.prompterParts.map((part) => part.markName),
     partDurations: durations,
+    promptStartTime: liveStart,
     assetNameForPlaced: input.assetNameForPlaced,
     stepIndex: planSlide.stepIndex,
     ...(input.html !== undefined ? { html: input.html } : {}),
   })
-  const livePromptsEnd = liveParts.reduce((max, part) => Math.max(max, part.endTime), 0)
+  const livePromptsEnd = liveEnd
   const slideDuration = Math.min(
     Math.max(Math.max(livePromptsEnd, built.boardCost) + 1, MIN_SLIDE_DURATION),
     MAX_SLIDE_DURATION,
   )
   // The layout chains prefix-sum windows; live gaps (free placement) do not
   // survive the rebuild — durations rule, starts re-derive.
-  let cursor = 0
+  let cursor = liveStart
   let gapsCollapsed = false
   for (const part of liveParts) {
     if (Math.abs(part.startTime - cursor) > 1e-6) gapsCollapsed = true
@@ -115,6 +137,7 @@ export function planBoardReapply(input: BoardReapplyPlanInput): BoardReapplyPlan
       boardCost: built.boardCost,
       padded: built.padded,
       livePromptsEnd,
+      timingRedistributed,
       slideDuration,
       gapsCollapsed,
     },

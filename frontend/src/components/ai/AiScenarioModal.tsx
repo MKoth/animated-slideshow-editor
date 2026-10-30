@@ -1078,6 +1078,9 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         void useScriptAiStore.getState().clearSlideConversations(projectId, slide.id)
         const fmt = (value: number) => `${value.toFixed(2)}s`
         const extras = [
+          ...(planned.plan.timingRedistributed
+            ? ['prompt blocks changed — board timing was proportionally estimated']
+            : []),
           ...(planned.plan.padded ? ['board outruns the voice — padded'] : []),
           ...(planned.plan.gapsCollapsed
             ? ['prompter gaps are not preserved in board timing']

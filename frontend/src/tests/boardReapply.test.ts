@@ -81,17 +81,41 @@ describe('planBoardReapply', () => {
     expect(result.plan.source).not.toBe(planSlide.source)
   })
 
-  it('refuses when live block count no longer matches the plan', () => {
+  it('redistributes planned prompt windows across a merged live prompt span', () => {
     const { planSlide, step } = planStep()
     const result = planBoardReapply({
       planSlide,
       step,
-      liveParts: [{ duration: 1, startTime: 0, endTime: 1 }],
+      liveParts: [{ duration: 10, startTime: 2, endTime: 12 }],
       assetNameForPlaced: (slug) => slug,
     })
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.error).toMatch(/re-apply prompter/i)
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.plan.livePromptsEnd).toBe(12)
+    const plannedSpan = planSlide.prompterParts.reduce((sum, part) => sum + part.duration, 0)
+    const expectedSecondMark = 2 + (10 * planSlide.prompterParts[0]!.duration) / plannedSpan
+    const markMatch = /at\(([\d.]+)\) mark\("part-1"\)/.exec(result.plan.source)
+    expect(markMatch).not.toBeNull()
+    expect(Number(markMatch![1])).toBeCloseTo(expectedSecondMark, 2)
+  })
+
+  it('redistributes planned prompt windows when live prompt blocks were split', () => {
+    const { planSlide, step } = planStep()
+    const result = planBoardReapply({
+      planSlide,
+      step,
+      liveParts: [
+        { duration: 2, startTime: 1, endTime: 3 },
+        { duration: 4, startTime: 3, endTime: 7 },
+        { duration: 6, startTime: 7, endTime: 13 },
+      ],
+      assetNameForPlaced: (slug) => slug,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.plan.timingRedistributed).toBe(true)
+    expect(result.plan.source).toContain('at(1) mark("part-0")')
+    expect(result.plan.livePromptsEnd).toBe(13)
   })
 })
 

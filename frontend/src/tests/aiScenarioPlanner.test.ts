@@ -124,6 +124,7 @@ describe('Scenario planner core (issue #469)', () => {
   it('board sources reuse backdrop, park performers, keep names verbatim, anchored absolute times', () => {
     const result = planScenarioDraft(TWO_STEP_DOC, 0.1, [])
     for (const slide of result.slides) {
+      expect(slide.source).toContain('setCamera(-236, 10, 0.583)')
       // Backdrop reuse: single board group per slide, lesson backdrop first.
       expect(slide.source).toContain('create group "Board" as board')
       expect(slide.source).toContain('create asset "blackboar-background" as background')
