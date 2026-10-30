@@ -52,7 +52,7 @@ import { SelectionOverlay } from './selectionOverlay'
 import type { ResolveAssetUrl } from './textureCache'
 import { TextureCache } from './textureCache'
 import { ThumbnailRecorder } from './thumbnailRecorder'
-import { extractCanvasCapture } from './thumbnailRecorder'
+import { extractCanvasCapture, extractViewportCapture } from './thumbnailRecorder'
 import type { CanvasCapture } from './thumbnailRecorder'
 import { ShaderProgramCache } from './programCache'
 import { FullscreenPass, resolveFullscreenShaderState } from './fullscreenPass'
@@ -113,6 +113,7 @@ export class Renderer {
   readonly #cameraScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #viewportScratch: ViewportTransform = { x: 0, y: 0, scaleX: 1, scaleY: 1 }
   #cameraPreview: ViewportTransform | null = null
+  #capturingExportFrame = false
   readonly #cameraFrameScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #viewportNavigations = new Map<string, ViewportTransform>()
   #unsubscribe: Unsubscribe | null = null
@@ -778,7 +779,7 @@ export class Renderer {
       return null
     }
     const out = this.#viewportScratch
-    if (!useUiStore.getState().cameraAnimationMode) {
+    if (!this.#capturingExportFrame && !useUiStore.getState().cameraAnimationMode) {
       const nav = this.#viewportNavigations.get(slideId)
       if (nav) {
         out.x = nav.x
@@ -816,7 +817,7 @@ export class Renderer {
     if (out.scaleX <= 0 || out.scaleY <= 0) {
       return null
     }
-    const preview = this.#cameraPreview
+    const preview = this.#capturingExportFrame ? null : this.#cameraPreview
     if (preview) {
       out.x = preview.x
       out.y = preview.y
@@ -1155,12 +1156,29 @@ export class Renderer {
    * Used by video export to grab exact-timestamp frames without relying on
    * canvas readback timing.
    */
-  captureFrame(): string | null {
+  captureFrame(viewportOnly = false): string | null {
     const app = this.#app
     if (!app || this.#disposed) {
       return null
     }
-    return extractCanvasCapture(app)
+    return viewportOnly ? extractViewportCapture(app) : extractCanvasCapture(app)
+  }
+
+  /** Capture a frame using authored camera keyframes, ignoring gesture previews. */
+  captureExportFrame(): string | null {
+    const preview = this.#cameraPreview
+    const wasCapturingExportFrame = this.#capturingExportFrame
+    // Export must always use evaluated camera keyframes, regardless of the
+    // editor's free-navigation mode or an unfinished pan/zoom gesture.
+    this.#capturingExportFrame = true
+    this.#cameraPreview = null
+    try {
+      this.#applyTick()
+      return this.captureFrame(true)
+    } finally {
+      this.#capturingExportFrame = wasCapturingExportFrame
+      this.#cameraPreview = preview
+    }
   }
 
   #reportFailure(error: unknown): void {

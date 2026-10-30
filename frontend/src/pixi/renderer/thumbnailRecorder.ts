@@ -1,5 +1,6 @@
 import type { EngineEvent } from '../../engine'
 import { useThumbnailStore } from '../../stores/thumbnailStore'
+import { Rectangle } from 'pixi.js'
 import type { PixiApplication } from './pixi'
 
 export type CanvasCapture = (app: PixiApplication) => string | null
@@ -72,6 +73,22 @@ export function extractCanvasCapture(app: PixiApplication): string | null {
     const dataUrl = (
       canvas as { toDataURL?: (type?: string, quality?: number) => string }
     ).toDataURL?.('image/png')
+    return dataUrl ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Capture the actual renderer viewport, not the expanded bounds of the stage. */
+export function extractViewportCapture(app: PixiApplication): string | null {
+  try {
+    const canvas = app.renderer.extract?.canvas({
+      target: app.stage,
+      frame: new Rectangle(0, 0, app.screen.width, app.screen.height),
+    })
+    const dataUrl = (
+      canvas as { toDataURL?: (type?: string, quality?: number) => string } | undefined
+    )?.toDataURL?.('image/png')
     return dataUrl ?? null
   } catch {
     return null

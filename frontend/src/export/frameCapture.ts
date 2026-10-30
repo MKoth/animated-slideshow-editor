@@ -30,7 +30,7 @@ export async function captureExportFrameAt(
     }
     usePlaybackController.getState().setCurrentTime(slideId, timestamp, duration)
     await nextPaint()
-    const data = getActiveRenderer()?.captureFrame() ?? null
+    const data = getActiveRenderer()?.captureExportFrame() ?? null
     if (data) return data
     const canvas = document.querySelector('canvas') as HTMLCanvasElement | null
     return canvas?.toDataURL?.('image/png') ?? null

@@ -182,6 +182,45 @@ def _make_descriptor(
     return desc
 
 
+@pytest.mark.parametrize("clip_count", [1, 2])
+def test_slide_audio_is_padded_to_slide_duration(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch, clip_count: int
+) -> None:
+    ffmpeg_commands: list[list[str]] = []
+    monkeypatch.setattr(
+        export_module,
+        "_run_ffmpeg",
+        lambda args, timeout=120: ffmpeg_commands.append(args),
+    )
+    clips = [
+        {
+            "assetId": f"voice-{index}",
+            "muted": False,
+            "sourceStart": 0.0,
+            "sourceEnd": 2.0,
+            "timelineStart": 0.0,
+            "volume": 1.0,
+        }
+        for index in range(clip_count)
+    ]
+    slide = {
+        "slideId": "slide-short-audio",
+        "duration": 10.0,
+        "audio": {"clips": clips},
+    }
+
+    export_module._build_slide_audio(
+        slide,
+        {f"voice-{index}": str(tmp_path / "voice.wav") for index in range(clip_count)},
+        tmp_path,
+        use_rubberband=False,
+    )
+
+    command = ffmpeg_commands[0]
+    filter_graph = command[command.index("-filter_complex") + 1]
+    assert "apad=whole_dur=10.0" in filter_graph
+
+
 def test_sanitize_basename() -> None:
     assert _sanitize_basename("My Lesson!") == "My-Lesson"
     assert _sanitize_basename("  ") == "export"

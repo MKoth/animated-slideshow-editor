@@ -34,6 +34,7 @@ interface Harness {
   app: (typeof pixiRegistry.applications)[number]
   canvas: HTMLCanvasElement
   cameraId: string
+  renderer: Renderer
 }
 
 async function mount(timeSource?: FakeTimeSource): Promise<Harness> {
@@ -56,7 +57,7 @@ async function mount(timeSource?: FakeTimeSource): Promise<Harness> {
   if (!app || !canvas || !camera) {
     throw new Error('Failed to mount the renderer with a camera')
   }
-  return { system, app, canvas, cameraId: camera.id }
+  return { system, app, canvas, cameraId: camera.id, renderer }
 }
 
 function wheelAt(canvas: HTMLCanvasElement, x: number, y: number, deltaY: number): void {
@@ -117,6 +118,60 @@ function storedTransformOf(system: Harness['system'], cameraId: string) {
 }
 
 describe('evaluated viewport', () => {
+  it('forces the authored camera for export while the editor is freely navigating', async () => {
+    const { system, app, canvas, cameraId, renderer } = await mount()
+    middleDrag(canvas, [300, 200], [400, 250])
+    app.ticker.tick()
+    expect(worldOf(app).position.x).toBe(100)
+
+    for (const [property, value] of [
+      ['positionX', 100],
+      ['positionY', 50],
+      ['scaleX', 2],
+      ['scaleY', 2],
+    ] as const) {
+      dispatchKeyframe(system, cameraId, property, 0, value)
+    }
+
+    const capture = vi.spyOn(renderer, 'captureFrame').mockImplementation((viewportOnly) => {
+      expect(viewportOnly).toBe(true)
+      expect(worldOf(app).position.x).toBe(-200)
+      expect(worldOf(app).position.y).toBe(-100)
+      expect(worldOf(app).scale.x).toBe(2)
+      expect(worldOf(app).scale.y).toBe(2)
+      return 'data:image/png;base64,exported'
+    })
+    expect(renderer.captureExportFrame()).toBe('data:image/png;base64,exported')
+    expect(capture).toHaveBeenCalledOnce()
+  })
+
+  it('exports the authored camera instead of a pending zoom-gesture preview', async () => {
+    const timeSource = new FakeTimeSource()
+    const { system, app, canvas, cameraId, renderer } = await mount(timeSource)
+    useUiStore.getState().setCameraAnimationMode(true)
+    dispatchKeyframe(system, cameraId, 'positionX', 0, 100)
+    dispatchKeyframe(system, cameraId, 'positionY', 0, 50)
+    dispatchKeyframe(system, cameraId, 'scaleX', 0, 2)
+    dispatchKeyframe(system, cameraId, 'scaleY', 0, 2)
+
+    // A zoom gesture has a transient preview until its debounce commits. It
+    // must not leak into an export frame captured during that interval.
+    wheelAt(canvas, 400, 300, -100)
+    app.ticker.tick()
+    expect(worldOf(app).scale.x).not.toBe(2)
+
+    const capture = vi.spyOn(renderer, 'captureFrame').mockImplementation((viewportOnly) => {
+      expect(viewportOnly).toBe(true)
+      expect(worldOf(app).position.x).toBe(-200)
+      expect(worldOf(app).position.y).toBe(-100)
+      expect(worldOf(app).scale.x).toBe(2)
+      expect(worldOf(app).scale.y).toBe(2)
+      return 'data:image/png;base64,exported'
+    })
+    expect(renderer.captureExportFrame()).toBe('data:image/png;base64,exported')
+    expect(capture).toHaveBeenCalledOnce()
+  })
+
   it('moves and zooms the world container from camera keyframes as the playhead scrubs', async () => {
     const timeSource = new FakeTimeSource()
     const { system, app, cameraId } = await mount(timeSource)

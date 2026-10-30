@@ -696,14 +696,15 @@ def _build_slide_audio(
         labels = "".join(f"[c{idx}]" for idx in range(len(clips)))
         filter_parts.append(
             f"{labels}amix=inputs={len(clips)}:duration=longest:dropout_transition=0,"
-            f"atrim=end={duration},asetpts=PTS-STARTPTS[mix]"
+            f"atrim=end={duration},apad=whole_dur={duration},asetpts=PTS-STARTPTS[mix]"
         )
         filter_parts.append(
             "[mix]aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=stereo[out]"
         )
     else:
         filter_parts.append(
-            f"[0:a]{chains[0]},aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=stereo[out]"
+            f"[0:a]{chains[0]},apad=whole_dur={duration},"
+            "aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=stereo[out]"
         )
     _run_ffmpeg(
         [
