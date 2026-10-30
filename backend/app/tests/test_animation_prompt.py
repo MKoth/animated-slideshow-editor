@@ -33,6 +33,16 @@ def test_animation_prompt_preserves_full_conversation_requirements() -> None:
     assert prompt.startswith(DEFAULT_ANIMATION_SYSTEM_PROMPT.lower())
 
 
+def test_scenario_prompt_prefers_concise_narration_and_paired_visuals() -> None:
+    prompt = DEFAULT_SCENARIO_SYSTEM_PROMPT.lower()
+
+    assert "explain each idea once" in prompt
+    assert "remove repeated explanations across steps" in prompt
+    assert "place an image, write its `> label: ...` immediately with that image" in prompt
+    assert "never batch all image placements before their labels" in prompt
+    assert "do not repeat its label verbatim" in prompt
+
+
 def test_animation_prompt_teaches_member_call_syntax() -> None:
     prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "animation")
 
