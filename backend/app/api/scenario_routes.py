@@ -10,7 +10,9 @@ from __future__ import annotations
 import json as _json
 import logging
 import re
-from datetime import datetime
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -824,7 +826,9 @@ def _post_foreign_words_once(
             reason,
             usage_txt,
         )
-        return ""
+        # Preserve the envelope for diagnostics and so the caller can
+        # distinguish output-token exhaustion from an actual empty answer.
+        return response.text
     if not isinstance(content, str) or not content.strip():
         # Extractor missed the envelope but the raw body may still carry the
         # words array (e.g. an unfamiliar Responses shape) — let the parser
@@ -849,6 +853,7 @@ def detect_scenario_foreign_words(
     session_id: str,
     temperature: float,
     max_tokens: int,
+    on_attempt: Callable[[bool, str, list[str]], None] | None = None,
 ) -> list[str]:
     """Call Zen non-streaming for the foreign-word JSON list. Mock seam for tests.
 
@@ -875,6 +880,8 @@ def detect_scenario_foreign_words(
     try:
         raw_content = _post_foreign_words_once(**common, structured=True)
         words = parse_foreign_words_content(raw_content)
+        if on_attempt:
+            on_attempt(True, raw_content, words)
     except ZenFetchError as exc:
         if exc.status != 400:
             raise
@@ -883,14 +890,35 @@ def detect_scenario_foreign_words(
         )
         raw_content = _post_foreign_words_once(**common, structured=False)
         words = parse_foreign_words_content(raw_content)
-    if not words and raw_content.strip():
+        if on_attempt:
+            on_attempt(False, raw_content, words)
+    if not words:
         # Structured envelope may have constrained the answer into an empty
-        # list; one plain retry gives the same prompt a second chance before
-        # accepting "no highlights". Plain 200s that also parse empty are
-        # accepted as-is (genuinely English text costs one extra small call).
+        # list, or returned no content at all; one plain retry gives the same
+        # prompt a second chance before accepting "no highlights". Plain 200s
+        # that also parse empty are accepted as-is (genuinely English text
+        # costs one extra small call).
         logger.info("ai foreign-words structured parse empty; retrying plain completion once")
         raw_content = _post_foreign_words_once(**common, structured=False)
         words = parse_foreign_words_content(raw_content)
+        if on_attempt:
+            on_attempt(False, raw_content, words)
+    if not words:
+        # Muse/reasoning Responses can spend the entire output budget thinking
+        # and return status=incomplete with no message. After the normal
+        # structured + plain attempts, give that specific failure one larger
+        # plain retry rather than repeating the same capped request.
+        try:
+            final_response = _json.loads(raw_content)
+        except (ValueError, TypeError):
+            final_response = None
+        if isinstance(final_response, dict) and final_response.get("status") == "incomplete":
+            retry = dict(common)
+            retry["max_tokens"] = max(max_tokens * 4, 16000)
+            raw_content = _post_foreign_words_once(**retry, structured=False)
+            words = parse_foreign_words_content(raw_content)
+            if on_attempt:
+                on_attempt(False, raw_content, words)
     if not words:
         # Suspicious case (the text clearly holds foreign words): keep the raw
         # model output in the log so the next retry comes with evidence.
@@ -935,6 +963,28 @@ def post_scenario_foreign_words(request: Request, body: dict[str, Any]) -> dict[
             status_code=409, detail={"code": "missing_key", "message": "AI key is not set."}
         )
     try:
+        settings = request.app.state.settings
+        data_dir = Path(settings.data_dir)
+
+        def log_attempt(structured: bool, raw: str, words: list[str]) -> None:
+            event = {
+                "ts": datetime.now(UTC).isoformat(),
+                "operation": "scenario_foreign_words",
+                "projectId": parsed.projectId,
+                "model": row.model,
+                "structured": structured,
+                "responseChars": len(raw),
+                "parsedCount": len(words),
+                "parsedWords": words,
+                "responseExcerpt": raw[:2000],
+            }
+            try:
+                data_dir.mkdir(parents=True, exist_ok=True)
+                with (data_dir / "ai_foreign_words.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(_json.dumps(event, ensure_ascii=False) + "\n")
+            except Exception as exc:  # noqa: BLE001 - diagnostics must not break generation
+                logger.warning("ai foreign-words diagnostic log write failed: %s", exc)
+
         words = detect_scenario_foreign_words(
             endpoint=row.endpoint,
             api_key=key,
@@ -949,6 +999,7 @@ def post_scenario_foreign_words(request: Request, body: dict[str, Any]) -> dict[
             # responses with no words at all.
             temperature=row.temperature,
             max_tokens=max(2000, min(row.max_tokens, 4000)),
+            on_attempt=log_attempt,
         )
     except ZenFetchError as exc:
         code, friendly = friendly_error_for_status(exc.status, exc.body)

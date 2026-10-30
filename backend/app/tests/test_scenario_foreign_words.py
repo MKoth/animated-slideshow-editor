@@ -345,6 +345,61 @@ def test_empty_structured_parse_retries_plain_once(
     assert [call["structured"] for call in calls] == [True, False]
 
 
+def test_empty_structured_response_retries_plain_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def _post(**kwargs: Any) -> str:
+        calls.append(dict(kwargs))
+        return "" if kwargs["structured"] else '{"words": ["hola"]}'
+
+    monkeypatch.setattr(scenario_routes, "_post_foreign_words_once", _post)
+    words = scenario_routes.detect_scenario_foreign_words(
+        endpoint="https://example.test",
+        api_key="k",
+        model="m",
+        text="Hola mundo.",
+        session_id="s",
+        temperature=0.7,
+        max_tokens=800,
+    )
+
+    assert words == ["hola"]
+    assert [call["structured"] for call in calls] == [True, False]
+
+
+def test_incomplete_reasoning_response_gets_one_larger_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    incomplete = '{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}'
+
+    def _post(**kwargs: Any) -> str:
+        calls.append(dict(kwargs))
+        if kwargs["max_tokens"] < 16000:
+            return incomplete
+        return '{"words": ["hola"]}'
+
+    monkeypatch.setattr(scenario_routes, "_post_foreign_words_once", _post)
+    words = scenario_routes.detect_scenario_foreign_words(
+        endpoint="https://example.test",
+        api_key="k",
+        model="muse-spark-1.3-contributor",
+        text="Hola mundo.",
+        session_id="s",
+        temperature=0.7,
+        max_tokens=4000,
+    )
+
+    assert words == ["hola"]
+    assert [(call["structured"], call["max_tokens"]) for call in calls] == [
+        (True, 4000),
+        (False, 4000),
+        (False, 16000),
+    ]
+
+
 def test_genuinely_empty_plain_parse_does_not_loop_forever(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
