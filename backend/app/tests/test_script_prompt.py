@@ -57,7 +57,10 @@ def test_script_prompt_teaches_cursor_setup_and_reveal_pairing() -> None:
     lowered = prompt.lower()
     # Setup/styling calls after marks land at end-of-slide.
     assert "before the first `mark(...)" in prompt
-    assert "at: 0" in prompt
+    assert "`at(0)` placement" in prompt
+    # fadeIn/fadeOut/pulse accept effect-verb named timing; other calls must not.
+    assert "fadeout(at:" in lowered
+    assert "never write other member calls that way" in lowered
     # Every created node needs a reveal; wipes pair with reveals.
     assert "never emit creates without pairing reveals" in lowered
     assert "never wipe a node that has no reveal" in lowered

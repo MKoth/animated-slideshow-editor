@@ -356,9 +356,11 @@ DEFAULT_SCRIPT_SYSTEM_PROMPT = (
     "Keep the script compiling: every statement needs a duration from itself, the header, or defaults; "
     "reads (`worldAt`, `bounds`, `cellRect`, `controlValue`, `markTime`) stay within the slide. "
     "Setup and styling member calls (`tint`, `material`, `set`, `control`, `dataLabel`, `morph`, "
-    "`symmetry`, `shadow`, `pulse`) carry no `at:` of their own, so they land on the CURRENT cursor: "
-    "always place them before the first `mark(...)`, or give them an explicit `at: 0` — a tint written "
+    "`symmetry`, `shadow`) take no `at:` of their own, so they land on the CURRENT cursor: "
+    "always place them before the first `mark(...)`, or prefix them with an explicit `at(0)` placement — a tint written "
     "after the marks lands at end-of-slide and the colors stay wrong for the whole narration. "
+    "`fadeIn`, `fadeOut`, and `pulse` are the exception: they accept the effect-verb named timing, e.g. "
+    '`book.fadeOut(at: markTime("part-10") + 10.8, over: 0.5)` — never write other member calls that way. '
     "Every created visible node needs its own `reveal` (backgrounds and offscreen-parked performers "
     "excepted): objects start hidden only through their reveal mask, so a created node with no reveal "
     "stays on screen from time zero forever — never emit creates without pairing reveals, and never "

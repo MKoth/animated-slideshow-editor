@@ -3350,7 +3350,9 @@ class Compiler {
   /**
    * `fadeIn(d?, e?)` / `fadeOut(d?, e?)`: opacity to 1/0 from the evaluated
    * value. Always opacity, never the `visible` lane — the same two keyframes
-   * a raw `tween({ opacity })` would emit.
+   * a raw `tween({ opacity })` would emit. Both also accept the effect-verb
+   * named timing, `fadeOut(at: markTime("part-2") + 1, over: 0.5)`, which
+   * places the write without moving the cursor backwards.
    */
   #lowerFade(
     statement: StatementNode,
@@ -3379,6 +3381,10 @@ class Compiler {
 
   /** `pulse(d?, e?)`: scale to ×1.1 at half duration and back to the start. */
   #lowerPulse(statement: StatementNode, binding: BindingInfo, cursor: number): number {
+    const start = this.#resolvePlacedStart(statement, cursor)
+    if (start === null) return cursor
+    const done = (time: number): number =>
+      statement.at !== undefined ? Math.max(cursor, time) : time
     const duration = this.#resolveDuration(statement)
     if (duration.kind === 'missing') {
       this.#error(
@@ -3394,27 +3400,27 @@ class Compiler {
       return cursor
     }
     const ease = this.#resolveEase(statement)
-    const endTime = roundTime(cursor + duration.seconds)
+    const endTime = roundTime(start + duration.seconds)
     if (ease === null) {
-      return endTime
+      return done(endTime)
     }
     if (endTime > this.#context.slideDuration) {
       this.#error(
         `Statement ends at ${formatSeconds(endTime)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
         duration.span,
       )
-      return endTime
+      return done(endTime)
     }
-    const midTime = roundTime(cursor + duration.seconds / 2)
+    const midTime = roundTime(start + duration.seconds / 2)
     for (const member of binding.members) {
       for (const property of ['scaleX', 'scaleY'] as const) {
         const track: ScriptTrack = { kind: 'node', property }
-        this.#recordRawInterval(member, track, cursor, endTime, statement.span)
+        this.#recordRawInterval(member, track, start, endTime, statement.span)
         // Plan the start pin first so a previous statement's end value on the
         // same track wins (statement-order priority, like sequential tweens);
         // the peak and the return then derive from that effective start.
-        this.#plan(member, track, cursor, ease.ease, null)
-        const startValue = this.#planned.get(slotKeyFor(member.nodeId, track, cursor))
+        this.#plan(member, track, start, ease.ease, null)
+        const startValue = this.#planned.get(slotKeyFor(member.nodeId, track, start))
           ?.value as unknown as number
         const peakValue = startValue * 1.1
         this.#plan(member, track, midTime, ease.ease, { value: peakValue })
@@ -3423,7 +3429,7 @@ class Compiler {
         })
       }
     }
-    return endTime
+    return done(endTime)
   }
 
   /**
@@ -3437,6 +3443,12 @@ class Compiler {
     cursor: number,
     resolveWrites: () => MemberWrite[],
   ): number {
+    const start = this.#resolvePlacedStart(statement, cursor)
+    if (start === null) return cursor
+    // An inline `at:` places the write without moving the cursor backwards —
+    // the same return rule as the play/apply `at` option and the effect verbs.
+    const done = (time: number): number =>
+      statement.at !== undefined ? Math.max(cursor, time) : time
     const duration = this.#resolveDuration(statement)
     if (duration.kind === 'missing') {
       const example =
@@ -3461,27 +3473,27 @@ class Compiler {
     }
     const ease = this.#resolveEase(statement)
     const writes = resolveWrites()
-    const endTime = roundTime(cursor + duration.seconds)
+    const endTime = roundTime(start + duration.seconds)
     if (writes.length === 0 || ease === null) {
-      return endTime
+      return done(endTime)
     }
     if (endTime > this.#context.slideDuration) {
       this.#error(
         `Statement ends at ${formatSeconds(endTime)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
         duration.span,
       )
-      return endTime
+      return done(endTime)
     }
     for (const write of writes) {
       for (const entry of write.entries) {
         const entryEase = this.#resolveEntryEase(entry, ease.ease, ease.name)
         if (entryEase === null) continue
-        this.#recordRawInterval(write.member, entry.track, cursor, endTime, statement.span)
-        this.#plan(write.member, entry.track, cursor, entryEase, null)
+        this.#recordRawInterval(write.member, entry.track, start, endTime, statement.span)
+        this.#plan(write.member, entry.track, start, entryEase, null)
         this.#plan(write.member, entry.track, endTime, entryEase, { value: entry.value })
       }
     }
-    return endTime
+    return done(endTime)
   }
 
   /**
@@ -7480,6 +7492,32 @@ class Compiler {
       return { kind: 'resolved', ...this.#defaults.duration }
     }
     return { kind: 'missing' }
+  }
+
+  /**
+   * Absolute placement for a member call carrying an inline `at:` time (the
+   * `fadeIn`/`fadeOut`/`pulse` gestures): the evaluated second, rounded, with
+   * the same bounds validation as the `at()` prefix and the play/apply `at`
+   * option. Without `at:` the statement rides the cursor. Null only when the
+   * time itself failed to evaluate; bounds violations report but still place.
+   */
+  #resolvePlacedStart(statement: StatementNode, cursor: number): number | null {
+    if (statement.at === undefined) return cursor
+    const seconds = this.#evaluateNumber(statement.at, 'a time in seconds')
+    if (seconds === null) return null
+    const start = roundTime(seconds)
+    if (start < this.#from) {
+      this.#error(
+        `"at" cannot be before the segment start (from = ${formatSeconds(this.#from)}s)`,
+        statement.at.span,
+      )
+    } else if (start > this.#context.slideDuration) {
+      this.#error(
+        `"at" is past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+        statement.at.span,
+      )
+    }
+    return start
   }
 
   #validateDuration(seconds: number, span: SourceSpan): boolean {

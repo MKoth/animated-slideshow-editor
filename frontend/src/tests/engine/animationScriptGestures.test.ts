@@ -243,6 +243,131 @@ describe('Animation Script sugar gestures — fadeIn and fadeOut', () => {
   })
 })
 
+describe('Animation Script fade gestures — inline at:/over: timing', () => {
+  it('places fadeOut with at:/over: like the at() prefix form', () => {
+    const { system, slideId } = setup()
+    const heroId = addNode(system, slideId, 'Hero')
+    const other = setup()
+    const otherHero = addNode(other.system, other.slideId, 'Hero')
+
+    const inline = check(system, slideId, [
+      'script "Demo" from 0',
+      'bind hero = node("Hero")',
+      'hero.fadeOut(at: 2, over: 0.5)',
+    ])
+    const prefixed = check(other.system, other.slideId, [
+      'script "Demo" from 0',
+      'bind hero = node("Hero")',
+      'at(2) hero.fadeOut(0.5)',
+    ])
+
+    expect(errors(inline)).toEqual([])
+    expect(errors(prefixed)).toEqual([])
+    apply(system, inline)
+    apply(other.system, prefixed)
+
+    expect(strip(system.engine.getKeyframes(heroId, 'opacity'))).toEqual(
+      strip(other.system.engine.getKeyframes(otherHero, 'opacity')),
+    )
+    expect(system.engine.getKeyframes(heroId, 'opacity').map((kf) => kf.time)).toEqual([0, 2, 2.5])
+  })
+
+  it('starts over: at the cursor and keeps the cursor moving forward', () => {
+    const { system, slideId } = setup()
+    const heroId = addNode(system, slideId, 'Hero')
+
+    const result = check(system, slideId, [
+      'script "Demo" from 0',
+      'bind hero = node("Hero")',
+      'hero.fadeOut(at: 4, over: 0.5)',
+      'hero.fadeIn(over: 0.5)',
+    ])
+
+    expect(errors(result)).toEqual([])
+    // The placed write ends at 4.5, so the cursor sits at 4.5 for the next
+    // statement, which then advances it to 5.
+    expect(result.summary.to).toBe(5)
+    apply(system, result)
+    expect(system.engine.getKeyframes(heroId, 'opacity').map((kf) => kf.time)).toEqual([
+      0, 4, 4.5, 5,
+    ])
+  })
+
+  it('resolves over: against the header defaults and markTime expressions', () => {
+    const { system, slideId } = setup()
+    const heroId = addNode(system, slideId, 'Hero')
+
+    const result = check(system, slideId, [
+      'script "Demo" from 0',
+      'defaults { duration: 0.4s }',
+      'bind hero = node("Hero")',
+      'mark("part-2")',
+      'wait(1)',
+      'hero.fadeOut(at: markTime("part-2") + 1)',
+    ])
+
+    expect(errors(result)).toEqual([])
+    apply(system, result)
+    expect(system.engine.getKeyframes(heroId, 'opacity').map((kf) => kf.time)).toEqual([0, 1, 1.4])
+  })
+
+  it('reports conflicts and unknown options', () => {
+    const { system, slideId } = setup()
+    addNode(system, slideId, 'Hero')
+
+    const bothDurations = check(system, slideId, [
+      'script "Demo" from 0',
+      'bind hero = node("Hero")',
+      'hero.fadeOut(0.5, over: 0.6)',
+    ])
+    expect(errorMessages(bothDurations)).toMatch(/Only one duration is allowed/)
+
+    const twiceAt = check(system, slideId, [
+      'script "Demo" from 0',
+      'bind hero = node("Hero")',
+      'hero.fadeOut(at: 1, at: 2, over: 0.5)',
+    ])
+    expect(errorMessages(twiceAt)).toMatch(/option "at" is written twice/)
+
+    const unknown = check(system, slideId, [
+      'script "Demo" from 0',
+      'bind hero = node("Hero")',
+      'hero.fadeOut(sound: writeSfx)',
+    ])
+    expect(errorMessages(unknown)).toMatch(/Unknown fadeOut option "sound"/)
+  })
+
+  it('still needs a duration when at: rides alone without defaults', () => {
+    const { system, slideId } = setup()
+    addNode(system, slideId, 'Hero')
+
+    const result = check(system, slideId, [
+      'script "Demo" from 0',
+      'bind hero = node("Hero")',
+      'hero.fadeOut(at: 2)',
+    ])
+
+    expect(errorMessages(result)).toMatch(/needs a duration/)
+  })
+
+  it('supports at:/over: on pulse', () => {
+    const { system, slideId } = setup()
+    const heroId = addNode(system, slideId, 'Hero')
+
+    const result = check(system, slideId, [
+      'script "Demo" from 0',
+      'bind hero = node("Hero")',
+      'hero.pulse(at: 3, over: 0.4)',
+    ])
+
+    expect(errors(result)).toEqual([])
+    apply(system, result)
+    expect(system.engine.getKeyframes(heroId, 'scaleX').map((kf) => kf.time)).toEqual([
+      0, 3, 3.2, 3.4,
+    ])
+  })
+})
+
 describe('Animation Script timed writes — sequential chaining', () => {
   it('starts a later gesture from the previous statement end value', () => {
     const { system, slideId } = setup()

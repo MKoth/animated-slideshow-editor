@@ -235,6 +235,12 @@ export interface StatementNode {
   readonly duration?: ScriptExpression
   readonly ease?: string
   readonly easeSpan?: SourceSpan
+  /**
+   * Inline absolute placement for the bare-timing gestures (`fadeIn`,
+   * `fadeOut`, `pulse`): `fadeOut(at: markTime("part-2") + 1, over: 0.5)`.
+   * The same time language as the `at()` prefix and the effect-verb `at:`.
+   */
+  readonly at?: ScriptExpression
   readonly span: SourceSpan
 }
 
@@ -1624,6 +1630,7 @@ class Parser {
     let duration: ScriptExpression | undefined
     let ease: string | undefined
     let easeSpan: SourceSpan | undefined
+    let at: ScriptExpression | undefined
 
     if (this.#checkPunctuation('[')) {
       this.#report(GROUP_INDEX_MESSAGE, {
@@ -1679,11 +1686,12 @@ class Parser {
           break
         }
         if (name.text === 'fadeIn' || name.text === 'fadeOut' || name.text === 'pulse') {
-          const timing = this.#parseBareTimingArguments()
+          const timing = this.#parseBareTimingArguments(name.text)
           if (timing === null) return null
           duration = timing.duration
           ease = timing.ease
           easeSpan = timing.easeSpan
+          at = timing.at
           break
         }
         if (name.text === 'material') {
@@ -1767,6 +1775,7 @@ class Parser {
       duration,
       ease,
       easeSpan,
+      ...(at !== undefined ? { at } : {}),
       span: { start, end: this.#previousEnd() },
     }
   }
@@ -1844,34 +1853,85 @@ class Parser {
 
   /**
    * The optional `duration` and `ease` arguments for gestures without a
-   * property map or positional value (`fadeIn`, `fadeOut`, `pulse`). The first
-   * argument needs no leading comma; the rest follows the comma-prefixed
-   * timing rules so `fadeIn(0.5s, easeOut)` and `fadeIn(easeOut)` both read.
+   * property map or positional value (`fadeIn`, `fadeOut`, `pulse`), plus the
+   * `at:` / `over:` named timing the effect verbs accept — so
+   * `fadeOut(at: markTime("part-2") + 1, over: 0.5)` reads like
+   * `wipe(target, at: ..., over: ...)`. A named option is an identifier
+   * followed by a colon, which can never be a positional duration or ease, so
+   * the lookahead is unambiguous. The first argument needs no leading comma;
+   * the rest follows the comma-prefixed timing rules, so `fadeIn(0.5s,
+   * easeOut)` and `fadeIn(easeOut)` both still read.
    */
-  #parseBareTimingArguments(): {
+  #parseBareTimingArguments(method: string): {
     duration?: ScriptExpression
     ease?: string
     easeSpan?: SourceSpan
+    at?: ScriptExpression
   } | null {
     let duration: ScriptExpression | undefined
     let ease: string | undefined
     let easeSpan: SourceSpan | undefined
+    let at: ScriptExpression | undefined
+    let seenAt = false
+    /**
+     * One `at:` / `over:` named option. True when consumed, false when the
+     * next tokens are not a named option, null when parsing must stop.
+     */
+    const named = (): boolean | null => {
+      const token = this.#peek()
+      if (token.kind !== 'identifier' || !this.#nextIsPunctuation(':')) return false
+      const name = this.#advance()
+      this.#advance() // consume ':'
+      if (name.text !== 'at' && name.text !== 'over') {
+        const value = this.#parseExpression(`a value for ${method} ${name.text}`)
+        if (value === null) return null
+        this.#report(
+          `Unknown ${method} option "${name.text}". Available options: at, over.`,
+          name.span,
+        )
+        return true
+      }
+      const value = this.#parseExpression(
+        name.text === 'at' ? 'a time in seconds' : 'a duration in seconds',
+      )
+      if (value === null) return null
+      if (name.text === 'at') {
+        if (seenAt) this.#report(`${method} option "at" is written twice`, name.span)
+        seenAt = true
+        at = value
+      } else if (duration !== undefined) {
+        this.#report('Only one duration is allowed', value.span)
+      } else {
+        duration = value
+      }
+      return true
+    }
     if (this.#checkPunctuation(')')) {
       this.#expectPunctuation(')')
-      return {}
+      return { duration, ease, easeSpan, ...(at !== undefined ? { at } : {}) }
     }
-    if (this.#isEaseName()) {
-      const token = this.#advance()
-      ease = token.text
-      easeSpan = token.span
-    } else if (this.#startsExpression()) {
-      duration = this.#parseExpression('a duration in seconds') ?? undefined
-    } else {
-      const token = this.#peek()
-      this.#report(`Expected a duration or an ease name, found ${describeToken(token)}`, token.span)
-      return null
+    const first = named()
+    if (first === null) return null
+    if (!first) {
+      if (this.#isEaseName()) {
+        const token = this.#advance()
+        ease = token.text
+        easeSpan = token.span
+      } else if (this.#startsExpression()) {
+        duration = this.#parseExpression('a duration in seconds') ?? undefined
+      } else {
+        const token = this.#peek()
+        this.#report(
+          `Expected a duration or an ease name, found ${describeToken(token)}`,
+          token.span,
+        )
+        return null
+      }
     }
     while (this.#matchPunctuation(',')) {
+      const next = named()
+      if (next === null) return null
+      if (next) continue
       if (this.#isEaseName()) {
         const token = this.#advance()
         if (ease !== undefined) {
@@ -1905,7 +1965,7 @@ class Parser {
       }
     }
     this.#expectPunctuation(')')
-    return { duration, ease, easeSpan }
+    return { duration, ease, easeSpan, ...(at !== undefined ? { at } : {}) }
   }
 
   #parseRecord(): PropertyEntry[] | null {
