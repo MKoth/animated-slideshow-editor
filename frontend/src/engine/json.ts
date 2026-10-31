@@ -63,6 +63,8 @@ export type NodeComponentsJSON = {
     readonly borderColor?: string
     readonly borderRadius?: number
     readonly padding?: number
+    readonly rowHeight?: number
+    readonly rowHeights?: readonly number[]
   }
   readonly tableRow?: {
     readonly kind: 'tableRow'

@@ -1,11 +1,29 @@
 import type { TableComponent, TableDimension, TableCellComponent } from './components'
 import type { SceneNode } from './sceneNode'
 
+export const DEFAULT_TABLE_ROW_HEIGHT = 30
+
 export interface CellRect {
   readonly x: number
   readonly y: number
   readonly width: number
   readonly height: number
+}
+
+export function resolveTableRowHeightAt(table: TableComponent, index: number): number {
+  const override = table.rowHeights?.[index]
+  if (typeof override === 'number' && Number.isFinite(override) && override > 0) return override
+  if (
+    typeof table.rowHeight === 'number' &&
+    Number.isFinite(table.rowHeight) &&
+    table.rowHeight > 0
+  )
+    return table.rowHeight
+  return DEFAULT_TABLE_ROW_HEIGHT
+}
+
+function resolveTableRowHeights(table: TableComponent, rowsCount: number): number[] {
+  return Array.from({ length: rowsCount }, (_, i) => resolveTableRowHeightAt(table, i))
 }
 
 export interface TableLayout {
@@ -39,6 +57,8 @@ export class TableLayoutCache {
       padding: table.padding,
       borderColor: table.borderColor,
       background: table.background,
+      rowHeight: table.rowHeight,
+      rowHeights: table.rowHeights,
       cells: rows
         .flatMap((r) => r.children)
         .map((c) => ({
@@ -73,7 +93,8 @@ export function computeTableLayout(
   const { columns, gap, padding } = table
   const colsCount = columns.length
   const flatCells = rows.flatMap((row) => row.children).filter((node) => node.components.tableCell)
-  const rowsCount = Math.max(1, Math.ceil(flatCells.length / Math.max(1, colsCount)))
+  const contentRows = Math.max(1, Math.ceil(flatCells.length / Math.max(1, colsCount)))
+  const rowsCount = Math.max(contentRows, rows.length, table.rowHeights?.length ?? 0)
 
   const pad = Math.max(0, padding ?? 0)
   const totalGapsX = Math.max(0, colsCount - 1) * gap
@@ -81,7 +102,7 @@ export function computeTableLayout(
 
   const colWidths = resolveDimensions(columns, innerWidth, 0)
 
-  const rowHeights = Array.from({ length: rowsCount }, () => 30)
+  const rowHeights = resolveTableRowHeights(table, rowsCount)
 
   const spanCovered = new Set<string>()
   const cellRects = new Map<string, CellRect>()
@@ -93,7 +114,8 @@ export function computeTableLayout(
     const effectiveColSpan = Math.min(Math.max(1, cellComp.colSpan), colsCount - column)
     const effectiveRowSpan = Math.max(1, cellComp.rowSpan)
 
-    while (row + effectiveRowSpan > rowHeights.length) rowHeights.push(30)
+    while (row + effectiveRowSpan > rowHeights.length)
+      rowHeights.push(resolveTableRowHeightAt(table, rowHeights.length))
     for (let sr = 0; sr < effectiveRowSpan; sr++) {
       for (let sc = 0; sc < effectiveColSpan; sc++) {
         spanCovered.add(`${row + sr},${column + sc}`)
@@ -145,7 +167,7 @@ function computeLegacyCellRects(
 ): ReadonlyMap<string, CellRect> {
   const pad = Math.max(0, table.padding ?? 0)
   const result = new Map<string, CellRect>()
-  const rowHeights = rows.map(resolveRowHeight)
+  const rowHeights = rows.map((_, index) => resolveTableRowHeightAt(table, index))
   const covered = new Set<string>()
   let y = pad
   for (let r = 0; r < rows.length; r++) {
@@ -195,23 +217,6 @@ export function nextFreePosition(
       if (!occupied.has(`${row},${column}`)) return { row, column }
     }
   }
-}
-
-function resolveRowHeight(rowNode: SceneNode): number {
-  const rowComp = rowNode.components.tableRow
-  if (!rowComp) return 0
-
-  let maxHeight = 30
-  for (const cell of rowNode.children) {
-    const cellComp = cell.components.tableCell
-    if (cellComp) {
-      const rowSpan = cellComp.rowSpan ?? 1
-      if (rowSpan === 1) {
-        maxHeight = Math.max(maxHeight, 30)
-      }
-    }
-  }
-  return maxHeight
 }
 
 function resolveDimensions(

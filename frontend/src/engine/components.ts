@@ -81,6 +81,8 @@ export interface TableComponent {
   readonly borderRadius: number
   readonly padding: number
   readonly background?: string
+  readonly rowHeight?: number
+  readonly rowHeights?: readonly number[]
 }
 
 export interface TableRowComponent {

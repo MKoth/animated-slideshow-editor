@@ -893,7 +893,17 @@ class Compiler {
   /** Declared create-time frames of created tables for first-run reveal bounds. */
   readonly #createdTableFrames = new Map<
     string,
-    { x: number; y: number; width: number; rows: number; padding: number; borderWidth: number }
+    {
+      x: number
+      y: number
+      width: number
+      rows: number
+      padding: number
+      borderWidth: number
+      gap: number
+      rowHeight?: number
+      rowHeights?: readonly number[]
+    }
   >()
   /** Created-node metadata for the async run prep (asset embed, mesh generation). */
   readonly #createdNodeInfos: AnimationScriptCreatedNodeInfo[] = []
@@ -5068,6 +5078,8 @@ class Compiler {
       'borderRadius',
       'borderColor',
       'background',
+      'rowHeight',
+      'rowHeights',
       'rotation',
       'scaleX',
       'scaleY',
@@ -5089,14 +5101,25 @@ class Compiler {
       this.#optionalEntryString(statement, 'borderColor', 'a border color') ?? '#000000'
     const background =
       this.#optionalEntryString(statement, 'background', 'a background color') ?? '#ffffff'
+    const rowHeight = this.#optionalEntryNumber(statement, 'rowHeight', 'a row height')
+    const rowHeights = this.#resolveTableRowHeights(statement)
+    if (rowHeights === null) return
     if (
       gap === null ||
       padding === null ||
       borderWidth === null ||
       borderRadius === null ||
       borderColor === null ||
-      background === null
+      background === null ||
+      rowHeight === null
     ) {
+      return
+    }
+    if (rowHeight !== undefined && rowHeight <= 0) {
+      this.#error(
+        '"rowHeight" must be greater than 0',
+        this.#entryExpression(statement, 'rowHeight')!.span,
+      )
       return
     }
     const nodeCount = 1 + rows.reduce((count, row) => count + 1 + row.length + row.length, 0)
@@ -5128,6 +5151,8 @@ class Compiler {
             borderRadius,
             padding,
             background,
+            ...(rowHeight !== undefined ? { rowHeight } : {}),
+            ...(rowHeights !== undefined ? { rowHeights } : {}),
           },
         },
         ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
@@ -5169,6 +5194,9 @@ class Compiler {
       rows: rows.length,
       padding,
       borderWidth,
+      gap,
+      ...(rowHeight !== undefined ? { rowHeight } : {}),
+      ...(rowHeights !== undefined ? { rowHeights } : {}),
     })
 
     rows.forEach((row, rowIndex) => {
@@ -5334,6 +5362,33 @@ class Compiler {
       return null
     }
     return columns
+  }
+
+  #resolveTableRowHeights(statement: CreateNode): readonly number[] | undefined | null {
+    const expression = this.#entryExpression(statement, 'rowHeights')
+    if (expression === undefined) return undefined
+    const value = this.#evaluateValue(expression)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind !== 'list') {
+      this.#error(`"rowHeights" needs a list, found ${describeScriptValue(value)}`, expression.span)
+      return null
+    }
+    const heights: number[] = []
+    for (const element of value.values) {
+      if (element.kind !== 'number' || element.value <= 0) {
+        this.#error(
+          `Row heights must be numbers greater than 0, found ${describeScriptValue(element)}`,
+          expression.span,
+        )
+        return null
+      }
+      heights.push(element.value)
+    }
+    if (heights.length === 0) {
+      this.#error('"rowHeights" needs at least one height', expression.span)
+      return null
+    }
+    return heights
   }
 
   #resolveTableRows(
@@ -5759,7 +5814,13 @@ class Compiler {
       const frame = worldFrameOf(nodeId)
       const declared = this.#createdTableFrames.get(nodeId)
       if (!frame || !declared) return null
-      const height = declared.rows * 36 + declared.padding * 2 + declared.borderWidth * 2 + 8
+      const fallback = declared.rowHeight ?? 36
+      let rowsHeight = 0
+      for (let i = 0; i < declared.rows; i++) {
+        rowsHeight += declared.rowHeights?.[i] ?? fallback
+        if (i < declared.rows - 1) rowsHeight += declared.gap
+      }
+      const height = rowsHeight + declared.padding * 2 + declared.borderWidth * 2 + 8
       return {
         minX: frame.x + declared.x - 4,
         minY: frame.y + declared.y - 4,

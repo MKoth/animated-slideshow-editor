@@ -177,6 +177,46 @@ function TableLevelInspector({
     apply(commitDimensionWidths(target, 'columns', index, raw))
   }
 
+  const commitRowHeight = (raw: string) => {
+    if (raw.trim() === '') {
+      const next = { ...table }
+      delete next.rowHeight
+      runCommand(notify, () =>
+        dispatch(new SetTableComponentCommand({ nodeId: target.id, table: next })),
+      )
+      return
+    }
+    const value = Number(raw)
+    if (Number.isFinite(value) && value > 0) {
+      apply({ rowHeight: value })
+    } else {
+      notify('Row height must be a number greater than 0')
+    }
+  }
+
+  const commitRowHeightAt = (index: number, raw: string) => {
+    const value = Number(raw)
+    if (!Number.isFinite(value) || value <= 0) {
+      notify('Row height must be a number greater than 0')
+      return
+    }
+    const count = target.children.length
+    const next: number[] = []
+    for (let i = 0; i < count; i++) {
+      if (i === index) next.push(value)
+      else next.push(table.rowHeights?.[i] ?? table.rowHeight ?? 30)
+    }
+    apply({ rowHeights: next })
+  }
+
+  const resetRowHeights = () => {
+    const next = { ...table }
+    delete next.rowHeights
+    runCommand(notify, () =>
+      dispatch(new SetTableComponentCommand({ nodeId: target.id, table: next })),
+    )
+  }
+
   const addRow = () => {
     runCommand(notify, () => {
       return dispatch(new AddTableRowCommand({ tableNodeId: target.id, index: -1 }))
@@ -253,6 +293,44 @@ function TableLevelInspector({
         onCommit={commitGap}
         onAdjust={(value) => apply({ gap: value })}
       />
+
+      <NumericField
+        label="Row Height"
+        value={table.rowHeight ?? null}
+        step={1}
+        disabled={playing}
+        onCommit={commitRowHeight}
+        onAdjust={(value) => {
+          if (value > 0) apply({ rowHeight: value })
+        }}
+      />
+
+      {target.children.map((_, i) => (
+        <NumericField
+          key={`row-${i}`}
+          label={`Row ${i + 1} Height`}
+          value={table.rowHeights?.[i] ?? table.rowHeight ?? 30}
+          step={1}
+          disabled={playing}
+          onCommit={(raw) => commitRowHeightAt(i, raw)}
+          onAdjust={(value) => {
+            if (value > 0) commitRowHeightAt(i, String(value))
+          }}
+        />
+      ))}
+
+      {table.rowHeights !== undefined && (
+        <div className="inspector-field inspector-field--buttons">
+          <button
+            className="inspector-field__button"
+            disabled={playing}
+            onClick={resetRowHeights}
+            title="Clear per-row heights and fall back to Row Height"
+          >
+            Reset Row Heights
+          </button>
+        </div>
+      )}
 
       <NumericField
         label="Border Width"

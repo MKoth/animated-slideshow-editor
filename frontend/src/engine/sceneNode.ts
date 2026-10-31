@@ -557,6 +557,29 @@ function parseTableComponent(component: Record<string, unknown>, nodeId: string)
   if (background !== undefined && !isTableBackground(background)) {
     throw new Error(`${ctx} background must be a hex color, "transparent" or "none"`)
   }
+  let rowHeight: number | undefined
+  if (component.rowHeight !== undefined) {
+    if (
+      typeof component.rowHeight !== 'number' ||
+      !Number.isFinite(component.rowHeight) ||
+      component.rowHeight <= 0
+    ) {
+      throw new Error(`${ctx} rowHeight must be a number greater than 0`)
+    }
+    rowHeight = component.rowHeight
+  }
+  let rowHeights: number[] | undefined
+  if (component.rowHeights !== undefined) {
+    if (!Array.isArray(component.rowHeights)) {
+      throw new Error(`${ctx} rowHeights must be an array of numbers`)
+    }
+    rowHeights = component.rowHeights.map((h, i) => {
+      if (typeof h !== 'number' || !Number.isFinite(h) || h <= 0) {
+        throw new Error(`${ctx}.rowHeights[${i}] must be a number greater than 0`)
+      }
+      return h
+    })
+  }
   return {
     kind: 'table',
     columns,
@@ -566,6 +589,8 @@ function parseTableComponent(component: Record<string, unknown>, nodeId: string)
     borderRadius,
     padding,
     background,
+    ...(rowHeight !== undefined ? { rowHeight } : {}),
+    ...(rowHeights !== undefined ? { rowHeights } : {}),
   }
 }
 
@@ -710,6 +735,12 @@ function freezeComponents(components: NodeComponents): NodeComponents {
           borderRadius: components.table.borderRadius,
           padding: components.table.padding,
           background: components.table.background,
+          ...(components.table.rowHeight !== undefined
+            ? { rowHeight: components.table.rowHeight }
+            : {}),
+          ...(components.table.rowHeights !== undefined
+            ? { rowHeights: Object.freeze([...components.table.rowHeights]) }
+            : {}),
         })
       : undefined,
     tableRow: components.tableRow ? Object.freeze({ ...components.tableRow }) : undefined,

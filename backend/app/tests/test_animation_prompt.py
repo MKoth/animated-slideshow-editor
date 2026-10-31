@@ -193,6 +193,7 @@ def test_scenario_audio_blackboard_prompts_scope_to_their_stages() -> None:
     assert "reveal(nodeonly(table1))" in board
     assert "never use it when cells have separate reveals" in board
     assert "do not add mask-setup wipes" in board
+    assert "rowheight" in board
     assert "never claim a mutation happened before approval" in board
     assert ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS not in _system_prompt_for_mode(
         DEFAULT_SYSTEM_PROMPT, "blackboard"

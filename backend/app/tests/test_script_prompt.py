@@ -75,6 +75,14 @@ def test_script_prompt_teaches_cursor_setup_and_reveal_pairing() -> None:
     assert "do not add mask-setup wipes" in lowered
 
 
+def test_script_prompt_teaches_table_row_heights() -> None:
+    prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "script")
+    lowered = prompt.lower()
+    assert "rowheight" in lowered
+    assert "rowheights" in lowered
+    assert "30px" in lowered or "30 px" in lowered
+
+
 def test_script_focus_renders_source_blocks_and_diagnostics() -> None:
     text = context_to_text(
         {
