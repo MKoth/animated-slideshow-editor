@@ -9,6 +9,9 @@ export interface TTSRequest {
   readonly locale?: string
   readonly voice?: string
   readonly instruction?: string
+  readonly emotion?: string
+  readonly speed?: number
+  readonly volume?: number
   readonly referenceAssetId?: string
   readonly refText?: string
   readonly modelId?: string

@@ -526,3 +526,241 @@ def test_cartesia_normalizes_streaming_wav_header(
     # Unit-level: passthrough for non-WAV / already-correct input.
     assert _normalize_wav_header(b"nope") == b"nope"
     assert _normalize_wav_header(raw) == body
+
+
+def test_cartesia_normalize_delivery_helpers() -> None:
+    from app.tts.registry import (
+        normalize_cartesia_emotion,
+        normalize_cartesia_speed,
+        normalize_cartesia_volume,
+    )
+
+    # Auto / empty / None means omit.
+    assert normalize_cartesia_emotion(None) is None
+    assert normalize_cartesia_emotion("") is None
+    assert normalize_cartesia_emotion("auto") is None
+    assert normalize_cartesia_emotion("Curious") == "curious"
+    assert normalize_cartesia_speed(None) is None
+    assert normalize_cartesia_speed("auto") is None
+    assert normalize_cartesia_speed(1.0) == 1.0
+    assert normalize_cartesia_volume(None) is None
+    assert normalize_cartesia_volume("") is None
+    # Invalid values raise (API surfaces as 422).
+    with pytest.raises(ValueError):
+        normalize_cartesia_emotion("not-an-emotion")
+    with pytest.raises(ValueError):
+        normalize_cartesia_speed(0.5)
+    with pytest.raises(ValueError):
+        normalize_cartesia_speed(1.6)
+    with pytest.raises(ValueError):
+        normalize_cartesia_volume(0.4)
+    with pytest.raises(ValueError):
+        normalize_cartesia_volume(2.5)
+
+
+def test_cartesia_synthesize_omits_generation_config_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from app.tts.cartesia import synthesize_cartesia
+
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-key-123")
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+        content = _fake_wav_bytes()
+        text = ""
+
+    def _fake_post(*a: object, **k: object) -> _Resp:
+        seen["json"] = k.get("json")
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", _fake_post)
+    synthesize_cartesia("hello default")
+    payload = seen["json"]
+    assert isinstance(payload, dict)
+    assert "generation_config" not in payload
+
+
+def test_cartesia_synthesize_includes_generation_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from app.tts.cartesia import synthesize_cartesia
+
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-key-123")
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+        content = _fake_wav_bytes()
+        text = ""
+
+    def _fake_post(*a: object, **k: object) -> _Resp:
+        seen["json"] = k.get("json")
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", _fake_post)
+    synthesize_cartesia("hello expressive", emotion="curious", speed=1.1, volume=0.9)
+    payload = seen["json"]
+    assert isinstance(payload, dict)
+    assert payload["generation_config"] == {
+        "emotion": "curious",
+        "speed": 1.1,
+        "volume": 0.9,
+    }
+
+
+def test_cartesia_generate_forwards_delivery(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-key-123")
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+        content = _fake_wav_bytes()
+        text = ""
+
+    def _fake_post(*a: object, **k: object) -> _Resp:
+        seen["json"] = k.get("json")
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", _fake_post)
+    r = client.post(
+        "/api/tts/generate",
+        json={
+            "text": "This is the bus.",
+            "provider": "cartesia",
+            "modelId": "sonic-3.6",
+            "emotion": "curious",
+            "speed": 1.1,
+            "volume": 0.9,
+        },
+    )
+    assert r.status_code == 200, r.text
+    payload = seen["json"]
+    assert isinstance(payload, dict)
+    assert payload["generation_config"] == {
+        "emotion": "curious",
+        "speed": 1.1,
+        "volume": 0.9,
+    }
+
+
+def test_cartesia_generate_defaults_omit_generation_config(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-key-123")
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+        content = _fake_wav_bytes()
+        text = ""
+
+    def _fake_post(*a: object, **k: object) -> _Resp:
+        seen["json"] = k.get("json")
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", _fake_post)
+    r = client.post(
+        "/api/tts/generate",
+        json={"text": "neutral line", "provider": "cartesia", "modelId": "sonic-3.6"},
+    )
+    assert r.status_code == 200, r.text
+    payload = seen["json"]
+    assert isinstance(payload, dict)
+    assert "generation_config" not in payload
+
+
+def test_cartesia_generate_invalid_delivery_is_422(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-key-123")
+    assert (
+        client.post(
+            "/api/tts/generate",
+            json={"text": "hi", "provider": "cartesia", "emotion": "not-an-emotion"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/tts/generate",
+            json={"text": "hi", "provider": "cartesia", "speed": 2.0},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/tts/generate",
+            json={"text": "hi", "provider": "cartesia", "volume": 0.1},
+        ).status_code
+        == 422
+    )
+
+
+def test_cartesia_prompt_params_delivery_and_body_override(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-key-123")
+    seen: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+        content = _fake_wav_bytes()
+        text = ""
+
+    def _fake_post(*a: object, **k: object) -> _Resp:
+        seen["json"] = k.get("json")
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "post", _fake_post)
+    r = client.post(
+        "/api/voice-prompts",
+        json={
+            "title": "Curious Mike",
+            "instruction": "curious delivery",
+            "provider": "cartesia",
+            "modelId": "sonic-3.6",
+            "params": {"emotion": "curious", "speed": 0.9, "volume": 1.1},
+        },
+    )
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+    # Prompt-stored delivery applies when the body omits it.
+    r1 = client.post(
+        "/api/tts/generate",
+        json={"text": "prompt default", "promptId": pid, "provider": "cartesia"},
+    )
+    assert r1.status_code == 200, r1.text
+    payload = seen["json"]
+    assert isinstance(payload, dict)
+    assert payload["generation_config"] == {
+        "emotion": "curious",
+        "speed": 0.9,
+        "volume": 1.1,
+    }
+    # Per-request body wins over the prompt.
+    r2 = client.post(
+        "/api/tts/generate",
+        json={"text": "override", "promptId": pid, "provider": "cartesia", "emotion": "sad"},
+    )
+    assert r2.status_code == 200, r2.text
+    payload2 = seen["json"]
+    assert isinstance(payload2, dict)
+    assert payload2["generation_config"] == {
+        "emotion": "sad",
+        "speed": 0.9,
+        "volume": 1.1,
+    }

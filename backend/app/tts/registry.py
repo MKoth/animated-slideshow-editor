@@ -119,6 +119,85 @@ CARTESIA_LANGUAGES: list[str] = [
 #: Default Cartesia voice (user's saved "Mike" voice) used when no voice is chosen.
 DEFAULT_CARTESIA_VOICE_ID: str = "f6184e65-98f2-4e3d-84e5-a2eb198b8688"
 
+#: Emotion / speed / volume guidance for Cartesia sonic-3+ (`generation_config`
+#: on POST /tts/bytes). All optional — when omitted Cartesia infers delivery
+#: from the transcript. See docs "Volume, Speed, and Emotion".
+CARTESIA_EMOTIONS: list[str] = [
+    "neutral",
+    "happy",
+    "excited",
+    "enthusiastic",
+    "elated",
+    "euphoric",
+    "triumphant",
+    "amazed",
+    "surprised",
+    "flirtatious",
+    "curious",
+    "content",
+    "peaceful",
+    "serene",
+    "calm",
+    "grateful",
+    "affectionate",
+    "trust",
+    "sympathetic",
+    "anticipation",
+    "mysterious",
+    "angry",
+    "mad",
+    "outraged",
+    "frustrated",
+    "agitated",
+    "threatened",
+    "disgusted",
+    "contempt",
+    "envious",
+    "sarcastic",
+    "ironic",
+    "sad",
+    "dejected",
+    "melancholic",
+    "disappointed",
+    "hurt",
+    "guilty",
+    "bored",
+    "tired",
+    "rejected",
+    "nostalgic",
+    "wistful",
+    "apologetic",
+    "hesitant",
+    "insecure",
+    "confused",
+    "resigned",
+    "anxious",
+    "panicked",
+    "alarmed",
+    "scared",
+    "proud",
+    "confident",
+    "distant",
+    "skeptical",
+    "contemplative",
+    "determined",
+]
+
+#: Primary emotions with the most training data / best results.
+CARTESIA_PRIMARY_EMOTIONS: list[str] = [
+    "neutral",
+    "calm",
+    "angry",
+    "content",
+    "sad",
+    "scared",
+]
+
+CARTESIA_SPEED_MIN: float = 0.6
+CARTESIA_SPEED_MAX: float = 1.5
+CARTESIA_VOLUME_MIN: float = 0.5
+CARTESIA_VOLUME_MAX: float = 2.0
+
 #: Regional locale codes accepted by Cartesia `locale` (and `language`) on
 #: POST /tts/bytes, per docs "Locale codes". Base codes from
 #: CARTESIA_LANGUAGES are also accepted; combining `language` + `locale`
@@ -214,6 +293,74 @@ def normalize_cartesia_locale(raw: str | None) -> str | None:
             f"{', '.join(CARTESIA_LOCALES)}"
         )
     raise ValueError(f"unknown Cartesia locale '{raw}'")
+
+
+def normalize_cartesia_emotion(raw: str | None) -> str | None:
+    """Normalize to a Cartesia emotion code, or None (Auto/omit).
+
+    Accepts case-insensitive names; empty / "auto" means omit so Cartesia
+    infers delivery from the transcript. Raises ValueError for unknown codes.
+    """
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped or stripped.lower() == "auto":
+        return None
+    lowered = stripped.lower()
+    if lowered not in CARTESIA_EMOTIONS:
+        raise ValueError(
+            f"unknown Cartesia emotion '{raw}'; must be one of "
+            f"{', '.join(sorted(CARTESIA_EMOTIONS))}"
+        )
+    return lowered
+
+
+def normalize_cartesia_speed(raw: float | str | None) -> float | None:
+    """Normalize to a Cartesia speed multiplier, or None (Auto/omit)."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped or stripped.lower() == "auto":
+            return None
+        try:
+            value = float(stripped)
+        except ValueError as e:
+            raise ValueError(f"invalid Cartesia speed '{raw}'; must be a number") from e
+    elif isinstance(raw, (int, float)):
+        value = float(raw)
+    else:
+        raise TypeError(f"invalid Cartesia speed '{raw}'; must be a number")
+    if not (CARTESIA_SPEED_MIN <= value <= CARTESIA_SPEED_MAX):
+        raise ValueError(
+            f"invalid Cartesia speed '{raw}'; must be between "
+            f"{CARTESIA_SPEED_MIN} and {CARTESIA_SPEED_MAX}"
+        )
+    return value
+
+
+def normalize_cartesia_volume(raw: float | str | None) -> float | None:
+    """Normalize to a Cartesia volume multiplier, or None (Auto/omit)."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped or stripped.lower() == "auto":
+            return None
+        try:
+            value = float(stripped)
+        except ValueError as e:
+            raise ValueError(f"invalid Cartesia volume '{raw}'; must be a number") from e
+    elif isinstance(raw, (int, float)):
+        value = float(raw)
+    else:
+        raise TypeError(f"invalid Cartesia volume '{raw}'; must be a number")
+    if not (CARTESIA_VOLUME_MIN <= value <= CARTESIA_VOLUME_MAX):
+        raise ValueError(
+            f"invalid Cartesia volume '{raw}'; must be between "
+            f"{CARTESIA_VOLUME_MIN} and {CARTESIA_VOLUME_MAX}"
+        )
+    return value
 
 
 # Auto is not part of _SUPPORTED_LANGUAGES; UI exposes it as "" (empty selects Auto).

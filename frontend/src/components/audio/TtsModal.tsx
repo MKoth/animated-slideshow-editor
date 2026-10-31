@@ -53,6 +53,14 @@ import {
   getFallbackCapabilities,
   modelDownloadLabel,
 } from '../../engine/ttsRegistry'
+import {
+  extractCartesiaDelivery,
+  getDefaultCartesiaDelivery,
+  mergeCartesiaDelivery,
+  stripCartesiaDelivery,
+  type CartesiaDelivery,
+} from '../../engine/cartesiaControls'
+import { CartesiaDeliveryControls } from './CartesiaDeliveryControls'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 
 /**
@@ -108,6 +116,9 @@ export function TtsModal({
   // needs it word-for-word; the standard recording uses its own transcript).
   const [referenceTranscript, setReferenceTranscript] = useState('')
   const [instruction, setInstruction] = useState('')
+  // Cartesia delivery guidance (per-generation override; Auto = omit).
+  const [delivery, setDelivery] = useState<CartesiaDelivery>(() => getDefaultCartesiaDelivery())
+  const [hasEditedDelivery, setHasEditedDelivery] = useState(false)
 
   const [status, setStatus] = useState<'idle' | 'generating' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -174,6 +185,9 @@ export function TtsModal({
   const [formShowAdvanced, setFormShowAdvanced] = useState(false)
   const [formModelId, setFormModelId] = useState('')
   const [formProvider, setFormProvider] = useState('')
+  const [formDelivery, setFormDelivery] = useState<CartesiaDelivery>(() =>
+    getDefaultCartesiaDelivery(),
+  )
   const [formError, setFormError] = useState<string | null>(null)
   const [formSaving, setFormSaving] = useState(false)
 
@@ -478,6 +492,12 @@ export function TtsModal({
         }
       }
       if (!instruction && selected.instruction) setInstruction(selected.instruction)
+      if (!hasEditedDelivery) {
+        const stored = extractCartesiaDelivery(selected.params as Record<string, unknown> | null)
+        if (stored.emotion !== '' || stored.speed !== null || stored.volume !== null) {
+          setDelivery(stored)
+        }
+      }
       if (!hasEditedReference) {
         const params =
           (selected.params as unknown as {
@@ -511,6 +531,7 @@ export function TtsModal({
     voice,
     instruction,
     hasEditedReference,
+    hasEditedDelivery,
     ttsModel,
     ttsProviderId,
     capabilitiesMap,
@@ -654,6 +675,11 @@ export function TtsModal({
           locale: normalizedLocale || undefined,
           voice: voice || undefined,
           instruction: instruction || undefined,
+          // Cartesia delivery: Auto values are omitted so Cartesia infers
+          // from context; only sent for Cartesia generations.
+          ...(isTtsCartesia && delivery.emotion ? { emotion: delivery.emotion } : {}),
+          ...(isTtsCartesia && delivery.speed !== null ? { speed: delivery.speed } : {}),
+          ...(isTtsCartesia && delivery.volume !== null ? { volume: delivery.volume } : {}),
           referenceAssetId:
             voiceReference === TTS_STANDARD_REFERENCE
               ? ''
@@ -733,6 +759,8 @@ export function TtsModal({
       locale,
       voice,
       instruction,
+      delivery,
+      isTtsCartesia,
       voiceReference,
       ttsModel,
       ttsProviderId,
@@ -782,6 +810,7 @@ export function TtsModal({
     setFormVoice('')
     setFormVoiceReference('')
     setFormVoiceWarning(null)
+    setFormDelivery(getDefaultCartesiaDelivery())
     const def = TTS_PRESETS.Balanced
     setFormPreset('Balanced')
     setFormTemperature(def.temperature)
@@ -849,6 +878,7 @@ export function TtsModal({
     const matched = paramsMatchPreset(p.params as Record<string, unknown> | null)
     setFormPreset(matched ?? 'Balanced')
     setFormShowAdvanced(false)
+    setFormDelivery(extractCartesiaDelivery(p.params as Record<string, unknown> | null))
     setFormParams(p.params ? JSON.stringify(p.params, null, 2) : '')
     const pm = (p as unknown as { modelId?: string }).modelId ?? ''
     const pp = (p as unknown as { provider?: string }).provider ?? ''
@@ -982,7 +1012,7 @@ export function TtsModal({
       }
     }
     // Merge slider TTS params (sliders override advanced JSON TTS keys).
-    // Cartesia ignores local generation params — keep advanced JSON as-is.
+    // Cartesia ignores local generation params — delivery controls own params.
     let mergedParams: Record<string, unknown> | undefined = params ? { ...params } : undefined
     if (!isFormCartesia) {
       const sliderTts: Record<string, number> = {
@@ -996,6 +1026,10 @@ export function TtsModal({
         mergedParams,
         sliderTts as Partial<Record<keyof typeof TTS_PARAM_RANGES, number>>,
       )
+      mergedParams = stripCartesiaDelivery(mergedParams) ?? undefined
+    } else {
+      mergedParams = mergeCartesiaDelivery(mergedParams, formDelivery)
+      if (mergedParams && Object.keys(mergedParams).length === 0) mergedParams = undefined
     }
     // Merge voice reference for Base models into params.referenceAssetId
     if (isFormReferenceEnabled) {
@@ -1423,6 +1457,7 @@ export function TtsModal({
                       setFormVoice('')
                       setFormLanguage('')
                       setFormVoiceWarning(null)
+                      setFormDelivery(getDefaultCartesiaDelivery())
                     }
                   }}
                   style={{
@@ -1448,10 +1483,11 @@ export function TtsModal({
               dropdown overrides it.
             </div>
             {isFormCartesia ? (
-              <div style={{ fontSize: 10, color: '#888' }}>
-                Cartesia ignores local generation params (temperature, top_k, …) — voice and
-                language above are all it needs.
-              </div>
+              <CartesiaDeliveryControls
+                value={formDelivery}
+                onChange={setFormDelivery}
+                testIdPrefix="voice-prompt"
+              />
             ) : (
               <div
                 style={{
@@ -1923,6 +1959,8 @@ export function TtsModal({
                   setLanguage('')
                   setLocale('')
                   setTtsVoiceWarning(null)
+                  setDelivery(getDefaultCartesiaDelivery())
+                  setHasEditedDelivery(false)
                 }
               }}
               style={{
@@ -2228,6 +2266,18 @@ export function TtsModal({
               })()}
           </label>
         </div>
+        {isTtsCartesia && (
+          <div style={{ marginBottom: 12 }}>
+            <CartesiaDeliveryControls
+              value={delivery}
+              onChange={(next) => {
+                setDelivery(next)
+                setHasEditedDelivery(true)
+              }}
+              testIdPrefix="tts"
+            />
+          </div>
+        )}
 
         {status === 'generating' && (
           <div

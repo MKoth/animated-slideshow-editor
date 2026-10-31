@@ -326,7 +326,8 @@ class CartesiaTtsEngine:
         params: dict[str, object] | None = None,
         locale: str | None = None,
     ) -> bytes:
-        # instruction/params are local-Qwen concepts; Cartesia ignores them.
+        # instruction is a local-Qwen concept; Cartesia ignores it. Delivery
+        # guidance (emotion/speed/volume) arrives via params.
         from app.tts.cartesia import synthesize_cartesia
 
         voice_id: str | None = None
@@ -336,12 +337,18 @@ class CartesiaTtsEngine:
             maybe = params.get("voiceId") or params.get("voice_id")
             if isinstance(maybe, str) and maybe.strip():
                 voice_id = maybe.strip()
+        emotion = _params_str(params, "emotion")
+        speed = _params_float(params, "speed")
+        volume = _params_float(params, "volume")
         return synthesize_cartesia(
             text,
             voice_id=voice_id,
             language=language,
             locale=locale,
             model_id=self._model_id,
+            emotion=emotion,
+            speed=speed,
+            volume=volume,
         )
 
 
@@ -429,6 +436,29 @@ def _params_str(params: dict[str, object] | None, *keys: str) -> str | None:
         value = params.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
+    return None
+
+
+def _params_float(params: dict[str, object] | None, *keys: str) -> float | None:
+    """Return the first numeric param found, or None (Auto/omit)."""
+    if not isinstance(params, dict):
+        return None
+    for key in keys:
+        value = params.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped.lower() == "auto":
+                continue
+            try:
+                return float(stripped)
+            except ValueError:
+                continue
     return None
 
 

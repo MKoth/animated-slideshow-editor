@@ -174,9 +174,23 @@ def synthesize_cartesia(
     locale: str | None = None,
     model_id: str = "sonic-3.6",
     api_key: str | None = None,
+    emotion: str | None = None,
+    speed: float | None = None,
+    volume: float | None = None,
 ) -> bytes:
-    """Synthesize speech via Cartesia POST /tts/bytes. Returns WAV bytes."""
-    from app.tts.registry import DEFAULT_CARTESIA_VOICE_ID, normalize_cartesia_locale
+    """Synthesize speech via Cartesia POST /tts/bytes. Returns WAV bytes.
+
+    `emotion`/`speed`/`volume` map to `generation_config` and are all
+    optional — when all are None no `generation_config` is sent and Cartesia
+    infers delivery from the transcript.
+    """
+    from app.tts.registry import (
+        DEFAULT_CARTESIA_VOICE_ID,
+        normalize_cartesia_emotion,
+        normalize_cartesia_locale,
+        normalize_cartesia_speed,
+        normalize_cartesia_volume,
+    )
 
     key = _require_key(api_key)
     content = text.strip() if isinstance(text, str) else ""
@@ -189,6 +203,18 @@ def synthesize_cartesia(
     )
     normalized_locale = normalize_cartesia_locale(locale)
     normalized_language = _normalize_language(language)
+    try:
+        normalized_emotion = normalize_cartesia_emotion(emotion)
+    except (ValueError, TypeError) as e:
+        raise CartesiaRequestError(str(e)) from e
+    try:
+        normalized_speed = normalize_cartesia_speed(speed)
+    except (ValueError, TypeError) as e:
+        raise CartesiaRequestError(str(e)) from e
+    try:
+        normalized_volume = normalize_cartesia_volume(volume)
+    except (ValueError, TypeError) as e:
+        raise CartesiaRequestError(str(e)) from e
     body: dict[str, Any] = {
         "model_id": model_id,
         "transcript": content,
@@ -201,6 +227,15 @@ def synthesize_cartesia(
         body["locale"] = normalized_locale
     elif normalized_language is not None:
         body["language"] = normalized_language
+    generation_config: dict[str, Any] = {}
+    if normalized_emotion is not None:
+        generation_config["emotion"] = normalized_emotion
+    if normalized_speed is not None:
+        generation_config["speed"] = normalized_speed
+    if normalized_volume is not None:
+        generation_config["volume"] = normalized_volume
+    if generation_config:
+        body["generation_config"] = generation_config
     import httpx
 
     try:

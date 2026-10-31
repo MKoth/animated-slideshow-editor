@@ -94,6 +94,21 @@ class TTSGenerateRequest(BaseModel):
     )
     voice: str | None = None
     instruction: str | None = None
+    emotion: str | None = Field(
+        default=None,
+        description=(
+            "Cartesia delivery emotion (e.g. curious, sad, excited). "
+            "Omit/empty/Auto to let Cartesia infer from the transcript."
+        ),
+    )
+    speed: float | None = Field(
+        default=None,
+        description="Cartesia delivery speed 0.6-1.5. Omit to infer from context.",
+    )
+    volume: float | None = Field(
+        default=None,
+        description="Cartesia delivery volume 0.5-2.0. Omit to infer from context.",
+    )
     referenceAssetId: str | None = Field(
         default=None,
         description=(
@@ -153,6 +168,44 @@ class TTSGenerateRequest(BaseModel):
 
             return normalize_cartesia_locale(v)
         except ValueError as e:
+            raise ValueError(str(e)) from e
+
+    @field_validator("emotion", mode="before")
+    @classmethod
+    def validate_emotion(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise TypeError("emotion must be a string")
+        try:
+            from app.tts.registry import normalize_cartesia_emotion
+
+            return normalize_cartesia_emotion(v)
+        except ValueError as e:
+            raise ValueError(str(e)) from e
+
+    @field_validator("speed", mode="before")
+    @classmethod
+    def validate_speed(cls, v: float | str | None) -> float | None:
+        if v is None:
+            return None
+        try:
+            from app.tts.registry import normalize_cartesia_speed
+
+            return normalize_cartesia_speed(v)
+        except (ValueError, TypeError) as e:
+            raise ValueError(str(e)) from e
+
+    @field_validator("volume", mode="before")
+    @classmethod
+    def validate_volume(cls, v: float | str | None) -> float | None:
+        if v is None:
+            return None
+        try:
+            from app.tts.registry import normalize_cartesia_volume
+
+            return normalize_cartesia_volume(v)
+        except (ValueError, TypeError) as e:
             raise ValueError(str(e)) from e
 
     @model_validator(mode="after")
@@ -299,6 +352,47 @@ def _select_voice_reference(
                 ref_text_override = _v.strip()
                 break
     return ref_asset_id, ref_text_override, explicit_default
+
+
+def _select_cartesia_delivery(
+    body_emotion: str | None,
+    body_speed: float | None,
+    body_volume: float | None,
+    prompt_params: dict[str, Any] | None,
+) -> tuple[str | None, float | None, float | None]:
+    """Resolve Cartesia delivery: per-request wins over prompt-stored params.
+
+    Body values are already normalized by pydantic validators. Prompt-stored
+    values are normalized here (invalid stored values raise ValueError/TypeError→422).
+    Returns (emotion, speed, volume) with None meaning Auto/omit.
+    """
+    from app.tts.registry import (
+        normalize_cartesia_emotion,
+        normalize_cartesia_speed,
+        normalize_cartesia_volume,
+    )
+
+    emotion = body_emotion
+    speed = body_speed
+    volume = body_volume
+    if isinstance(prompt_params, dict):
+        if emotion is None:
+            raw = prompt_params.get("emotion")
+            if isinstance(raw, str) and raw.strip():
+                emotion = normalize_cartesia_emotion(raw)
+        if speed is None:
+            raw = prompt_params.get("speed")
+            if raw is not None and not (isinstance(raw, str) and not raw.strip()):
+                normalized = normalize_cartesia_speed(raw)
+                if normalized is not None:
+                    speed = normalized
+        if volume is None:
+            raw = prompt_params.get("volume")
+            if raw is not None and not (isinstance(raw, str) and not raw.strip()):
+                normalized = normalize_cartesia_volume(raw)
+                if normalized is not None:
+                    volume = normalized
+    return emotion, speed, volume
 
 
 def _get_registry_defaults() -> tuple[
@@ -828,6 +922,29 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
         if ref_text_override is not None:
             merged["ref_text"] = ref_text_override
         effective_params = merged or None
+
+    # Resolve Cartesia delivery guidance: per-request > prompt-stored > Auto.
+    # Stored prompt values are validated here; invalid values are 422.
+    try:
+        effective_emotion, effective_speed, effective_volume = _select_cartesia_delivery(
+            body.emotion,
+            body.speed,
+            body.volume,
+            effective_params,
+        )
+    except (ValueError, TypeError) as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    if effective_emotion is not None or effective_speed is not None or effective_volume is not None:
+        merged_delivery: dict[str, Any] = (
+            dict(effective_params) if isinstance(effective_params, dict) else {}
+        )
+        if effective_emotion is not None:
+            merged_delivery["emotion"] = effective_emotion
+        if effective_speed is not None:
+            merged_delivery["speed"] = effective_speed
+        if effective_volume is not None:
+            merged_delivery["volume"] = effective_volume
+        effective_params = merged_delivery or None
 
     # Resolve engine: always use singleton factory with effective values (handles reload)
     provider_for_engine = effective_provider
