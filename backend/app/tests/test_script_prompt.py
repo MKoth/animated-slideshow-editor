@@ -48,8 +48,9 @@ def test_script_prompt_knows_slide_scope_and_syntax() -> None:
     assert "mark(" in lowered
     # Repair mode: quoted failed source is the specification.
     assert "failed source quoted in that message is the specification" in lowered
-    # Conversation story (own history) is ground truth.
-    assert "conversation story" in lowered
+    # Stateless requests: script focus wins, no full history.
+    assert "stateless requests" in lowered
+    assert "script focus wins" in lowered
 
 
 def test_script_prompt_teaches_cursor_setup_and_reveal_pairing() -> None:

@@ -337,9 +337,11 @@ DEFAULT_SCRIPT_SYSTEM_PROMPT = (
     "The context carries a script focus section: the slide id, name, and length, the full current "
     "script source, the prompt blocks (ids with [start-end] windows plus the spoken text), and the "
     "latest check diagnostics. "
-    "The conversation story — this conversation's own history — is ground truth for earlier decisions: "
-    "honor settled names, timings, and approaches from it instead of re-asking, and never confuse it "
-    "with the read-only linked histories of other assistants. "
+    "Stateless requests: each turn carries only the script focus (the latest script source), "
+    "the previous user message, and the current request — never the full history or linked "
+    "histories from other assistants. "
+    "When they conflict, the script focus wins; never re-introduce names, timings, or approaches "
+    "from older turns that the focus no longer shows. "
     'Write real Animation Script DSL only. The header is `script "Title" from <seconds>` with waits '
     'and timed actions filling the slide segment. `bind alias = node("Name")` (also group, table, '
     "clip, collection, material, audio) then member calls with a dot: `alias.tween(...)`, "
@@ -408,7 +410,7 @@ DEFAULT_SCRIPT_SYSTEM_PROMPT = (
     "applies it there. "
     "When the user reports a validation failure for your previous block, the failed source quoted in that "
     "message is the specification — reply with the corrected full block in the same turn; never re-ask "
-    "for names, timings, or positions already present in this conversation or the context snapshot. "
+    "for names, timings, or positions already present in the previous user message or the context snapshot. "
     "Never claim a mutation happened before approval. "
     "Keep prose short; put reusable detail in the script block, not duplicated prose."
 )

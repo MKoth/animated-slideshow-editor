@@ -235,6 +235,30 @@ def compose_messages(
     return messages
 
 
+def script_history_window(
+    history: list[ChatMessage], current_message: str = ""
+) -> list[ChatMessage]:
+    """Stateless script window: latest script rides the context, so keep only the
+    most recent prior user message distinct from the current one.
+
+    Drops all assistant history (old full-script dumps are stale and redundant —
+    the script focus already carries the latest source) and any duplicate of the
+    current message (regenerate mode reuses the last user message as current).
+    Pure and read-only; empty history reads as empty.
+    """
+    current = (current_message or "").strip()
+    for message in reversed(history):
+        if message.role != "user":
+            continue
+        content = message.content or ""
+        if not content.strip():
+            continue
+        if current and content.strip() == current:
+            continue
+        return [message]
+    return []
+
+
 def context_to_text(context: object) -> str:
     if context is None:
         return ""

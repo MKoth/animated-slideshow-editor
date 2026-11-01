@@ -10,6 +10,7 @@ from app.ai.prompting import (
     context_to_text,
     estimate_tokens,
     format_rendered_view_label,
+    script_history_window,
 )
 from app.ai.zen import (
     ZenClient,
@@ -218,6 +219,37 @@ def test_compose_never_splits_message() -> None:
     history = [ChatMessage(role="user", content="abcdefgh")]
     composed = compose_messages("s", "c", history, "now", budget_tokens=1000)
     assert any(m.content == "abcdefgh" for m in composed)
+
+
+def test_script_history_window_keeps_only_last_prior_user_message() -> None:
+    history = [
+        ChatMessage(role="user", content="first request"),
+        ChatMessage(role="assistant", content="full old script dump"),
+        ChatMessage(role="user", content="second request"),
+        ChatMessage(role="assistant", content="another old script dump"),
+    ]
+    window = script_history_window(history, "third request")
+    assert window == [ChatMessage(role="user", content="second request")]
+
+
+def test_script_history_window_drops_assistant_only_history() -> None:
+    history = [ChatMessage(role="assistant", content="old script dump")]
+    assert script_history_window(history, "fix timing") == []
+
+
+def test_script_history_window_skips_duplicate_of_current() -> None:
+    # Regenerate mode reuses the last user message as current: don't echo it.
+    history = [
+        ChatMessage(role="user", content="original ask"),
+        ChatMessage(role="assistant", content="old script"),
+        ChatMessage(role="user", content="fix timing"),
+    ]
+    window = script_history_window(history, "fix timing")
+    assert window == [ChatMessage(role="user", content="original ask")]
+
+
+def test_script_history_window_empty_history() -> None:
+    assert script_history_window([], "hello") == []
 
 
 def test_error_taxonomy_mapping() -> None:

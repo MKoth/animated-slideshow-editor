@@ -27,6 +27,7 @@ from app.ai.prompting import (
     compose_messages,
     context_to_text,
     estimate_tokens,
+    script_history_window,
 )
 from app.ai.schemas import (
     AiBoardCompile,
@@ -566,17 +567,23 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
         context_text = f"{context_text}\nassistant mode: {effective_mode}"
     else:
         context_text = f"assistant mode: {effective_mode}"
-    linked = _linked_histories_text(
-        library,
-        conversation.project_id,
-        body.conversationId,
-        library.context_budget,
-        exclude_modes=_ROOM_MODES if effective_mode == "scenario" else None,
-    )
+    linked = ""
+    if effective_mode != "script":
+        linked = _linked_histories_text(
+            library,
+            conversation.project_id,
+            body.conversationId,
+            library.context_budget,
+            exclude_modes=_ROOM_MODES if effective_mode == "scenario" else None,
+        )
     if linked:
         context_text = f"{context_text}\n\nLinked project conversations:\n{linked}"
     stored = library.list_messages(body.conversationId)
     history = [ChatMessage(role=m.role, content=m.content) for m in stored]
+    if effective_mode == "script":
+        # Stateless script requests: the script focus already carries the latest
+        # source, so send only the most recent prior user message plus current.
+        history = script_history_window(history, current)
 
     def generate() -> Iterator[str]:
         # Persist the user message first so history is never lost.
@@ -3014,9 +3021,11 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
         context_text = f"{context_text}\nassistant mode: {effective_mode}"
     else:
         context_text = f"assistant mode: {effective_mode}"
-    linked = _linked_histories_text(
-        library, body.projectId, body.conversationId, library.context_budget
-    )
+    linked = ""
+    if effective_mode != "script":
+        linked = _linked_histories_text(
+            library, body.projectId, body.conversationId, library.context_budget
+        )
     if linked:
         context_text = f"{context_text}\n\nLinked project conversations:\n{linked}"
     stored = library.list_messages(body.conversationId)
@@ -3042,6 +3051,10 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
         + (f" Extra instruction: {hint}" if hint else "")
         + f"\n\nAssistant message:\n{message.content}"
     )
+    if effective_mode == "script":
+        # Stateless script proposals: latest source rides the context; the
+        # message being converted is already in user_text, so drop old dumps.
+        history = script_history_window(history, user_text)
     composed = compose_messages(system_prompt, context_text, history, user_text, budget)
     zen_messages = [{"role": m.role, "content": m.content} for m in composed]
 
