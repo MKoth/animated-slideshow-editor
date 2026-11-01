@@ -30,9 +30,12 @@ export interface TtsModelsResponse {
   defaultProvider: string
   default_model_id?: string
   default_provider?: string
+  defaultVoiceId?: string | null
+  voice?: string | null
+  tts_voice?: string | null
   capabilities?: Record<string, ModelCapabilities>
   perModel?: Record<string, ModelCapabilities>
-  defaults?: { provider: string; modelId: string }
+  defaults?: { provider: string; modelId: string; voice?: string | null }
   downloaded?: Record<string, boolean>
   modelsStatus?: Array<{ id: string; downloaded: boolean }>
   mlxAvailable?: boolean
@@ -45,12 +48,15 @@ export interface TtsCapabilitiesResponse {
   providers: string[]
   defaultModel: string
   defaultProvider: string
+  defaultVoiceId?: string | null
+  voice?: string | null
+  tts_voice?: string | null
   languages: string[]
   speakers: string[]
   capabilities: Record<string, ModelCapabilities>
   perModel: Record<string, ModelCapabilities>
   per_model?: Record<string, ModelCapabilities>
-  defaults: { provider: string; modelId: string }
+  defaults: { provider: string; modelId: string; voice?: string | null }
   downloaded?: Record<string, boolean>
   modelsStatus?: Array<{ id: string; downloaded: boolean }>
   mlxAvailable?: boolean
@@ -63,6 +69,9 @@ export interface TtsSettings {
   model_id?: string
   tts_provider?: string
   tts_model_id?: string
+  voice?: string | null
+  tts_voice?: string | null
+  cartesiaVoiceId?: string | null
   downloaded?: Record<string, boolean>
   modelsStatus?: Array<{ id: string; downloaded: boolean }>
   mlxAvailable?: boolean
@@ -96,7 +105,11 @@ export class TtsSettingsApi {
     return this.client.get<CartesiaVoicesResponse>(`/api/tts/voices${suffix}`)
   }
 
-  async updateSettings(input: { provider?: string; modelId?: string }): Promise<TtsSettings> {
+  async updateSettings(input: {
+    provider?: string
+    modelId?: string
+    voice?: string | null
+  }): Promise<TtsSettings> {
     return this.client.put<TtsSettings>('/api/tts/settings', JSON.stringify(input))
   }
 

@@ -1,15 +1,21 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useMemo, useState } from 'react'
 import { apiClient } from '../../api'
-import { TtsSettingsApi } from '../../api/ttsSettingsApi'
+import { TtsSettingsApi, type CartesiaVoice } from '../../api/ttsSettingsApi'
 import {
   CARTESIA_MODEL_ID,
+  DEFAULT_CARTESIA_VOICE_ID,
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
+  IRIA_CARTESIA_VOICE_ID,
+  XIMENA_CARTESIA_VOICE_ID,
   SUPPORTED_MODELS,
   SUPPORTED_PROVIDERS,
   isCartesiaModel,
+  isCartesiaProvider,
   modelDownloadLabel,
   shortModelLabel,
+  withKnownCartesiaVoices,
 } from '../../engine/ttsRegistry'
 import { useAudioResizePreferenceStore } from '../../stores/audioResizePreferenceStore'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
@@ -19,6 +25,10 @@ export function TtsGlobalSettings() {
   const api = useMemo(() => new TtsSettingsApi(apiClient), [])
   const [modelId, setModelId] = useState('')
   const [provider, setProvider] = useState('')
+  const [globalVoice, setGlobalVoice] = useState('')
+  const [cartesiaVoices, setCartesiaVoices] = useState<CartesiaVoice[]>([])
+  const [cartesiaVoicesLoading, setCartesiaVoicesLoading] = useState(false)
+  const [cartesiaVoicesError, setCartesiaVoicesError] = useState<string | null>(null)
   const [models, setModels] = useState<string[]>([...SUPPORTED_MODELS])
   const [providers, setProviders] = useState<string[]>([...SUPPORTED_PROVIDERS])
   const [downloadedMap, setDownloadedMap] = useState<Record<string, boolean>>({})
@@ -115,6 +125,24 @@ export function TtsGlobalSettings() {
           DEFAULT_PROVIDER
         setModelId(defModel)
         setProvider(defProv)
+        // Global Cartesia voice: settings voice wins, then models defaultVoiceId.
+        // Normalize explicit Mike id to "" (default) to avoid duplicate options.
+        const rawVoice =
+          (
+            settingsData as unknown as {
+              voice?: string | null
+              tts_voice?: string | null
+              cartesiaVoiceId?: string | null
+            } | null
+          )?.voice ??
+          (settingsData as unknown as { tts_voice?: string | null } | null)?.tts_voice ??
+          (settingsData as unknown as { cartesiaVoiceId?: string | null } | null)
+            ?.cartesiaVoiceId ??
+          (modelsData as unknown as { defaultVoiceId?: string | null } | null)?.defaultVoiceId ??
+          (modelsData as unknown as { voice?: string | null } | null)?.voice ??
+          ''
+        const normVoice = typeof rawVoice === 'string' ? rawVoice.trim() : ''
+        setGlobalVoice(normVoice === DEFAULT_CARTESIA_VOICE_ID ? '' : normVoice)
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e))
       } finally {
@@ -127,16 +155,87 @@ export function TtsGlobalSettings() {
     }
   }, [api])
 
+  const isCartesiaSelected = isCartesiaModel(modelId) || isCartesiaProvider(provider)
+
+  // Fetch saved Cartesia voices for the global default voice dropdown.
+  useEffect(() => {
+    if (!isCartesiaSelected) return
+    if (cartesiaVoices.length > 0 || cartesiaVoicesLoading) return
+    let cancelled = false
+    setCartesiaVoicesLoading(true)
+    setCartesiaVoicesError(null)
+    api
+      .getVoices()
+      .then((res) => {
+        if (cancelled) return
+        if (Array.isArray(res.voices)) setCartesiaVoices(withKnownCartesiaVoices(res.voices))
+        else
+          setCartesiaVoices([
+            { id: IRIA_CARTESIA_VOICE_ID, name: 'Iria' },
+            { id: XIMENA_CARTESIA_VOICE_ID, name: 'Ximena' },
+          ])
+      })
+      .catch((e) => {
+        if (cancelled) return
+        const msg = e instanceof Error ? e.message : String(e)
+        const detail = (e as { detail?: string })?.detail ?? msg
+        setCartesiaVoicesError(detail)
+        setCartesiaVoices([
+          { id: IRIA_CARTESIA_VOICE_ID, name: 'Iria' },
+          { id: XIMENA_CARTESIA_VOICE_ID, name: 'Ximena' },
+        ])
+      })
+      .finally(() => {
+        if (!cancelled) setCartesiaVoicesLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [api, isCartesiaSelected]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Global voice options: Default (Mike) + known/API voices excluding Mike to avoid duplicate.
+  const globalVoiceOptions = useMemo(() => {
+    const seen = new Set<string>()
+    const opts: CartesiaVoice[] = []
+    for (const v of cartesiaVoices) {
+      if (!v?.id || v.id === DEFAULT_CARTESIA_VOICE_ID) continue
+      if (seen.has(v.id)) continue
+      seen.add(v.id)
+      opts.push(v)
+    }
+    if (!seen.has(IRIA_CARTESIA_VOICE_ID)) {
+      opts.push({ id: IRIA_CARTESIA_VOICE_ID, name: 'Iria' })
+    }
+    if (!seen.has(XIMENA_CARTESIA_VOICE_ID)) {
+      opts.push({ id: XIMENA_CARTESIA_VOICE_ID, name: 'Ximena' })
+    }
+    return opts
+  }, [cartesiaVoices])
+
   const handleSave = async () => {
     setSaving(true)
     setError(null)
     setSuccess(null)
     try {
-      const res = await api.updateSettings({ modelId, provider })
+      const res = await api.updateSettings({
+        modelId,
+        provider,
+        // "" clears to default (Mike); voice id saves it as primary.
+        voice: isCartesiaSelected ? globalVoice : undefined,
+      })
       const newModel = (res.modelId || res.model_id || modelId) as string
       const newProv = (res.provider || res.tts_provider || provider) as string
       setModelId(newModel)
       setProvider(newProv)
+      const newVoice =
+        (res as unknown as { voice?: string | null; tts_voice?: string | null })?.voice ??
+        (res as unknown as { tts_voice?: string | null })?.tts_voice ??
+        (isCartesiaSelected ? globalVoice : '')
+      setGlobalVoice(
+        typeof newVoice === 'string' && newVoice.trim() === DEFAULT_CARTESIA_VOICE_ID
+          ? ''
+          : ((newVoice as string) ?? ''),
+      )
       setSuccess(
         `Saved. Engine will use ${shortModelLabel(newModel)} with provider ${newProv} on next generation. Fallback to sine if mlx missing.`,
       )
@@ -361,6 +460,46 @@ export function TtsGlobalSettings() {
           </div>
         </label>
       </div>
+      {isCartesiaSelected && (
+        <label style={{ fontSize: 11 }}>
+          Default Cartesia voice (global primary)
+          <select
+            data-testid="tts-global-voice"
+            value={globalVoice}
+            onChange={(e) => setGlobalVoice(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '6px 8px',
+              background: '#1e1e1e',
+              border: '1px solid #444',
+              borderRadius: 4,
+              color: '#e0e0e0',
+              marginTop: 4,
+            }}
+          >
+            <option value="">— Default (Mike) —</option>
+            {globalVoiceOptions.map((v) => (
+              <option key={v.id} value={v.id}>
+                {(v.name ?? 'Unnamed voice') +
+                  (v.language ? ` (${v.language})` : '') +
+                  ` — ${v.id.slice(0, 8)}`}
+              </option>
+            ))}
+          </select>
+          <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+            Saved Cartesia voices — default is Mike · Iria + Ximena available. Saving a voice here
+            makes it the primary voice for new generations (empty voice = this default).
+          </div>
+          {cartesiaVoicesLoading && (
+            <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>Loading saved voices…</div>
+          )}
+          {cartesiaVoicesError && (
+            <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>
+              Saved voices unavailable ({cartesiaVoicesError}) — Mike + Iria + Ximena still work.
+            </div>
+          )}
+        </label>
+      )}
       <label style={{ fontSize: 11 }}>
         Default voice mismatch handling
         <select

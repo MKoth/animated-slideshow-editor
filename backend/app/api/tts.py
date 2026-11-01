@@ -23,6 +23,10 @@ router = APIRouter()
 # Global serialized queue for TTS generation — one inference at a time
 _tts_lock = asyncio.Lock()
 
+# Sentinel to distinguish "voice not supplied, keep existing" from
+# "voice supplied as empty, clear to default".
+_SENTINEL_KEEP: Any = object()
+
 
 def _resolve_reference_asset_path(request: Request, asset_id: str) -> str:
     """Map an asset-library audio id to its on-disk file path."""
@@ -260,6 +264,11 @@ class TtsSettingsUpdate(BaseModel):
     modelId: str | None = Field(default=None, alias="modelId", description="HuggingFace model id")
     # also allow snake for compatibility
     model_id: str | None = Field(default=None, alias="model_id")
+    # global Cartesia voice id (Mike/Iria/Ximena). None = keep existing, "" = clear to default.
+    voice: str | None = Field(default=None, description="global Cartesia voice id")
+    voiceId: str | None = Field(default=None, alias="voiceId")
+    tts_voice: str | None = Field(default=None, alias="tts_voice")
+    cartesiaVoiceId: str | None = Field(default=None, alias="cartesiaVoiceId")
 
     model_config = {"populate_by_name": True}
 
@@ -313,6 +322,26 @@ class TtsSettingsUpdate(BaseModel):
 
             return normalize_model_id(v)
         except ValueError as e:
+            raise ValueError(str(e)) from e
+        except Exception:
+            return v.strip()
+
+    @field_validator("voice", "voiceId", "tts_voice", "cartesiaVoiceId", mode="before")
+    @classmethod
+    def validate_voice_id(cls, v: str | None) -> str | None:
+        # None = not supplied (keep existing global). "" is preserved as "" so
+        # the PUT handler can distinguish "clear to default" from "keep".
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise TypeError("voice must be a string")
+        if v.strip() == "":
+            return ""
+        try:
+            from app.tts.registry import normalize_cartesia_voice_id
+
+            return normalize_cartesia_voice_id(v)
+        except (ValueError, TypeError) as e:
             raise ValueError(str(e)) from e
         except Exception:
             return v.strip()
@@ -480,10 +509,19 @@ def _get_settings_values(request: Request) -> tuple[str, str]:
     return provider, model_id
 
 
+def _get_settings_voice(request: Request) -> str | None:
+    settings = getattr(request.app.state, "settings", None)
+    raw = getattr(settings, "tts_voice", None) if settings else None
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
 @router.get("/tts/models")
 def get_tts_models(request: Request) -> dict[str, Any]:
     _default_model, _default_provider, models, providers, get_all = _get_registry_defaults()
     provider, model_id = _get_settings_values(request)
+    voice = _get_settings_voice(request)
     capabilities = _enrich_capabilities_with_download(get_all())
     download_statuses = _get_download_statuses(models)
     return {
@@ -493,9 +531,12 @@ def get_tts_models(request: Request) -> dict[str, Any]:
         "defaultProvider": provider,
         "default_model_id": model_id,
         "default_provider": provider,
+        "defaultVoiceId": voice,
+        "voice": voice,
+        "tts_voice": voice,
         "capabilities": capabilities,
         "perModel": capabilities,
-        "defaults": {"provider": provider, "modelId": model_id},
+        "defaults": {"provider": provider, "modelId": model_id, "voice": voice},
         "downloaded": download_statuses,
         "modelsStatus": [{"id": m, "downloaded": download_statuses.get(m, False)} for m in models],
         "reference": _get_reference_status(),
@@ -508,6 +549,7 @@ def get_tts_models(request: Request) -> dict[str, Any]:
 def get_tts_capabilities(request: Request) -> dict[str, Any]:
     _default_model, _default_provider, models, providers, get_all = _get_registry_defaults()
     provider, model_id = _get_settings_values(request)
+    voice = _get_settings_voice(request)
     raw_capabilities = get_all()
     capabilities = _enrich_capabilities_with_download(raw_capabilities)
     download_statuses = _get_download_statuses(models)
@@ -539,12 +581,15 @@ def get_tts_capabilities(request: Request) -> dict[str, Any]:
         "defaultProvider": provider,
         "default_model_id": model_id,
         "default_provider": provider,
+        "defaultVoiceId": voice,
+        "voice": voice,
+        "tts_voice": voice,
         "languages": sorted(all_languages),
         "speakers": sorted(all_speakers),
         "capabilities": capabilities,
         "perModel": capabilities,
         "per_model": capabilities,
-        "defaults": {"provider": provider, "modelId": model_id},
+        "defaults": {"provider": provider, "modelId": model_id, "voice": voice},
         "downloaded": download_statuses,
         "modelsStatus": [{"id": m, "downloaded": download_statuses.get(m, False)} for m in models],
         "reference": _get_reference_status(),
@@ -563,12 +608,23 @@ def list_tts_voices(
     """List saved Cartesia voices for the voice dropdowns.
 
     Proxied server-side so the API key never reaches the browser.
-    Returns the user's default voice id (Mike) alongside the list.
+    defaultVoiceId is the global default (saved voice choice if set,
+    else the hardcoded Mike id). Known fallback voices (Mike + Iria + Ximena)
+    are merged in so the dropdown always offers them even when the remote
+    list omits them.
     """
     try:
-        from app.tts.registry import DEFAULT_CARTESIA_VOICE_ID as _default_voice
+        from app.tts.registry import DEFAULT_CARTESIA_VOICE_ID as _hardcoded_default
+        from app.tts.registry import KNOWN_CARTESIA_VOICES as _known_voices
     except Exception:
-        _default_voice = "f6184e65-98f2-4e3d-84e5-a2eb198b8688"
+        _hardcoded_default = "f6184e65-98f2-4e3d-84e5-a2eb198b8688"
+        _known_voices = [
+            {"id": _hardcoded_default, "name": "Mike"},
+            {"id": "a7beff01-8f8b-4809-bfe6-e2166e57e0c2", "name": "Iria"},
+            {"id": "3597a26f-80ef-4bd5-8101-9699bc764917", "name": "Ximena"},
+        ]
+    _global_voice = _get_settings_voice(request)
+    _default_voice = _global_voice or _hardcoded_default
     try:
         voices = list_cartesia_voices(query=q, limit=limit, is_owner=is_owner)
     except CartesiaNotConfiguredError as e:
@@ -585,6 +641,19 @@ def list_tts_voices(
         for v in voices
         if isinstance(v, dict) and v.get("id")
     ]
+    seen_ids = {v["id"] for v in simplified if isinstance(v.get("id"), str)}
+    for known in _known_voices:
+        kid = known.get("id") if isinstance(known, dict) else None
+        if isinstance(kid, str) and kid and kid not in seen_ids:
+            simplified.append(
+                {
+                    "id": kid,
+                    "name": known.get("name"),
+                    "language": known.get("language"),
+                    "description": known.get("description"),
+                }
+            )
+            seen_ids.add(kid)
     return {
         "voices": simplified,
         "defaultVoiceId": _default_voice,
@@ -662,6 +731,7 @@ async def download_tts_model(body: TtsModelDownloadRequest) -> dict[str, Any]:
 @router.get("/tts/settings")
 def get_tts_settings(request: Request) -> dict[str, Any]:
     provider, model_id = _get_settings_values(request)
+    voice = _get_settings_voice(request)
     _default_model, _default_provider, models, providers, _get_all = _get_registry_defaults()
     download_statuses = _get_download_statuses(models)
     return {
@@ -670,6 +740,9 @@ def get_tts_settings(request: Request) -> dict[str, Any]:
         "model_id": model_id,
         "tts_provider": provider,
         "tts_model_id": model_id,
+        "voice": voice,
+        "tts_voice": voice,
+        "cartesiaVoiceId": voice,
         "models": models,
         "providers": providers,
         "downloaded": download_statuses,
@@ -690,6 +763,7 @@ def update_tts_settings(request: Request, body: TtsSettingsUpdate) -> dict[str, 
         request.app.state.settings = settings
     # Determine new values (keep existing if body None)
     provider, model_id = _get_settings_values(request)
+    current_voice = _get_settings_voice(request)
     new_provider = body.provider if body.provider is not None else provider
     # modelId alias handling – body may have modelId or model_id
     new_model_id: str | None = None
@@ -699,21 +773,43 @@ def update_tts_settings(request: Request, body: TtsSettingsUpdate) -> dict[str, 
         new_model_id = body.model_id
     else:
         new_model_id = model_id
+    # voice alias handling – body may have voice / voiceId / tts_voice / cartesiaVoiceId.
+    # None = keep existing, "" = clear to default, non-empty = save.
+    new_voice: str | None | object = _SENTINEL_KEEP
+    for alias in ("voice", "voiceId", "tts_voice", "cartesiaVoiceId"):
+        val = getattr(body, alias, None)
+        if val is not None:
+            new_voice = val  # may be "" (clear) or stripped id
+            break
+    if new_voice is _SENTINEL_KEEP:
+        new_voice = current_voice
 
     # Validate via registry
     try:
-        from app.tts.registry import normalize_model_id, normalize_provider
+        from app.tts.registry import (
+            normalize_cartesia_voice_id,
+            normalize_model_id,
+            normalize_provider,
+        )
 
         if body.provider is not None:
             new_provider = normalize_provider(new_provider) or new_provider
         if body.modelId is not None or getattr(body, "model_id", None) is not None:
             new_model_id = normalize_model_id(new_model_id) or new_model_id
+        if new_voice not in (None, "") and isinstance(new_voice, str):
+            new_voice = normalize_cartesia_voice_id(new_voice)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
     # Fall back to the current value – never persist an empty model id.
     if not new_model_id:
         new_model_id = model_id
+    # Normalize voice for persistence: None/"" -> clear (None).
+    new_voice_str: str | None = None
+    if isinstance(new_voice, str) and new_voice.strip():
+        new_voice_str = new_voice.strip()
+    else:
+        new_voice_str = None
 
     # Persist the UI choice to the data dir so it survives backend
     # restarts; load_settings() picks it up with precedence over env vars.
@@ -725,7 +821,14 @@ def update_tts_settings(request: Request, body: TtsSettingsUpdate) -> dict[str, 
             from app.config import DEFAULT_DATA_DIR
 
             data_dir = DEFAULT_DATA_DIR
-        save_tts_settings(Path(data_dir), provider=new_provider, model_id=new_model_id)
+        # "" clears: pass "" to clear, non-empty saves, None would preserve —
+        # here we always pass explicit (cleared or id) since new_voice_str is resolved.
+        save_tts_settings(
+            Path(data_dir),
+            provider=new_provider,
+            model_id=new_model_id,
+            voice=new_voice_str if new_voice_str else "",
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=500, detail=f"failed to persist TTS settings: {exc}"
@@ -736,10 +839,14 @@ def update_tts_settings(request: Request, body: TtsSettingsUpdate) -> dict[str, 
         # try direct mutation
         settings.tts_provider = new_provider
         settings.tts_model_id = new_model_id
+        settings.tts_voice = new_voice_str
     except Exception:
         try:
             new_settings = dataclasses.replace(
-                settings, tts_provider=new_provider, tts_model_id=new_model_id
+                settings,
+                tts_provider=new_provider,
+                tts_model_id=new_model_id,
+                tts_voice=new_voice_str,
             )
             request.app.state.settings = new_settings
             settings = new_settings
@@ -796,6 +903,9 @@ def update_tts_settings(request: Request, body: TtsSettingsUpdate) -> dict[str, 
         "model_id": new_model_id,
         "tts_provider": new_provider,
         "tts_model_id": new_model_id,
+        "voice": new_voice_str,
+        "tts_voice": new_voice_str,
+        "cartesiaVoiceId": new_voice_str,
     }
 
 
@@ -859,6 +969,18 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
     global_model_id = (
         getattr(settings, "tts_model_id", default_model) if settings else default_model
     )
+    global_voice_raw = getattr(settings, "tts_voice", None) if settings else None
+    global_voice = (
+        global_voice_raw.strip()
+        if isinstance(global_voice_raw, str) and global_voice_raw.strip()
+        else None
+    )
+    # Fall back to global Cartesia voice when no per-request/prompt voice is given.
+    # Empty-string voice means "use default" so it also resolves to global.
+    if effective_voice is None or (
+        isinstance(effective_voice, str) and not effective_voice.strip()
+    ):
+        effective_voice = global_voice
 
     effective_provider = (
         body.provider

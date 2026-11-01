@@ -423,6 +423,7 @@ class Settings:
     max_upload_bytes: int
     tts_provider: str = "auto"
     tts_model_id: str = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
+    tts_voice: str | None = None
     tts_ref_audio: str | None = None
     tts_ref_text: str | None = None
     cartesia_api_key: str | None = None
@@ -493,7 +494,7 @@ def _load_tts_ref_text() -> str | None:
 
 
 def _load_tts_settings_file(data_dir: Path) -> dict[str, str]:
-    """UI-saved TTS provider/model choice. Missing or corrupt files read as empty."""
+    """UI-saved TTS provider/model/voice choice. Missing or corrupt files read as empty."""
     try:
         raw = (data_dir / TTS_SETTINGS_FILENAME).read_text(encoding="utf-8")
     except OSError:
@@ -511,11 +512,27 @@ def _load_tts_settings_file(data_dir: Path) -> dict[str, str]:
         value = parsed.get(key)
         if isinstance(value, str) and value.strip():
             out[key] = value.strip()
+    # Global Cartesia voice (Mike/Iria/Ximena id). Aliases for compat; empty means default.
+    for alias in ("tts_voice", "tts_cartesia_voice_id", "voice", "cartesiaVoiceId"):
+        value = parsed.get(alias)
+        if isinstance(value, str) and value.strip():
+            out["tts_voice"] = value.strip()
+            break
     return out
 
 
-def save_tts_settings(data_dir: Path, *, provider: str, model_id: str) -> dict[str, str]:
-    """Persist the UI-saved TTS choice atomically. Returns the saved values."""
+def save_tts_settings(
+    data_dir: Path,
+    *,
+    provider: str,
+    model_id: str,
+    voice: str | None = None,
+) -> dict[str, str]:
+    """Persist the UI-saved TTS choice atomically. Returns the saved values.
+
+    `voice` is tristate: None = preserve existing file value, "" = clear to
+    default (omit key), non-empty = save stripped voice id.
+    """
     import json as _json
     import os as _os
     import tempfile as _tempfile
@@ -524,6 +541,18 @@ def save_tts_settings(data_dir: Path, *, provider: str, model_id: str) -> dict[s
         "tts_provider": provider.strip().lower(),
         "tts_model_id": model_id.strip(),
     }
+    existing_voice: str | None = None
+    try:
+        existing = _load_tts_settings_file(data_dir)
+        existing_voice = existing.get("tts_voice")
+    except Exception:  # noqa: BLE001 — best-effort preserve; corrupt file reads as empty
+        existing_voice = None
+    if voice is None:
+        if existing_voice:
+            saved["tts_voice"] = existing_voice
+    elif isinstance(voice, str) and voice.strip():
+        saved["tts_voice"] = voice.strip()
+    # voice == "" clears to default: omit key.
     data_dir.mkdir(parents=True, exist_ok=True)
     target = data_dir / TTS_SETTINGS_FILENAME
     fd, tmp_name = _tempfile.mkstemp(dir=str(data_dir), prefix="tts_settings.", suffix=".tmp")
@@ -556,6 +585,14 @@ def load_settings() -> Settings:
         or os.getenv("TTS_MODEL_ID", "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16").strip()
         or "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
     )
+    tts_voice = (
+        saved_tts.get("tts_voice")
+        or os.getenv("TTS_VOICE", "").strip()
+        or os.getenv("TTS_CARTESIA_VOICE_ID", "").strip()
+        or None
+    )
+    if isinstance(tts_voice, str) and not tts_voice.strip():
+        tts_voice = None
     secret_raw = os.getenv("AI_SECRET_KEY")
     secret = secret_raw.strip() if secret_raw and secret_raw.strip() else None
     cartesia_raw = os.getenv("CARTESIA_API_KEY")
@@ -573,6 +610,7 @@ def load_settings() -> Settings:
         max_upload_bytes=int(os.getenv("MAX_UPLOAD_BYTES", str(DEFAULT_MAX_UPLOAD_BYTES))),
         tts_provider=tts_provider,
         tts_model_id=tts_model_id,
+        tts_voice=tts_voice,
         tts_ref_audio=tts_ref_audio,
         tts_ref_text=_load_tts_ref_text(),
         cartesia_api_key=cartesia_key,

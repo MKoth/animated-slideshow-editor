@@ -15,6 +15,50 @@ export const SUPPORTED_PROVIDERS: readonly string[] = ['auto', 'sine', 'mlx', 'c
 export const CARTESIA_MODEL_ID = 'sonic-3.6' as const
 export const DEFAULT_CARTESIA_VOICE_ID = 'f6184e65-98f2-4e3d-84e5-a2eb198b8688' as const
 
+/** Second known Cartesia voice ("Iria") — always offered alongside the default. */
+export const IRIA_CARTESIA_VOICE_ID = 'a7beff01-8f8b-4809-bfe6-e2166e57e0c2' as const
+
+/** Third known Cartesia voice ("Ximena") — same fallback treatment as Iria. */
+export const XIMENA_CARTESIA_VOICE_ID = '3597a26f-80ef-4bd5-8101-9699bc764917' as const
+
+export interface KnownCartesiaVoice {
+  id: string
+  name: string
+  language?: string | null
+  description?: string | null
+}
+
+/** Hardcoded fallback voices (Mike default + Iria + Ximena) for when the API list is empty/fails. */
+export const KNOWN_CARTESIA_VOICES: readonly KnownCartesiaVoice[] = [
+  { id: DEFAULT_CARTESIA_VOICE_ID, name: 'Mike' },
+  { id: IRIA_CARTESIA_VOICE_ID, name: 'Iria' },
+  { id: XIMENA_CARTESIA_VOICE_ID, name: 'Ximena' },
+] as const
+
+/** Merge API voices with known fallbacks (deduped by id, API metadata wins). */
+export function withKnownCartesiaVoices<T extends { id: string }>(voices: readonly T[]): T[] {
+  const seen = new Set(voices.map((v) => v.id))
+  const merged = [...voices]
+  for (const known of KNOWN_CARTESIA_VOICES) {
+    if (!seen.has(known.id)) {
+      merged.push({ ...known } as unknown as T)
+      seen.add(known.id)
+    }
+  }
+  return merged
+}
+
+/** Fallback options shown when the saved-voices request fails (Mike is the empty default). */
+export function getCartesiaErrorFallbackVoices<T extends { id: string }>(
+  voices: readonly T[],
+): T[] {
+  if (voices.length > 0) return withKnownCartesiaVoices(voices)
+  return [
+    { id: IRIA_CARTESIA_VOICE_ID, name: 'Iria' } as unknown as T,
+    { id: XIMENA_CARTESIA_VOICE_ID, name: 'Ximena' } as unknown as T,
+  ]
+}
+
 export function isCartesiaProvider(provider: string | null | undefined): boolean {
   return (provider ?? '').trim().toLowerCase() === 'cartesia'
 }

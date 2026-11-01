@@ -33,12 +33,15 @@ import {
   CARTESIA_MODEL_ID,
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER,
+  IRIA_CARTESIA_VOICE_ID,
+  XIMENA_CARTESIA_VOICE_ID,
   isCartesiaModel,
   isCartesiaProvider,
   SUPPORTED_MODELS,
   SUPPORTED_PROVIDERS,
   getFallbackCapabilities,
   modelDownloadLabel,
+  withKnownCartesiaVoices,
 } from '../../engine/ttsRegistry'
 import {
   extractCartesiaDelivery,
@@ -327,6 +330,8 @@ export function WordLevelTtsModal({
   }, [cartesiaVoices, cartesiaDefaultVoiceId])
 
   // Fetch saved Cartesia voices when the per-generation or form provider needs them.
+  // Known voices (Mike default + Iria + Ximena) are merged in so they stay selectable
+  // even when the API list omits them; on failure they are still offered.
   useEffect(() => {
     if (!isTtsCartesia && !isFormCartesia) return
     if (cartesiaVoices.length > 0 || cartesiaVoicesLoading) return
@@ -337,7 +342,12 @@ export function WordLevelTtsModal({
       .getVoices()
       .then((res) => {
         if (cancelled) return
-        if (Array.isArray(res.voices)) setCartesiaVoices(res.voices)
+        if (Array.isArray(res.voices)) setCartesiaVoices(withKnownCartesiaVoices(res.voices))
+        else
+          setCartesiaVoices([
+            { id: IRIA_CARTESIA_VOICE_ID, name: 'Iria' },
+            { id: XIMENA_CARTESIA_VOICE_ID, name: 'Ximena' },
+          ])
         if (typeof res.defaultVoiceId === 'string') setCartesiaDefaultVoiceId(res.defaultVoiceId)
       })
       .catch((e) => {
@@ -345,6 +355,10 @@ export function WordLevelTtsModal({
         const msg = e instanceof Error ? e.message : String(e)
         const detail = (e as { detail?: string })?.detail ?? msg
         setCartesiaVoicesError(detail)
+        setCartesiaVoices([
+          { id: IRIA_CARTESIA_VOICE_ID, name: 'Iria' },
+          { id: XIMENA_CARTESIA_VOICE_ID, name: 'Ximena' },
+        ])
       })
       .finally(() => {
         if (!cancelled) setCartesiaVoicesLoading(false)
@@ -1097,7 +1111,7 @@ export function WordLevelTtsModal({
               </select>
               <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
                 {isFormCartesia
-                  ? 'Saved Cartesia voices — default is Mike'
+                  ? 'Saved Cartesia voices — default is Mike · Iria + Ximena available'
                   : isFormVoiceEnabled
                     ? '9 canonical voices — any language'
                     : 'Voice not applicable for this model'}
@@ -1109,7 +1123,8 @@ export function WordLevelTtsModal({
               )}
               {isFormCartesia && !cartesiaVoicesLoading && cartesiaVoicesError && (
                 <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>
-                  Saved voices unavailable ({cartesiaVoicesError}) — Default (Mike) still works.
+                  Saved voices unavailable ({cartesiaVoicesError}) — Default (Mike) + Iria + Ximena
+                  still work.
                 </div>
               )}
               {formVoiceWarning && (
@@ -1846,7 +1861,7 @@ export function WordLevelTtsModal({
             </select>
             <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
               {isTtsCartesia
-                ? 'Saved Cartesia voices — default is Mike'
+                ? 'Saved Cartesia voices — default is Mike · Iria + Ximena available'
                 : isTtsVoiceEnabled
                   ? '9 canonical voices — any language'
                   : 'Voice not applicable for this model'}
@@ -1859,7 +1874,8 @@ export function WordLevelTtsModal({
                 data-testid="tts-voice-warning"
                 style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
               >
-                Saved voices unavailable ({cartesiaVoicesError}) — Default (Mike) still works.
+                Saved voices unavailable ({cartesiaVoicesError}) — Default (Mike) + Iria + Ximena
+                still work.
               </div>
             )}
             {!isTtsCartesia && effectiveTtsVoiceWarning && (

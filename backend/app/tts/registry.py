@@ -119,6 +119,38 @@ CARTESIA_LANGUAGES: list[str] = [
 #: Default Cartesia voice (user's saved "Mike" voice) used when no voice is chosen.
 DEFAULT_CARTESIA_VOICE_ID: str = "f6184e65-98f2-4e3d-84e5-a2eb198b8688"
 
+#: Second known Cartesia voice ("Iria") — always offered alongside the
+#: default, even when the remote /voices list omits it or is unreachable.
+IRIA_CARTESIA_VOICE_ID: str = "a7beff01-8f8b-4809-bfe6-e2166e57e0c2"
+
+#: Third known Cartesia voice ("Ximena") — same fallback treatment as Iria.
+XIMENA_CARTESIA_VOICE_ID: str = "3597a26f-80ef-4bd5-8101-9699bc764917"
+
+#: Hardcoded fallback voices shown when the Cartesia API list is empty or
+#: fails. The default (Mike) is selected via the empty dropdown value; Iria
+#: and Ximena are explicit extra options. Entries carry the same shape as the
+#: simplified `/tts/voices` payload (id / name / language / description).
+KNOWN_CARTESIA_VOICES: list[dict[str, str | None]] = [
+    {
+        "id": DEFAULT_CARTESIA_VOICE_ID,
+        "name": "Mike",
+        "language": None,
+        "description": "default",
+    },
+    {
+        "id": IRIA_CARTESIA_VOICE_ID,
+        "name": "Iria",
+        "language": None,
+        "description": "known fallback",
+    },
+    {
+        "id": XIMENA_CARTESIA_VOICE_ID,
+        "name": "Ximena",
+        "language": None,
+        "description": "known fallback",
+    },
+]
+
 #: Emotion / speed / volume guidance for Cartesia sonic-3+ (`generation_config`
 #: on POST /tts/bytes). All optional — when omitted Cartesia infers delivery
 #: from the transcript. See docs "Volume, Speed, and Emotion".
@@ -561,6 +593,24 @@ def normalize_model_id(raw: str | None) -> str | None:
         return None
     if stripped not in SUPPORTED_MODELS:
         raise ValueError(f"unknown modelId '{raw}'; must be one of {', '.join(SUPPORTED_MODELS)}")
+    return stripped
+
+
+def normalize_cartesia_voice_id(raw: str | None) -> str | None:
+    """Normalize a global/per-request Cartesia voice id, or None (default).
+
+    None means "not supplied" (preserve existing global); "" means "clear to
+    hardcoded default". Any other non-empty string is stored verbatim —
+    Cartesia validates the id server-side on synthesis, and saved voices are
+    dynamic so we don't restrict to the known fallback list.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise TypeError(f"invalid Cartesia voice id '{raw}'; must be a string")
+    stripped = raw.strip()
+    if not stripped:
+        return None
     return stripped
 
 
