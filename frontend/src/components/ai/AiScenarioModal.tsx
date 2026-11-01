@@ -877,11 +877,12 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     setTtsProgressByStep((prev) => ({ ...prev, [position]: { done: 0, total: 0 } }))
     void (async () => {
       try {
-        // Saved TTS defaults (no per-block dialogs in batch): model/provider
-        // from the backend settings, mismatch handling from the saved voice
-        // preference (ask falls back to stretch so batch never blocks).
+        // Saved TTS defaults (no per-block dialogs in batch): model/provider/
+        // voice from the backend settings, mismatch handling from the saved
+        // voice preference (ask falls back to stretch so batch never blocks).
         let modelId: string | undefined
         let provider: string | undefined
+        let voice: string | undefined
         try {
           const api = new TtsSettingsApi(apiClient)
           const models = await api.getModels()
@@ -889,6 +890,12 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
             (models.defaultModel as string) || (models.default_model_id as string) || undefined
           provider =
             (models.defaultProvider as string) || (models.default_provider as string) || undefined
+          const rawVoice =
+            (models as unknown as { voice?: string | null; tts_voice?: string | null }).voice ??
+            (models as unknown as { tts_voice?: string | null }).tts_voice ??
+            (models as unknown as { defaults?: { voice?: string | null } }).defaults?.voice ??
+            undefined
+          if (typeof rawVoice === 'string' && rawVoice.trim() !== '') voice = rawVoice.trim()
         } catch {
           // Fall back to engine defaults when settings are unreachable.
         }
@@ -903,6 +910,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
           {
             ...(modelId ? { modelId } : {}),
             ...(provider ? { provider } : {}),
+            ...(voice ? { voice } : {}),
             mode,
             positions: [position],
             foreignWords: activeWorkflow.foreignWords,

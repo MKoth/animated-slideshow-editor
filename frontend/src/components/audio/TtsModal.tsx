@@ -669,12 +669,8 @@ export function TtsModal({
 
   const handleGenerate = useCallback(
     async (event?: React.MouseEvent | React.KeyboardEvent) => {
-      if (part?.audioClipId || part?.audioAssetId) {
-        const ok = window.confirm(
-          'This part already has audio. Replace existing recording? Legacy asset will be retained.',
-        )
-        if (!ok) return
-      }
+      // Regenerate replaces: old clip + old asset are deleted by CommitTtsCommand,
+      // no confirmation — generating means the old take is gone.
       setStatus('generating')
       setError(null)
       // Canonicalize locale once so payload + exclusivity below agree.

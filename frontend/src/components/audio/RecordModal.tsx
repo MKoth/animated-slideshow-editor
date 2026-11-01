@@ -17,6 +17,7 @@ import {
 import {
   CreateAudioAssetCommand,
   CreateAudioClipCommand,
+  DeleteAudioAssetCommand,
   DeleteAudioClipCommand,
   SetPrompterPartAudioCommand,
   UpdatePrompterPartWithShiftCommand,
@@ -141,9 +142,21 @@ export function RecordModal({
       mimeType: string,
       playbackRate: number,
     ) => {
-      if (part?.audioClipId) {
+      // Capture old take (part + word-level segments) before replacing.
+      // Regenerate replaces — old clips + old assets go, no pile-up.
+      const oldClipId = part?.audioClipId
+      const oldAssetId = part?.audioAssetId
+      const oldSegments = part?.segments ? [...part.segments] : []
+      if (oldClipId) {
         try {
-          dispatch(new DeleteAudioClipCommand({ slideId, clipId: part.audioClipId }))
+          dispatch(new DeleteAudioClipCommand({ slideId, clipId: oldClipId }))
+        } catch {
+          /* ignore */
+        }
+      }
+      for (const seg of oldSegments) {
+        try {
+          dispatch(new DeleteAudioClipCommand({ slideId, clipId: seg.audioClipId }))
         } catch {
           /* ignore */
         }
@@ -212,9 +225,64 @@ export function RecordModal({
         setStatus('error')
         return
       }
+      // Delete old assets when nothing else references them — regenerate
+      // replaces, it must not pile up orphan WAVs. Only the new voice remains.
+      try {
+        const oldIds = new Set<string>()
+        if (oldAssetId && oldAssetId !== assetId) oldIds.add(oldAssetId)
+        for (const seg of oldSegments) {
+          if (seg.audioAssetId && seg.audioAssetId !== assetId) oldIds.add(seg.audioAssetId)
+        }
+        for (const oldId of oldIds) {
+          let referenced = false
+          try {
+            const project = engine.project
+            if (project) {
+              for (const slide of project.slides) {
+                for (const clip of slide.audio.clips) {
+                  if (clip.assetId === oldId) {
+                    referenced = true
+                    break
+                  }
+                }
+                if (referenced) break
+                const prompter = slide.prompter
+                if (!prompter) continue
+                for (const p of prompter.parts) {
+                  if (p.audioAssetId === oldId) {
+                    referenced = true
+                    break
+                  }
+                  if (p.segments) {
+                    for (const s of p.segments) {
+                      if (s.audioAssetId === oldId) {
+                        referenced = true
+                        break
+                      }
+                    }
+                    if (referenced) break
+                  }
+                }
+                if (referenced) break
+              }
+            }
+          } catch {
+            referenced = true
+          }
+          if (!referenced) {
+            try {
+              dispatch(new DeleteAudioAssetCommand({ assetId: oldId }))
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      } catch {
+        /* ignore asset cleanup failures */
+      }
       onClose()
     },
-    [dispatch, slideId, partId, partText, partStartTime, part, onClose],
+    [dispatch, engine, slideId, partId, partText, partStartTime, part, onClose],
   )
 
   const handleStop = useCallback(async () => {
@@ -269,9 +337,18 @@ export function RecordModal({
           const assetMime = (blob.type || 'audio/wav').startsWith('audio/')
             ? blob.type || 'audio/wav'
             : 'audio/wav'
+          const trimOldAssetId = part?.audioAssetId
+          const trimOldSegments = part?.segments ? [...part.segments] : []
           if (part?.audioClipId) {
             try {
               dispatch(new DeleteAudioClipCommand({ slideId, clipId: part.audioClipId }))
+            } catch {
+              /* ignore */
+            }
+          }
+          for (const seg of trimOldSegments) {
+            try {
+              dispatch(new DeleteAudioClipCommand({ slideId, clipId: seg.audioClipId }))
             } catch {
               /* ignore */
             }
@@ -319,6 +396,60 @@ export function RecordModal({
                   shiftDownstream: true,
                 }),
               )
+              try {
+                const trimOldIds = new Set<string>()
+                if (trimOldAssetId && trimOldAssetId !== assetId) trimOldIds.add(trimOldAssetId)
+                for (const seg of trimOldSegments) {
+                  if (seg.audioAssetId && seg.audioAssetId !== assetId)
+                    trimOldIds.add(seg.audioAssetId)
+                }
+                for (const oldId of trimOldIds) {
+                  let referenced = false
+                  try {
+                    const project = engine.project
+                    if (project) {
+                      for (const slide of project.slides) {
+                        for (const clip of slide.audio.clips) {
+                          if (clip.assetId === oldId) {
+                            referenced = true
+                            break
+                          }
+                        }
+                        if (referenced) break
+                        const prompter = slide.prompter
+                        if (!prompter) continue
+                        for (const p of prompter.parts) {
+                          if (p.audioAssetId === oldId) {
+                            referenced = true
+                            break
+                          }
+                          if (p.segments) {
+                            for (const s of p.segments) {
+                              if (s.audioAssetId === oldId) {
+                                referenced = true
+                                break
+                              }
+                            }
+                            if (referenced) break
+                          }
+                        }
+                        if (referenced) break
+                      }
+                    }
+                  } catch {
+                    referenced = true
+                  }
+                  if (!referenced) {
+                    try {
+                      dispatch(new DeleteAudioAssetCommand({ assetId: oldId }))
+                    } catch {
+                      /* ignore */
+                    }
+                  }
+                }
+              } catch {
+                /* ignore */
+              }
               onClose()
               cleanup()
               return
@@ -353,12 +484,8 @@ export function RecordModal({
   ])
 
   const startRecording = useCallback(async () => {
-    if (part?.audioClipId || part?.audioAssetId) {
-      const ok = window.confirm(
-        'This part already has audio. Replace existing recording? Legacy asset will be retained.',
-      )
-      if (!ok) return
-    }
+    // Regenerate replaces: old clip + old asset are deleted on commit,
+    // no confirmation — recording means the old take is gone.
     setErrorInfo(null)
     setStatus('requesting')
     setLevel(0)
@@ -446,9 +573,18 @@ export function RecordModal({
         return
       }
       if (choice === 'extend' || choice === 'keep') {
+        const extOldAssetId = part?.audioAssetId
+        const extOldSegments = part?.segments ? [...part.segments] : []
         if (part?.audioClipId) {
           try {
             dispatch(new DeleteAudioClipCommand({ slideId, clipId: part.audioClipId }))
+          } catch {
+            /* ignore */
+          }
+        }
+        for (const seg of extOldSegments) {
+          try {
+            dispatch(new DeleteAudioClipCommand({ slideId, clipId: seg.audioClipId }))
           } catch {
             /* ignore */
           }
@@ -507,6 +643,59 @@ export function RecordModal({
             audioAssetId: assetId,
           }),
         )
+        try {
+          const extOldIds = new Set<string>()
+          if (extOldAssetId && extOldAssetId !== assetId) extOldIds.add(extOldAssetId)
+          for (const seg of extOldSegments) {
+            if (seg.audioAssetId && seg.audioAssetId !== assetId) extOldIds.add(seg.audioAssetId)
+          }
+          for (const oldId of extOldIds) {
+            let referenced = false
+            try {
+              const project = engine.project
+              if (project) {
+                for (const slide of project.slides) {
+                  for (const clip of slide.audio.clips) {
+                    if (clip.assetId === oldId) {
+                      referenced = true
+                      break
+                    }
+                  }
+                  if (referenced) break
+                  const prompter = slide.prompter
+                  if (!prompter) continue
+                  for (const p of prompter.parts) {
+                    if (p.audioAssetId === oldId) {
+                      referenced = true
+                      break
+                    }
+                    if (p.segments) {
+                      for (const s of p.segments) {
+                        if (s.audioAssetId === oldId) {
+                          referenced = true
+                          break
+                        }
+                      }
+                      if (referenced) break
+                    }
+                  }
+                  if (referenced) break
+                }
+              }
+            } catch {
+              referenced = true
+            }
+            if (!referenced) {
+              try {
+                dispatch(new DeleteAudioAssetCommand({ assetId: oldId }))
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        } catch {
+          /* ignore */
+        }
         const shiftResult = dispatch(
           new UpdatePrompterPartWithShiftCommand({
             slideId,
@@ -536,6 +725,7 @@ export function RecordModal({
       plannedDuration,
       commitRecording,
       dispatch,
+      engine,
       slideId,
       partId,
       partText,

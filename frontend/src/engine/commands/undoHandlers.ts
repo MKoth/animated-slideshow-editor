@@ -2065,6 +2065,12 @@ export function applyUndo(
         readonly { id: string; oldTimelineStart: number }[] | undefined
       const deletedOldClip = inv.deletedOldClip as
         { clip: import('../audioClip').AudioClip; index: number } | undefined
+      const deletedSegmentClips = inv.deletedSegmentClips as
+        readonly { clip: import('../audioClip').AudioClip; index: number }[] | undefined
+      const oldSegments = inv.oldSegments as
+        readonly import('../prompter').AudioSegment[] | undefined
+      const deletedOldAssets = inv.deletedOldAssets as
+        readonly import('../embeddedAsset').EmbeddedAsset[] | undefined
       const slide = engine.getSlide(slideId)
       // Revert shift if present
       if (oldDuration !== undefined && oldStartTime !== undefined && oldEndTime !== undefined) {
@@ -2090,7 +2096,44 @@ export function applyUndo(
           }
         }
       }
-      // Revert link
+      // Delete new clip
+      try {
+        engine.deleteAudioClip(slideId, clipId)
+      } catch {
+        void 0
+      }
+      // Delete new asset
+      try {
+        engine.deleteEmbeddedAsset(assetId)
+      } catch {
+        void 0
+      }
+      // Restore old assets that regenerate deleted
+      if (deletedOldAssets) {
+        for (const a of deletedOldAssets) {
+          try {
+            if (!engine.getEmbeddedAsset(a.id)) engine.embedAsset({ ...a })
+          } catch {
+            void 0
+          }
+        }
+      }
+      // Restore old segment clips (sorted by index to keep order)
+      if (deletedSegmentClips && deletedSegmentClips.length > 0) {
+        const sorted = [...deletedSegmentClips].sort((a, b) => a.index - b.index)
+        for (const entry of sorted) {
+          try {
+            slide.audio.clips.splice(entry.index, 0, entry.clip)
+          } catch {
+            void 0
+          }
+        }
+      }
+      // Restore old clip if deleted
+      if (deletedOldClip) {
+        slide.audio.clips.splice(deletedOldClip.index, 0, deletedOldClip.clip)
+      }
+      // Revert link + segments
       const oldAudioClipId = inv.oldAudioClipId as string | undefined
       const oldAudioAssetId = inv.oldAudioAssetId as string | undefined
       const oldStatus = inv.oldStatus as string | undefined
@@ -2106,22 +2149,11 @@ export function applyUndo(
           (part as unknown as { status?: string }).status =
             oldStatus as import('../prompter').PrompterPartStatus
         else delete (part as unknown as { status?: string }).status
-      }
-      // Delete new clip
-      try {
-        engine.deleteAudioClip(slideId, clipId)
-      } catch {
-        void 0
-      }
-      // Delete new asset
-      try {
-        engine.deleteEmbeddedAsset(assetId)
-      } catch {
-        void 0
-      }
-      // Restore old clip if deleted
-      if (deletedOldClip) {
-        slide.audio.clips.splice(deletedOldClip.index, 0, deletedOldClip.clip)
+        if (oldSegments) {
+          ;(part as unknown as { segments?: unknown }).segments = oldSegments.map((s) => ({ ...s }))
+        } else {
+          delete (part as unknown as { segments?: unknown }).segments
+        }
       }
       return
     }
@@ -4189,6 +4221,34 @@ export function applyRedo(
         mimeType: string
         metadata: Record<string, unknown>
       }
+      const slideId = params.slideId as string
+      const partId = params.partId as string
+      // Redo replaces again: remove the restored old take first, otherwise the
+      // old voice stays on the timeline alongside the new clip.
+      try {
+        const slide = engine.getSlide(slideId)
+        const curPart = slide.prompter?.parts.find((p) => p.id === partId)
+        if (curPart) {
+          if (curPart.audioClipId) {
+            try {
+              engine.deleteAudioClip(slideId, curPart.audioClipId)
+            } catch {
+              void 0
+            }
+          }
+          if (curPart.segments) {
+            for (const seg of [...curPart.segments]) {
+              try {
+                engine.deleteAudioClip(slideId, seg.audioClipId)
+              } catch {
+                void 0
+              }
+            }
+          }
+        }
+      } catch {
+        void 0
+      }
       // Re-embed asset
       try {
         engine.embedAsset({
@@ -4223,6 +4283,17 @@ export function applyRedo(
           newClipId,
           asset.id,
         )
+        // Whole-part take supersedes word-level segments.
+        try {
+          const livePart = engine
+            .getSlide(params.slideId as string)
+            .prompter?.parts.find((p) => p.id === (params.partId as string))
+          if (livePart && (livePart as unknown as { segments?: unknown }).segments !== undefined) {
+            delete (livePart as unknown as { segments?: unknown }).segments
+          }
+        } catch {
+          void 0
+        }
       }
       const fit = params.fitTextToClip as { duration: number; shiftDownstream: boolean } | undefined
       if (fit) {
@@ -4230,6 +4301,41 @@ export function applyRedo(
           duration: fit.duration,
           shiftDownstream: fit.shiftDownstream,
         })
+      }
+      // Drop the old assets again when nothing else references them.
+      const invRedo = _inverse as unknown as {
+        deletedOldAssets?: readonly import('../embeddedAsset').EmbeddedAsset[]
+      } | null
+      const oldAssets = invRedo?.deletedOldAssets
+      if (oldAssets) {
+        for (const a of oldAssets) {
+          if (a.id === asset.id) continue
+          try {
+            const stillReferenced = (() => {
+              const project = engine.project
+              if (!project) return false
+              for (const slide of project.slides) {
+                for (const clip of slide.audio.clips) {
+                  if (clip.assetId === a.id) return true
+                }
+                const prompter = slide.prompter
+                if (!prompter) continue
+                for (const part of prompter.parts) {
+                  if (part.audioAssetId === a.id) return true
+                  if (part.segments) {
+                    for (const seg of part.segments) {
+                      if (seg.audioAssetId === a.id) return true
+                    }
+                  }
+                }
+              }
+              return false
+            })()
+            if (!stillReferenced) engine.deleteEmbeddedAsset(a.id)
+          } catch {
+            void 0
+          }
+        }
       }
       return
     }

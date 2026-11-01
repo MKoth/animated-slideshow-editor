@@ -17,6 +17,7 @@ import {
   shortModelLabel,
   withKnownCartesiaVoices,
 } from '../../engine/ttsRegistry'
+import { getFallbackSpeakersForModel, getModelMode } from '../../engine/ttsVoices'
 import { useAudioResizePreferenceStore } from '../../stores/audioResizePreferenceStore'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useTtsForeignVoiceStore } from '../../stores/ttsForeignVoiceStore'
@@ -39,6 +40,7 @@ export function TtsGlobalSettings() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [cartesiaConfigured, setCartesiaConfigured] = useState<boolean | null>(null)
+  const [speakersByModel, setSpeakersByModel] = useState<Record<string, string[]>>({})
   // Default voice mismatch handling (batch TTS + single TTS "don't ask
   // again" share this): stretch fits the clip to the text via playbackRate
   // (prompter timing untouched), trim fits the text to the clip (part
@@ -92,6 +94,27 @@ export function TtsGlobalSettings() {
           const cartesia = (modelsData as unknown as { cartesiaConfigured?: boolean })
             .cartesiaConfigured
           if (typeof cartesia === 'boolean') setCartesiaConfigured(cartesia)
+          // Capture per-model speakers for the CustomVoice global dropdown.
+          try {
+            const caps =
+              (
+                modelsData as unknown as {
+                  capabilities?: Record<string, { speakers?: string[] }>
+                  perModel?: Record<string, { speakers?: string[] }>
+                }
+              ).capabilities ??
+              (modelsData as unknown as { perModel?: Record<string, { speakers?: string[] }> })
+                .perModel
+            if (caps && typeof caps === 'object') {
+              const all: Record<string, string[]> = {}
+              for (const [k, v] of Object.entries(caps)) {
+                if (v && Array.isArray(v.speakers)) all[k] = v.speakers
+              }
+              if (Object.keys(all).length > 0) setSpeakersByModel(all)
+            }
+          } catch {
+            void 0
+          }
         }
         if (settingsData) {
           const sd = settingsData as unknown as {
@@ -156,6 +179,15 @@ export function TtsGlobalSettings() {
   }, [api])
 
   const isCartesiaSelected = isCartesiaModel(modelId) || isCartesiaProvider(provider)
+  const modelMode = getModelMode(modelId || DEFAULT_MODEL_ID)
+  const isCustomVoiceSelected = modelMode === 'custom_voice'
+  const isVoiceSelectable = isCartesiaSelected || isCustomVoiceSelected
+
+  const customVoiceOptions = useMemo(() => {
+    const backend = speakersByModel[modelId]
+    if (Array.isArray(backend) && backend.length > 0) return backend
+    return getFallbackSpeakersForModel(modelId || DEFAULT_MODEL_ID)
+  }, [speakersByModel, modelId])
 
   // Fetch saved Cartesia voices for the global default voice dropdown.
   useEffect(() => {
@@ -220,8 +252,9 @@ export function TtsGlobalSettings() {
       const res = await api.updateSettings({
         modelId,
         provider,
-        // "" clears to default (Mike); voice id saves it as primary.
-        voice: isCartesiaSelected ? globalVoice : undefined,
+        // "" clears to default (Mike for Cartesia, Ryan for CustomVoice);
+        // voice id / speaker name saves it as primary for batch + new generations.
+        voice: isVoiceSelectable ? globalVoice : undefined,
       })
       const newModel = (res.modelId || res.model_id || modelId) as string
       const newProv = (res.provider || res.tts_provider || provider) as string
@@ -230,7 +263,7 @@ export function TtsGlobalSettings() {
       const newVoice =
         (res as unknown as { voice?: string | null; tts_voice?: string | null })?.voice ??
         (res as unknown as { tts_voice?: string | null })?.tts_voice ??
-        (isCartesiaSelected ? globalVoice : '')
+        (isVoiceSelectable ? globalVoice : '')
       setGlobalVoice(
         typeof newVoice === 'string' && newVoice.trim() === DEFAULT_CARTESIA_VOICE_ID
           ? ''
@@ -498,6 +531,36 @@ export function TtsGlobalSettings() {
               Saved voices unavailable ({cartesiaVoicesError}) — Mike + Iria + Ximena still work.
             </div>
           )}
+        </label>
+      )}
+      {isCustomVoiceSelected && !isCartesiaSelected && (
+        <label style={{ fontSize: 11 }}>
+          Default voice speaker (global primary)
+          <select
+            data-testid="tts-global-custom-voice"
+            value={globalVoice}
+            onChange={(e) => setGlobalVoice(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '6px 8px',
+              background: '#1e1e1e',
+              border: '1px solid #444',
+              borderRadius: 4,
+              color: '#e0e0e0',
+              marginTop: 4,
+            }}
+          >
+            <option value="">— Default (Ryan) —</option>
+            {customVoiceOptions.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+          <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+            CustomVoice speaker for batch + new generations (empty = Ryan default). Regenerate
+            replaces old takes and deletes old assets — only this voice remains.
+          </div>
         </label>
       )}
       <label style={{ fontSize: 11 }}>

@@ -213,6 +213,7 @@ export interface ScenarioTtsBatchSystem {
 export interface ScenarioTtsBatchOptions {
   readonly modelId?: string
   readonly provider?: string
+  readonly voice?: string
   readonly mode: ScenarioTtsMismatchMode
   readonly trackId?: AudioTrackId
   /** Restrict to 1-based slide positions (per-step generation). Omit for all. */
@@ -298,6 +299,9 @@ export async function runScenarioTtsBatch(
         language,
         ...(options.modelId ? { modelId: options.modelId } : {}),
         ...(options.provider ? { provider: options.provider } : {}),
+        // Global voice (CustomVoice speaker or Cartesia id): English blocks use
+        // it, foreign blocks use the Spanish reference when configured.
+        ...(options.voice && !useForeignVoice ? { voice: options.voice } : {}),
         ...(useForeignVoice ? { referenceAssetId: options.foreignReferenceAssetId!.trim() } : {}),
         ...(useForeignVoice &&
         typeof options.foreignRefText === 'string' &&

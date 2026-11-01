@@ -32,11 +32,38 @@ export interface CommitTtsInverse {
   readonly oldAudioAssetId?: string
   readonly oldStatus?: string
   readonly deletedOldClip?: { clip: import('../audioClip').AudioClip; index: number }
+  readonly deletedSegmentClips?: readonly {
+    clip: import('../audioClip').AudioClip
+    index: number
+  }[]
+  readonly oldSegments?: readonly import('../prompter').AudioSegment[]
+  readonly deletedOldAssets?: readonly EmbeddedAsset[]
   readonly shiftedParts?: readonly { id: string; oldStartTime: number; oldEndTime: number }[]
   readonly shiftedClips?: readonly { id: string; oldTimelineStart: number }[]
   readonly oldDuration?: number
   readonly oldStartTime?: number
   readonly oldEndTime?: number
+}
+
+function isAudioAssetReferenced(engine: Engine, assetId: string): boolean {
+  const project = engine.project
+  if (!project) return false
+  for (const slide of project.slides) {
+    for (const clip of slide.audio.clips) {
+      if (clip.assetId === assetId) return true
+    }
+    const prompter = slide.prompter
+    if (!prompter) continue
+    for (const part of prompter.parts) {
+      if (part.audioAssetId === assetId) return true
+      if (part.segments) {
+        for (const seg of part.segments) {
+          if (seg.audioAssetId === assetId) return true
+        }
+      }
+    }
+  }
+  return false
 }
 
 export class CommitTtsCommand implements Command<CommitTtsInverse> {
@@ -96,6 +123,30 @@ export class CommitTtsCommand implements Command<CommitTtsInverse> {
     const oldAudioClipId = part.audioClipId
     const oldAudioAssetId = part.audioAssetId
     const oldStatus = (part as unknown as { status?: string }).status
+    const oldSegments = part.segments ? part.segments.map((s) => ({ ...s })) : undefined
+
+    // Snapshot old assets (part + segments) so undo can restore them after
+    // we delete the unreferenced ones. Regenerate replaces — no pile-up.
+    const oldAssetIds = new Set<string>()
+    if (oldAudioAssetId) oldAssetIds.add(oldAudioAssetId)
+    if (oldSegments) {
+      for (const seg of oldSegments) {
+        if (seg.audioAssetId) oldAssetIds.add(seg.audioAssetId)
+      }
+    }
+    const oldAssetSnapshots = new Map<string, EmbeddedAsset>()
+    for (const assetId of oldAssetIds) {
+      const existing = engine.getEmbeddedAsset(assetId)
+      if (existing) {
+        oldAssetSnapshots.set(assetId, {
+          id: existing.id,
+          name: existing.name,
+          data: existing.data,
+          mimeType: existing.mimeType,
+          metadata: { ...(existing.metadata as Record<string, unknown>) },
+        })
+      }
+    }
 
     let deletedOldClip: { clip: import('../audioClip').AudioClip; index: number } | undefined
     if (oldAudioClipId) {
@@ -103,6 +154,24 @@ export class CommitTtsCommand implements Command<CommitTtsInverse> {
       if (idx !== -1) {
         const clip = engine.deleteAudioClip(this.#slideId, oldAudioClipId)
         deletedOldClip = { clip, index: idx }
+      }
+    }
+
+    // Word-level leftovers: segment clips belong to this part's old take.
+    // A whole-part regenerate replaces them — delete them too, otherwise the
+    // old voice keeps playing alongside the new clip.
+    const deletedSegmentClips: { clip: import('../audioClip').AudioClip; index: number }[] = []
+    if (oldSegments) {
+      for (const seg of oldSegments) {
+        const idx = slide.audio.clips.findIndex((c) => c.id === seg.audioClipId)
+        if (idx !== -1) {
+          try {
+            const clip = engine.deleteAudioClip(this.#slideId, seg.audioClipId)
+            deletedSegmentClips.push({ clip, index: idx })
+          } catch {
+            void 0
+          }
+        }
       }
     }
 
@@ -128,6 +197,14 @@ export class CommitTtsCommand implements Command<CommitTtsInverse> {
     })
 
     engine.setPrompterPartAudio(this.#slideId, this.#partId, clipId, asset.id)
+    // Whole-part take supersedes word-level segments — clear them so only the
+    // new voice remains bound to this part.
+    const livePart = engine
+      .getSlide(this.#slideId)
+      .prompter!.parts.find((p) => p.id === this.#partId)!
+    if ((livePart as unknown as { segments?: unknown }).segments !== undefined) {
+      delete (livePart as unknown as { segments?: unknown }).segments
+    }
 
     let shiftInverse:
       | {
@@ -152,6 +229,21 @@ export class CommitTtsCommand implements Command<CommitTtsInverse> {
       }
     }
 
+    // Delete old assets when nothing else references them — regenerate
+    // replaces, it must not pile up orphan WAVs.
+    const deletedOldAssets: EmbeddedAsset[] = []
+    for (const [assetId, snapshot] of oldAssetSnapshots) {
+      if (assetId === asset.id) continue
+      if (!isAudioAssetReferenced(engine, assetId)) {
+        try {
+          engine.deleteEmbeddedAsset(assetId)
+          deletedOldAssets.push(snapshot)
+        } catch {
+          void 0
+        }
+      }
+    }
+
     return {
       assetId: asset.id,
       clipId,
@@ -159,6 +251,9 @@ export class CommitTtsCommand implements Command<CommitTtsInverse> {
       ...(oldAudioAssetId ? { oldAudioAssetId } : {}),
       ...(oldStatus ? { oldStatus } : {}),
       ...(deletedOldClip ? { deletedOldClip } : {}),
+      ...(deletedSegmentClips.length > 0 ? { deletedSegmentClips } : {}),
+      ...(oldSegments ? { oldSegments } : {}),
+      ...(deletedOldAssets.length > 0 ? { deletedOldAssets } : {}),
       ...(shiftInverse
         ? {
             shiftedParts: shiftInverse.shiftedParts,
