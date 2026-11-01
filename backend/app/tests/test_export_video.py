@@ -1,4 +1,5 @@
 import io
+import shutil
 import zipfile
 from typing import Any
 
@@ -265,8 +266,162 @@ def test_multi_clip_mix_does_not_divide_levels(
         use_rubberband=False,
     )
     filter_graph = ffmpeg_commands[0][ffmpeg_commands[0].index("-filter_complex") + 1]
-    assert "amix=inputs=2" in filter_graph
+    # Two clips plus the silence anchor that pins the amix timeline at zero.
+    assert "amix=inputs=3" in filter_graph
     assert "normalize=0" in filter_graph
+    assert "anullsrc" in filter_graph
+
+
+def _write_tone(path: Any, freq: float, duration: float, sample_rate: int = 48000) -> None:
+    import math
+    import wave as wav_mod
+
+    nframes = int(duration * sample_rate)
+    with wav_mod.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        frames = bytearray()
+        for i in range(nframes):
+            sample = int(10000 * math.sin(2 * math.pi * freq * i / sample_rate))
+            frames += sample.to_bytes(2, "little", signed=True)
+        w.writeframes(bytes(frames))
+
+
+def _tone_magnitude(path: Any, freq: float, center: float, width: float = 0.4) -> float:
+    """Goertzel magnitude of `freq` in a window around `center` (pure stdlib)."""
+    import math
+    import wave as wav_mod
+
+    with wav_mod.open(str(path), "rb") as w:
+        sample_rate = w.getframerate()
+        nchannels = w.getnchannels()
+        sampwidth = w.getsampwidth()
+        raw = w.readframes(w.getnframes())
+    if sampwidth != 2:
+        raise AssertionError(f"expected s16 test output, got sampwidth={sampwidth}")
+    count = len(raw) // 2
+    samples: list[float] = [
+        int.from_bytes(raw[i * 2 : i * 2 + 2], "little", signed=True) for i in range(count)
+    ]
+    if nchannels > 1:
+        samples = [
+            sum(samples[i * nchannels : (i + 1) * nchannels]) / nchannels
+            for i in range(count // nchannels)
+        ]
+    start = max(0, int((center - width / 2) * sample_rate))
+    end = min(len(samples), int((center + width / 2) * sample_rate))
+    window = samples[start:end]
+    n = len(window)
+    k = 0.5 + (n * freq / sample_rate)
+    omega = 2 * math.pi * k / n
+    cos_omega = math.cos(omega)
+    coeff = 2 * cos_omega
+    s0 = s1 = s2 = 0.0
+    for x in window:
+        s0 = x + coeff * s1 - s2
+        s2, s1 = s1, s0
+    return math.hypot(s1 - s2 * cos_omega, s2 * math.sin(omega))
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not available")
+def test_delayed_tempo_clip_keeps_its_timeline_offset(tmp_path: Any) -> None:
+    """Regression: delayed tempo-processed clips must not stack at t=0.
+
+    The per-clip chain used to end with adelay + atrim + asetpts. For chains
+    containing atempo, the trailing trim/reset rebased the delayed clip to
+    zero — e.g. the closing narration (playbackRate != 1) played on top of
+    the opening voices for the first seconds of the exported slide while the
+    editor preview (WebAudio-scheduled) played each voice in its own slot.
+    """
+    _write_tone(tmp_path / "a.wav", 440.0, 2.0)
+    _write_tone(tmp_path / "b.wav", 880.0, 2.0)
+    slide = {
+        "slideId": "slide-offset",
+        "duration": 4.0,
+        "audio": {
+            "clips": [
+                {
+                    "assetId": "a",
+                    "muted": False,
+                    "sourceStart": 0.0,
+                    "sourceEnd": 2.0,
+                    "timelineStart": 0.0,
+                    "volume": 1.0,
+                    "playbackRate": 1.0,
+                },
+                {
+                    "assetId": "b",
+                    "muted": False,
+                    "sourceStart": 0.0,
+                    "sourceEnd": 2.0,
+                    "timelineStart": 2.0,
+                    "volume": 1.0,
+                    "playbackRate": 1.1,
+                },
+            ]
+        },
+    }
+    out = export_module._build_slide_audio(
+        slide,
+        {"a": str(tmp_path / "a.wav"), "b": str(tmp_path / "b.wav")},
+        tmp_path,
+        use_rubberband=False,
+    )
+    early_440 = _tone_magnitude(out, 440.0, 1.0)
+    early_880 = _tone_magnitude(out, 880.0, 1.0)
+    late_440 = _tone_magnitude(out, 440.0, 3.0)
+    late_880 = _tone_magnitude(out, 880.0, 3.0)
+    assert early_440 > 10 * early_880
+    assert late_880 > 10 * late_440
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not available")
+def test_delayed_tempo_clip_first_does_not_sink_the_mix(tmp_path: Any) -> None:
+    """Regression: amix anchors on its inputs, so a leading delayed and
+    tempo-processed clip used to shift/drop every other clip in the mix.
+    A silence anchor keeps the mix clock at zero regardless of input order.
+    """
+    _write_tone(tmp_path / "a.wav", 880.0, 2.0)
+    _write_tone(tmp_path / "b.wav", 440.0, 2.0)
+    slide = {
+        "slideId": "slide-tempo-first",
+        "duration": 4.0,
+        "audio": {
+            "clips": [
+                {
+                    "assetId": "a",
+                    "muted": False,
+                    "sourceStart": 0.0,
+                    "sourceEnd": 2.0,
+                    "timelineStart": 2.0,
+                    "volume": 1.0,
+                    "playbackRate": 1.1,
+                },
+                {
+                    "assetId": "b",
+                    "muted": False,
+                    "sourceStart": 0.0,
+                    "sourceEnd": 2.0,
+                    "timelineStart": 0.0,
+                    "volume": 1.0,
+                    "playbackRate": 1.0,
+                },
+            ]
+        },
+    }
+    out = export_module._build_slide_audio(
+        slide,
+        {"a": str(tmp_path / "a.wav"), "b": str(tmp_path / "b.wav")},
+        tmp_path,
+        use_rubberband=False,
+    )
+    early_440 = _tone_magnitude(out, 440.0, 1.0)
+    early_880 = _tone_magnitude(out, 880.0, 1.0)
+    late_440 = _tone_magnitude(out, 440.0, 3.0)
+    late_880 = _tone_magnitude(out, 880.0, 3.0)
+    assert early_440 > 10 * early_880
+    assert late_880 > 10 * late_440
 
 
 def test_fade_out_starts_at_clip_end() -> None:

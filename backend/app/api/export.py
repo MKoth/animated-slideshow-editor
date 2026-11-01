@@ -661,9 +661,18 @@ def _clip_audio_filter(
         st_out = max(0.0, trimmed_pb - fade_out_pb)
         parts.append(f"afade=t=out:st={st_out}:d={fade_out_pb}")
     delay_ms = max(0, round(timeline_start * 1000))
+    # Trim the clip to what fits before the slide end (no bleed tails),
+    # measured in playback seconds after tempo. This must happen BEFORE
+    # adelay: anything resetting timestamps afterwards (atrim/asetpts)
+    # destroys the offset — empirically it restacks every delayed clip at
+    # t=0, so simultaneous narrations pile up (overlapping voices) while
+    # their real slots go silent. amix aligns inputs by PTS, so adelay
+    # stays last and keeps absolute placement. room<=0 yields an empty
+    # segment that the mix stage pads to silence (matches preview, which
+    # skips zero-length clips).
+    room = max(0.0, slide_duration - timeline_start)
+    parts.append(f"atrim=end={room}")
     parts.append(f"adelay={delay_ms}|{delay_ms}")
-    parts.append(f"atrim=end={slide_duration}")
-    parts.append("asetpts=PTS-STARTPTS")
     return ",".join(parts), True
 
 
@@ -713,9 +722,16 @@ def _build_slide_audio(
     if len(clips) > 1:
         for idx, chain in enumerate(chains):
             filter_parts.append(f"[{idx}:a]{chain}[c{idx}]")
-        labels = "".join(f"[c{idx}]" for idx in range(len(clips)))
+        # Anchor the mix timeline at zero. amix derives its output clock from
+        # its inputs, and a leading delayed or tempo-processed clip otherwise
+        # shifts/drops the whole mix (observed: every clip after ~3 s went
+        # silent when the first input started at t=5.5 with atempo). A
+        # full-slide silence input contributes nothing (normalize=0 sums) and
+        # guarantees every real clip lands at its adelay offset.
+        filter_parts.append(f"anullsrc=r=48000:cl=stereo:d={duration:.3f}[sil]")
+        labels = "[sil]" + "".join(f"[c{idx}]" for idx in range(len(clips)))
         filter_parts.append(
-            f"{labels}amix=inputs={len(clips)}:duration=longest:dropout_transition=0:normalize=0,"
+            f"{labels}amix=inputs={len(clips) + 1}:duration=longest:dropout_transition=0:normalize=0,"
             f"atrim=end={duration},apad=whole_dur={duration},asetpts=PTS-STARTPTS[mix]"
         )
         filter_parts.append(
