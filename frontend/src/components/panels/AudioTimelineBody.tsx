@@ -29,8 +29,6 @@ import {
   UpdatePrompterPartCommand,
   UpdatePrompterPartWithShiftCommand,
 } from '../../engine/commands'
-import { AudioClipResizeDialog } from '../audio/AudioClipResizeDialog'
-import { useAudioResizePreferenceStore } from '../../stores/audioResizePreferenceStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import {
   DEFAULT_TIMELINE_VIEWPORT_WIDTH,
@@ -192,17 +190,7 @@ export function AudioTimelineBody({
     width: number
   } | null>(null)
 
-  // Resize dialog pending (trim vs stretch)
-  const [resizePending, setResizePending] = useState<{
-    clipId: string
-    trackId: AudioTrackId
-    side: 'left' | 'right'
-    deltaPlayback: number
-  } | null>(null)
   const [showAudioSettings, setShowAudioSettings] = useState(false)
-  const resizePrefs = useAudioResizePreferenceStore((s) => s.preferences)
-  const hasResizePrefs =
-    resizePrefs.voice !== null || resizePrefs.sfx !== null || resizePrefs.music !== null
 
   // Prompter move/trim state (like audio clips: draggable, resizable) — gap-free reorder
   const prompterMoveRef = useRef<{
@@ -831,7 +819,7 @@ export function AudioTimelineBody({
     window.addEventListener('pointerup', onUp)
   }
 
-  // Trim handling — now Trim vs Time-stretch prompt (issue #246)
+  // Clip-handle drag — always time-stretch (issue #246 follow-up: no prompt)
   const onTrimPointerDown = (e: React.PointerEvent, clipId: string, side: 'left' | 'right') => {
     e.preventDefault()
     e.stopPropagation()
@@ -841,7 +829,6 @@ export function AudioTimelineBody({
     const startSourceEnd = clip.sourceEnd
     const startX = e.clientX
     const playbackRate = clip.playbackRate || 1
-    const trackId = clip.trackId
     const clipSnapshot = clip
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - startX
@@ -909,30 +896,16 @@ export function AudioTimelineBody({
         setTrimPreview(null)
         return
       }
+      // Lane drags always time-stretch (playbackRate, pitch preserved) —
+      // hard cuts live in the Waveform Editor. Shift-drag is the explicit
+      // trim override; no prompt, no per-track preference lookup.
       const alt = ev.altKey
       const shift = ev.shiftKey
-      // Modifier overrides
-      if (alt && !shift) {
-        applyStretch(dtPlayback)
-        return
-      }
       if (shift && !alt) {
         applyTrim(dtPlayback)
         return
       }
-      // Per-track preference
-      const pref = useAudioResizePreferenceStore.getState().getPreference(trackId)
-      if (pref === 'trim') {
-        applyTrim(dtPlayback)
-        return
-      }
-      if (pref === 'stretch') {
-        applyStretch(dtPlayback)
-        return
-      }
-      // No modifier nor preference — show prompt
-      setTrimPreview(null)
-      setResizePending({ clipId, trackId, side, deltaPlayback: dtPlayback })
+      applyStretch(dtPlayback)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -1868,7 +1841,7 @@ export function AudioTimelineBody({
                   style={{
                     fontSize: 10,
                     padding: '2px 6px',
-                    border: hasResizePrefs ? '1px solid #7c5cff' : '1px solid var(--color-border)',
+                    border: '1px solid var(--color-border)',
                     background: showAudioSettings ? '#7c5cff' : 'var(--color-bg)',
                     color: showAudioSettings ? '#fff' : undefined,
                     cursor: 'pointer',
@@ -1892,59 +1865,12 @@ export function AudioTimelineBody({
                   gap: 6,
                 }}
               >
-                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>
-                  Audio clip resize — per-track preference
-                </div>
+                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>Audio clip resize</div>
                 <div style={{ color: 'var(--color-text-muted)', fontSize: 10 }}>
-                  Dragging a clip handle prompts <strong>Trim</strong> (hard cut{' '}
-                  <code>sourceStart/sourceEnd</code>) vs <strong>Time-stretch</strong> (
+                  Dragging a clip handle always <strong>Time-stretches</strong> (
                   <code>playbackRate</code>, RubberBand at export, original asset never mutated).
-                  Modifiers: Alt = stretch, Shift = trim (override). &quot;Don&apos;t ask
-                  again&quot; remembers per track.
-                </div>
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-                  {(['voice', 'sfx', 'music'] as AudioTrackId[]).map((tid) => (
-                    <span
-                      key={tid}
-                      data-testid={`audio-resize-pref-${tid}`}
-                      style={{ fontSize: 11 }}
-                    >
-                      {tid}: <strong>{resizePrefs[tid] ?? 'ask'}</strong>
-                      {resizePrefs[tid] && (
-                        <button
-                          data-testid={`audio-resize-clear-${tid}`}
-                          onClick={() =>
-                            useAudioResizePreferenceStore.getState().clearPreference(tid)
-                          }
-                          style={{
-                            marginLeft: 6,
-                            fontSize: 10,
-                            padding: '1px 6px',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </span>
-                  ))}
-                  <button
-                    data-testid="audio-resize-reset"
-                    disabled={!hasResizePrefs}
-                    onClick={() => useAudioResizePreferenceStore.getState().clearAll()}
-                    style={{
-                      marginLeft: 'auto',
-                      fontSize: 10,
-                      padding: '4px 8px',
-                      borderRadius: 4,
-                      border: '1px solid var(--color-border)',
-                      background: hasResizePrefs ? '#ff4d4d' : 'var(--color-bg)',
-                      color: hasResizePrefs ? '#fff' : 'var(--color-text-muted)',
-                      cursor: hasResizePrefs ? 'pointer' : 'not-allowed',
-                    }}
-                  >
-                    Reset all (Don&apos;t ask)
-                  </button>
+                  Shift-drag trims instead (hard cut <code>sourceStart/sourceEnd</code>); hard cuts
+                  also live in the Waveform Editor.
                 </div>
                 <div
                   style={{
@@ -3466,55 +3392,6 @@ export function AudioTimelineBody({
             </div>
           )
         })()}
-      {resizePending && (
-        <AudioClipResizeDialog
-          trackId={resizePending.trackId}
-          onChoice={(mode) => {
-            const pending = resizePending
-            const clip = slide.audio.clips.find((c) => c.id === pending.clipId)
-            if (!clip) {
-              setResizePending(null)
-              return
-            }
-            if (mode === 'trim') {
-              const patch = computeAudioClipTrimPatch(clip, pending.side, pending.deltaPlayback)
-              if (patch) {
-                const toDispatch: { sourceStart?: number; sourceEnd?: number } = {}
-                if (patch.sourceStart !== undefined) toDispatch.sourceStart = patch.sourceStart
-                if (patch.sourceEnd !== undefined) toDispatch.sourceEnd = patch.sourceEnd
-                if (Object.keys(toDispatch).length > 0) {
-                  const result = dispatch(
-                    new TrimAudioClipCommand({
-                      slideId: slide.id,
-                      clipId: pending.clipId,
-                      ...toDispatch,
-                    }),
-                  )
-                  if (!result.ok) useNotificationStore.getState().notify(result.error.message)
-                }
-              }
-            } else {
-              const newRate = computeAudioClipStretchPlaybackRate(
-                clip,
-                pending.side,
-                pending.deltaPlayback,
-              )
-              if (newRate !== null) {
-                const result = dispatch(
-                  new SetAudioClipPlaybackRateCommand({
-                    slideId: slide.id,
-                    clipId: pending.clipId,
-                    playbackRate: newRate,
-                  }),
-                )
-                if (!result.ok) useNotificationStore.getState().notify(result.error.message)
-              }
-            }
-            setResizePending(null)
-          }}
-          onClose={() => setResizePending(null)}
-        />
-      )}
       {showImport && (
         <div
           role="dialog"
