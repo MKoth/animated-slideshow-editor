@@ -1,5 +1,7 @@
 import type { PixiTexture, RendererPixi } from './pixi'
 
+const MIPMAP_MIN_TEXTURE_DIMENSION = 512
+
 export type ResolveAssetUrl = (definitionId: string) => string | null
 
 export interface TextureLoadResult {
@@ -58,6 +60,15 @@ export class TextureCache {
   async #loadTexture(url: string, key: string): Promise<TextureLoadResult> {
     try {
       const texture = await this.#pixi.Assets.load(url)
+      // Linear texture filtering aliases high-frequency detail when large
+      // artwork is reduced to video dimensions. Generate mip levels before the
+      // texture is first rendered so the GPU can filter the reduction properly.
+      if (
+        texture.source.width >= MIPMAP_MIN_TEXTURE_DIMENSION ||
+        texture.source.height >= MIPMAP_MIN_TEXTURE_DIMENSION
+      ) {
+        texture.source.autoGenerateMipmaps = true
+      }
       this.#real.set(key, { texture, url })
       this.#failed.delete(key)
       return { texture, real: true }

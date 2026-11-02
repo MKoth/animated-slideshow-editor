@@ -56,6 +56,7 @@ import { extractCanvasCapture, extractViewportCapture } from './thumbnailRecorde
 import type { CanvasCapture } from './thumbnailRecorder'
 import { ShaderProgramCache } from './programCache'
 import { FullscreenPass, resolveFullscreenShaderState } from './fullscreenPass'
+import { EXPORT_VIDEO_HEIGHT, EXPORT_VIDEO_WIDTH } from '../../engine/export'
 
 const DEFAULT_CANVAS_BACKGROUND = 0xffffff
 
@@ -114,6 +115,7 @@ export class Renderer {
   readonly #viewportScratch: ViewportTransform = { x: 0, y: 0, scaleX: 1, scaleY: 1 }
   #cameraPreview: ViewportTransform | null = null
   #capturingExportFrame = false
+  #exportViewportScale: { readonly x: number; readonly y: number } | null = null
   readonly #cameraFrameScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #viewportNavigations = new Map<string, ViewportTransform>()
   #unsubscribe: Unsubscribe | null = null
@@ -824,6 +826,12 @@ export class Renderer {
       out.scaleX = preview.scaleX
       out.scaleY = preview.scaleY
     }
+    if (this.#capturingExportFrame && this.#exportViewportScale) {
+      // Preserve the same camera-visible world window as the editor viewport
+      // while rendering it into the larger export pixel dimensions.
+      out.scaleX *= this.#exportViewportScale.x
+      out.scaleY *= this.#exportViewportScale.y
+    }
     return out
   }
 
@@ -1165,19 +1173,44 @@ export class Renderer {
   }
 
   /** Capture a frame using authored camera keyframes, ignoring gesture previews. */
-  captureExportFrame(): string | null {
+  captureExportFrame(width = EXPORT_VIDEO_WIDTH, height = EXPORT_VIDEO_HEIGHT): string | null {
+    const app = this.#app
+    if (!app || this.#disposed) return null
+
     const preview = this.#cameraPreview
     const wasCapturingExportFrame = this.#capturingExportFrame
+    const previousSize = { width: app.screen.width, height: app.screen.height }
+    const previousCanvasStyle = {
+      width: app.canvas.style.width,
+      height: app.canvas.style.height,
+    }
+    const previousExportViewportScale = this.#exportViewportScale
     // Export must always use evaluated camera keyframes, regardless of the
     // editor's free-navigation mode or an unfinished pan/zoom gesture.
     this.#capturingExportFrame = true
     this.#cameraPreview = null
+    this.#exportViewportScale = {
+      x: width / previousSize.width,
+      y: height / previousSize.height,
+    }
     try {
+      // Render the stage at the delivery resolution rather than extracting the
+      // editor-sized backbuffer and asking FFmpeg to upscale it later.
+      app.renderer.resize(width, height)
+      // Keep the visible canvas occupying the same editor panel while its
+      // backing store is temporarily rendered at export dimensions.
+      app.canvas.style.width = previousCanvasStyle.width
+      app.canvas.style.height = previousCanvasStyle.height
       this.#applyTick()
       return this.captureFrame(true)
     } finally {
+      this.#exportViewportScale = previousExportViewportScale
+      app.renderer.resize(previousSize.width, previousSize.height)
+      app.canvas.style.width = previousCanvasStyle.width
+      app.canvas.style.height = previousCanvasStyle.height
       this.#capturingExportFrame = wasCapturingExportFrame
       this.#cameraPreview = preview
+      this.#applyTick()
     }
   }
 

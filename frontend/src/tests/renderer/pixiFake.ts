@@ -188,16 +188,19 @@ export class FakeText extends FakeContainer {
   readonly kind = 'text'
   text: string
   readonly style: unknown
+  readonly autoGenerateMipmaps: boolean
 
-  constructor(options: { text: string; style?: unknown }) {
+  constructor(options: { text: string; style?: unknown; autoGenerateMipmaps?: boolean }) {
     super()
     this.text = options.text
     this.style = options.style
+    this.autoGenerateMipmaps = options.autoGenerateMipmaps ?? false
   }
 }
 
 export class FakeTexture {
   destroyed = false
+  autoGenerateMipmaps = false
   readonly url?: string
   readonly width: number
   readonly height: number
@@ -497,7 +500,12 @@ export class FakeApplication {
   readonly canvas: HTMLCanvasElement = document.createElement('canvas')
   readonly stage = new FakeContainer()
   readonly renderer = {
-    resize: (): void => undefined,
+    resize: (width: number, height: number): void => {
+      this.screen.width = width
+      this.screen.height = height
+      this.canvas.width = width
+      this.canvas.height = height
+    },
     background: { color: 0xffffff },
     renderCalls: [] as { container: unknown; target: unknown }[],
     render(options: { container: unknown; target: unknown }): void {

@@ -66,6 +66,7 @@ describe('TextRenderer', () => {
     expect(textDisplay).toBeDefined()
     expect(textDisplay?.kind).toBe('text')
     expect(textDisplay?.text).toBe('Hello World')
+    expect(textDisplay?.autoGenerateMipmaps).toBe(true)
   })
 
   it('applies fontSize from TextComponent', async () => {

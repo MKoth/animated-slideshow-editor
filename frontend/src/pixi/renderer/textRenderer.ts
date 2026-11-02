@@ -71,6 +71,7 @@ function createTextObject(pixi: RendererPixi, textComponent: TextComponent): Pix
   const text = new pixi.Text({
     text: textComponent.content,
     style: buildTextStyle(textComponent),
+    autoGenerateMipmaps: true,
   })
   text.label = 'text-display'
   return text

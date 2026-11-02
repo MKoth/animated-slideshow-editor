@@ -64,6 +64,17 @@ describe('TextureCache', () => {
     expect(assetLoadCalls).toHaveLength(1)
   })
 
+  it.each([
+    ['chalkboard background', 7680, 4320],
+    ['book illustration', 680, 426],
+  ])('enables mipmaps for the downscaled %s', async (_name, width, height) => {
+    textureLoads.set('http://assets/artwork.png', new FakeTexture('artwork', { width, height }))
+
+    const loaded = await cache.load('http://assets/artwork.png', 'artwork')
+
+    expect(loaded.texture.source.autoGenerateMipmaps).toBe(true)
+  })
+
   it('loads textures for distinct keys independently', async () => {
     textureLoads.set('http://assets/def-1.png', new FakeTexture())
     textureLoads.set('http://assets/def-2.png', new FakeTexture())

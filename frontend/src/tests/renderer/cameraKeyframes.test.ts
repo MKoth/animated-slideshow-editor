@@ -118,6 +118,33 @@ function storedTransformOf(system: Harness['system'], cameraId: string) {
 }
 
 describe('evaluated viewport', () => {
+  it('captures export frames at native 1080p independent of editor viewport size', async () => {
+    const { system, app, renderer, cameraId } = await mount()
+    dispatchKeyframe(system, cameraId, 'positionX', 0, 24)
+    dispatchKeyframe(system, cameraId, 'positionY', 0, 16)
+    dispatchKeyframe(system, cameraId, 'scaleX', 0, 2)
+    dispatchKeyframe(system, cameraId, 'scaleY', 0, 2)
+    const capture = vi.spyOn(renderer, 'captureFrame').mockImplementation((viewportOnly) => {
+      expect(viewportOnly).toBe(true)
+      expect(app.screen).toMatchObject({ width: 1920, height: 1080 })
+      expect(app.canvas.width).toBe(1920)
+      expect(app.canvas.height).toBe(1080)
+      // The world-space camera window stays the same: the camera zoom scales
+      // with the larger output viewport instead of revealing more of the scene.
+      expect(worldOf(app).position.x).toBeCloseTo(-115.2)
+      expect(worldOf(app).position.y).toBeCloseTo(-57.6)
+      expect(worldOf(app).scale.x).toBeCloseTo(4.8)
+      expect(worldOf(app).scale.y).toBeCloseTo(3.6)
+      return 'data:image/png;base64,exported'
+    })
+
+    expect(renderer.captureExportFrame()).toBe('data:image/png;base64,exported')
+    expect(capture).toHaveBeenCalledOnce()
+    expect(app.screen).toMatchObject({ width: 800, height: 600 })
+    expect(app.canvas.width).toBe(800)
+    expect(app.canvas.height).toBe(600)
+  })
+
   it('forces the authored camera for export while the editor is freely navigating', async () => {
     const { system, app, canvas, cameraId, renderer } = await mount()
     middleDrag(canvas, [300, 200], [400, 250])
@@ -135,10 +162,10 @@ describe('evaluated viewport', () => {
 
     const capture = vi.spyOn(renderer, 'captureFrame').mockImplementation((viewportOnly) => {
       expect(viewportOnly).toBe(true)
-      expect(worldOf(app).position.x).toBe(-200)
-      expect(worldOf(app).position.y).toBe(-100)
-      expect(worldOf(app).scale.x).toBe(2)
-      expect(worldOf(app).scale.y).toBe(2)
+      expect(worldOf(app).position.x).toBe(-480)
+      expect(worldOf(app).position.y).toBe(-180)
+      expect(worldOf(app).scale.x).toBeCloseTo(4.8)
+      expect(worldOf(app).scale.y).toBeCloseTo(3.6)
       return 'data:image/png;base64,exported'
     })
     expect(renderer.captureExportFrame()).toBe('data:image/png;base64,exported')
@@ -162,10 +189,10 @@ describe('evaluated viewport', () => {
 
     const capture = vi.spyOn(renderer, 'captureFrame').mockImplementation((viewportOnly) => {
       expect(viewportOnly).toBe(true)
-      expect(worldOf(app).position.x).toBe(-200)
-      expect(worldOf(app).position.y).toBe(-100)
-      expect(worldOf(app).scale.x).toBe(2)
-      expect(worldOf(app).scale.y).toBe(2)
+      expect(worldOf(app).position.x).toBe(-480)
+      expect(worldOf(app).position.y).toBe(-180)
+      expect(worldOf(app).scale.x).toBeCloseTo(4.8)
+      expect(worldOf(app).scale.y).toBeCloseTo(3.6)
       return 'data:image/png;base64,exported'
     })
     expect(renderer.captureExportFrame()).toBe('data:image/png;base64,exported')
