@@ -5327,6 +5327,24 @@ button:disabled {
   visibility: hidden;
 }
 
+.scenario-comments-loader {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: scenario-comments-spin 0.7s linear infinite;
+}
+
+@keyframes scenario-comments-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .scenario-edit-hover-btn {
   right: 36px;
 }

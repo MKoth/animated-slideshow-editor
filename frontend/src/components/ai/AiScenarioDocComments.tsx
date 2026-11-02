@@ -202,6 +202,7 @@ export function AiScenarioDocComments({
   const [float, setFloat] = useState<PendingAnchor | null>(null)
   const [pending, setPending] = useState<PendingAnchor | null>(null)
   const [draft, setDraft] = useState('')
+  const [sendingComments, setSendingComments] = useState(false)
   const [editingBlock, setEditingBlock] = useState<{
     index: number
     text: string
@@ -577,16 +578,22 @@ export function AiScenarioDocComments({
     clearSelection()
   }
 
-  const handleSend = (): void => {
-    if (!projectId || !conversationId || comments.length === 0) return
+  const handleSend = async (): Promise<void> => {
+    if (!projectId || !conversationId || comments.length === 0 || sendingComments || streaming)
+      return
     const store = useAiStore.getState()
-    void store.sendMessage(
-      projectId,
-      conversationId,
-      buildScenarioCommentsMessage(comments),
-      context,
-      'scenario',
-    )
+    setSendingComments(true)
+    try {
+      await store.sendMessage(
+        projectId,
+        conversationId,
+        buildScenarioCommentsMessage(comments),
+        context,
+        'scenario',
+      )
+    } finally {
+      setSendingComments(false)
+    }
   }
 
   const composerX = pending ? Math.max(8, Math.min(pending.x, window.innerWidth - 344)) : 0
@@ -766,7 +773,7 @@ export function AiScenarioDocComments({
           <button
             type="button"
             data-testid="ai-scenario-comments-send"
-            disabled={!conversationId || comments.length === 0 || streaming}
+            disabled={!conversationId || comments.length === 0 || streaming || sendingComments}
             title={
               !conversationId
                 ? 'Start a conversation to send fix requests'
@@ -776,9 +783,15 @@ export function AiScenarioDocComments({
             }
             onClick={handleSend}
           >
-            {comments.length === 0
-              ? 'Resolve comments'
-              : `Resolve ${comments.length} comment${comments.length === 1 ? '' : 's'}`}
+            {sendingComments ? (
+              <>
+                <span className="scenario-comments-loader" aria-hidden="true" /> Sending…
+              </>
+            ) : comments.length === 0 ? (
+              'Resolve comments'
+            ) : (
+              `Resolve ${comments.length} comment${comments.length === 1 ? '' : 's'}`
+            )}
           </button>
         </div>
         {comments.length > 0 && (
