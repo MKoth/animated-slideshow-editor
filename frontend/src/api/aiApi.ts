@@ -77,6 +77,8 @@ export interface AiMessage {
   created: string
   /** Frontend-only optimistic user message, replaced by the persisted copy. */
   optimistic?: boolean
+  /** Frontend-only outcome for a recently sent user request. */
+  requestStatus?: 'processing' | 'sent' | 'stopped' | 'failed'
 }
 
 export interface AiModels {

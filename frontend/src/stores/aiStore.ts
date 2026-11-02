@@ -591,13 +591,14 @@ export const useAiStore = create<AiState>()(
         if (existing && conversationModeOf(existing) !== wanted) return
         const aborter = new AbortController()
         const optimisticMessage: AiMessage = {
-          id: `local-user-${Date.now()}`,
+          id: `local-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           role: 'user',
           content: clean,
           stopped: false,
           errorCode: null,
           created: new Date().toISOString(),
           optimistic: true,
+          requestStatus: 'processing',
         }
         set({
           status: 'streaming',
@@ -615,6 +616,7 @@ export const useAiStore = create<AiState>()(
         // Clear the draft for this project + mode once sent.
         set((state) => ({ drafts: { ...state.drafts, [aiActiveKey(projectId, wanted)]: '' } }))
         let collected = ''
+        let requestStatus: NonNullable<AiMessage['requestStatus']> = 'processing'
         try {
           await streamAiChat(
             { conversationId, message: clean, mode: 'send', context, assistantMode: wanted },
@@ -627,6 +629,7 @@ export const useAiStore = create<AiState>()(
                 if (content) collected = content
               },
               onError: (code, message) => {
+                requestStatus = 'failed'
                 set({ lastError: { code, message } })
               },
             },
@@ -634,25 +637,75 @@ export const useAiStore = create<AiState>()(
           )
         } catch (error) {
           if ((error as Error)?.name === 'AbortError') {
-            // Stop preserves partial content: reload will show the persisted partial.
+            requestStatus = 'stopped'
           } else if (isBackendDown(error)) {
-            set({ status: 'unavailable', streamingConversationId: null, aborter: null })
+            requestStatus = 'failed'
+            set((state) => ({
+              status: 'unavailable',
+              streamingConversationId: null,
+              aborter: null,
+              messagesById: {
+                ...state.messagesById,
+                [conversationId]: (state.messagesById[conversationId] ?? []).map((message) =>
+                  message.id === optimisticMessage.id ? { ...message, requestStatus } : message,
+                ),
+              },
+            }))
             return
+          } else {
+            requestStatus = 'failed'
           }
         }
+        if (requestStatus === 'processing') {
+          requestStatus = aborter.signal.aborted ? 'stopped' : 'sent'
+        }
+        set((state) => ({
+          messagesById: {
+            ...state.messagesById,
+            [conversationId]: (state.messagesById[conversationId] ?? []).map((message) =>
+              message.id === optimisticMessage.id ? { ...message, requestStatus } : message,
+            ),
+          },
+        }))
         // Refresh from the server: source of truth (user + assistant persisted).
         try {
           const messages = await get().api.listMessages(conversationId)
           set((state) => {
-            const pending = (state.messagesById[conversationId] ?? []).filter(
+            const current = state.messagesById[conversationId] ?? []
+            const pending = current.filter(
               (message) =>
                 message.optimistic &&
-                !messages.some(
-                  (saved) => saved.role === 'user' && saved.content === message.content,
-                ),
+                message.id !== optimisticMessage.id &&
+                (message.requestStatus === 'failed' ||
+                  message.requestStatus === 'stopped' ||
+                  !messages.some(
+                    (saved) =>
+                      saved.role === 'user' &&
+                      saved.content === message.content &&
+                      Date.parse(saved.created) >= Date.parse(message.created) - 1000,
+                  )),
             )
+            const sentMessage = current.find((message) => message.id === optimisticMessage.id)
+            const savedIndex = sentMessage
+              ? messages.findIndex(
+                  (saved) =>
+                    saved.role === 'user' &&
+                    saved.content === sentMessage.content &&
+                    Date.parse(saved.created) >= Date.parse(sentMessage.created) - 1000,
+                )
+              : -1
+            const refreshed = [...messages]
+            if (sentMessage && savedIndex >= 0 && requestStatus !== 'sent') {
+              refreshed[savedIndex] = { ...refreshed[savedIndex]!, requestStatus }
+            }
+            if (sentMessage && savedIndex < 0) {
+              pending.push({ ...sentMessage, requestStatus })
+            }
             return {
-              messagesById: { ...state.messagesById, [conversationId]: [...messages, ...pending] },
+              messagesById: {
+                ...state.messagesById,
+                [conversationId]: [...refreshed, ...pending],
+              },
               conversations: state.conversations.map((c) =>
                 c.id === conversationId ? { ...c, modified: new Date().toISOString() } : c,
               ),

@@ -216,6 +216,10 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
     await user.type(editor, '## Step 1 — Who you are\n\nA clearer line.')
     expect(screen.getByTestId('ai-scenario-markdown-edit-warnings')).toBeInTheDocument()
     await user.click(screen.getByTestId('ai-scenario-save-md'))
+    expect(screen.getByTestId('ai-scenario-markdown-confirm')).toHaveTextContent(
+      'previous version will remain available in History',
+    )
+    await user.click(screen.getByTestId('ai-scenario-markdown-confirm-save'))
 
     await screen.findByTestId('ai-scenario-modal-doc')
     const createCall = vi

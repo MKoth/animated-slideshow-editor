@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AiPanel } from '../components/ai/AiPanel'
@@ -94,6 +94,75 @@ describe('AiPanel scenario version links (issue #462)', () => {
     )
     expect(screen.getByTestId('ai-streaming')).toBeInTheDocument()
     expect(screen.getByText('Sent · processing…')).toBeInTheDocument()
+  })
+
+  it('keeps the submitted message with a retry action when the request fails', async () => {
+    const user = userEvent.setup()
+    const convId = 'c-failed'
+    vi.mocked(fetch).mockImplementation(async (url: unknown) => {
+      const path = String(url)
+      if (path.includes('/api/ai/conversations?')) {
+        const projectId = new URL(path, 'http://localhost').searchParams.get('projectId')
+        return new Response(
+          JSON.stringify([{ id: convId, projectId, title: 'Scenario chat', mode: 'scenario' }]),
+          { status: 200 },
+        )
+      }
+      if (path.includes(`/api/ai/conversations/${convId}/messages`)) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      if (path.endsWith('/api/ai/chat')) {
+        return new Response(JSON.stringify({ detail: 'Provider unavailable.' }), { status: 503 })
+      }
+      return new Response(JSON.stringify([]), { status: 200 })
+    })
+    renderPanel()
+    await screen.findByTestId(`ai-conversation-${convId}`)
+    await user.type(screen.getByTestId('ai-input'), 'Explain the intro')
+    await user.click(screen.getByTestId('ai-send'))
+
+    const userMessage = await screen.findByTestId(/ai-message-local-user-/)
+    expect(userMessage).toHaveTextContent('Explain the intro')
+    expect(within(userMessage).getByText('Request failed.')).toBeInTheDocument()
+    expect(within(userMessage).getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+
+  it('marks a cancelled request as stopped while keeping its user message visible', async () => {
+    const user = userEvent.setup()
+    const convId = 'c-stopped'
+    vi.mocked(fetch).mockImplementation(async (url: unknown, init?: RequestInit) => {
+      const path = String(url)
+      if (path.includes('/api/ai/conversations?')) {
+        const projectId = new URL(path, 'http://localhost').searchParams.get('projectId')
+        return new Response(
+          JSON.stringify([{ id: convId, projectId, title: 'Scenario chat', mode: 'scenario' }]),
+          { status: 200 },
+        )
+      }
+      if (path.includes(`/api/ai/conversations/${convId}/messages`)) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      if (path.endsWith('/api/ai/chat')) {
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Stopped', 'AbortError')),
+          )
+        })
+      }
+      return new Response(JSON.stringify([]), { status: 200 })
+    })
+    renderPanel()
+    await screen.findByTestId(`ai-conversation-${convId}`)
+    await user.type(screen.getByTestId('ai-input'), 'Pause after this')
+    await user.click(screen.getByTestId('ai-send'))
+    const userMessage = await screen.findByTestId(/ai-message-local-user-/)
+    await user.click(screen.getByTestId('ai-stop'))
+
+    expect(
+      await within(userMessage).findByText('Stopped · partial response kept.'),
+    ).toBeInTheDocument()
+    expect(userMessage).toHaveTextContent('Pause after this')
+    expect(within(userMessage).getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })
 
   it('renders stored inline summaries with version links and mixed split, never deriving from raw content', async () => {

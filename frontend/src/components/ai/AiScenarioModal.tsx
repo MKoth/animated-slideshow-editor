@@ -197,6 +197,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const [markdownDraft, setMarkdownDraft] = useState('')
   const [savingMarkdown, setSavingMarkdown] = useState(false)
   const [markdownEditError, setMarkdownEditError] = useState<string | null>(null)
+  const [confirmingMarkdownWarnings, setConfirmingMarkdownWarnings] = useState(false)
   const [confirmingDeleteDoc, setConfirmingDeleteDoc] = useState(false)
   const [confirmingDeleteHtml, setConfirmingDeleteHtml] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -675,6 +676,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
       await store.loadMarkdownVersions(projectId, conversationId)
       store.bumpScenarioDocRev(projectId)
       setEditingMarkdown(false)
+      setConfirmingMarkdownWarnings(false)
     } catch (error) {
       setMarkdownEditError(
         error instanceof Error ? error.message : 'Could not save scenario edits.',
@@ -1354,6 +1356,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
               onClick={() => {
                 setMarkdownDraft(markdown)
                 setMarkdownEditError(null)
+                setConfirmingMarkdownWarnings(false)
                 setEditingMarkdown(true)
               }}
             >
@@ -1364,7 +1367,13 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
               <button
                 data-testid="ai-scenario-save-md"
                 disabled={!markdownDraft.trim() || savingMarkdown || markdownDraft === markdown}
-                onClick={() => void saveManualMarkdown()}
+                onClick={() => {
+                  if (markdownDraftWarnings.length > 0) {
+                    setConfirmingMarkdownWarnings(true)
+                  } else {
+                    void saveManualMarkdown()
+                  }
+                }}
               >
                 {savingMarkdown ? 'Saving version…' : 'Save version'}
               </button>
@@ -1374,6 +1383,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                 onClick={() => {
                   setEditingMarkdown(false)
                   setMarkdownEditError(null)
+                  setConfirmingMarkdownWarnings(false)
                 }}
               >
                 Cancel
@@ -1624,7 +1634,10 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                       data-testid="ai-scenario-markdown-source"
                       aria-label="Edit scenario markdown"
                       value={markdownDraft}
-                      onChange={(event) => setMarkdownDraft(event.target.value)}
+                      onChange={(event) => {
+                        setMarkdownDraft(event.target.value)
+                        setConfirmingMarkdownWarnings(false)
+                      }}
                       rows={24}
                       style={{ width: '100%', fontFamily: 'monospace' }}
                     />
@@ -1641,6 +1654,30 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                             </li>
                           ))}
                         </ul>
+                      </div>
+                    )}
+                    {confirmingMarkdownWarnings && (
+                      <div data-testid="ai-scenario-markdown-confirm" role="alert">
+                        <p>
+                          Save this version with validation warnings? The previous version will
+                          remain available in History.
+                        </p>
+                        <button
+                          type="button"
+                          data-testid="ai-scenario-markdown-confirm-save"
+                          disabled={savingMarkdown}
+                          onClick={() => void saveManualMarkdown()}
+                        >
+                          Save with warnings
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="ai-scenario-markdown-confirm-cancel"
+                          disabled={savingMarkdown}
+                          onClick={() => setConfirmingMarkdownWarnings(false)}
+                        >
+                          Keep editing
+                        </button>
                       </div>
                     )}
                     {markdownEditError && (

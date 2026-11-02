@@ -942,15 +942,39 @@ export function AiPanel() {
                   ) : (
                     <div>{message.content}</div>
                   )}
-                  {message.optimistic && (
+                  {message.requestStatus && (
                     <div
                       data-testid={`ai-message-status-${message.id}`}
                       role="status"
                       aria-live="polite"
                     >
-                      {isStreaming && streamingConversationId === activeId
+                      {message.requestStatus === 'processing'
                         ? 'Sent · processing…'
-                        : 'Sent'}
+                        : message.requestStatus === 'stopped'
+                          ? 'Stopped · partial response kept.'
+                          : message.requestStatus === 'failed'
+                            ? 'Request failed.'
+                            : 'Sent'}
+                      {(message.requestStatus === 'failed' ||
+                        message.requestStatus === 'stopped') &&
+                        activeId && (
+                          <button
+                            type="button"
+                            data-testid={`ai-message-retry-${message.id}`}
+                            disabled={isStreaming || unavailable}
+                            onClick={() =>
+                              void store.sendMessage(
+                                projectId,
+                                activeId,
+                                message.content,
+                                context,
+                                normalizeAiMode(assistantMode),
+                              )
+                            }
+                          >
+                            Retry
+                          </button>
+                        )}
                     </div>
                   )}
                   {message.role === 'assistant' && message.scenarioIntent && (
