@@ -347,4 +347,43 @@ describe('AiScenarioDocComments in the scenario modal', () => {
     expect(screen.queryByTestId('ai-scenario-comments-list')).not.toBeInTheDocument()
     expect(screen.getByTestId('ai-scenario-comments-count')).toHaveTextContent('No inline comments')
   })
+
+  it('preserves and reanchors comments across a manual markdown edit', async () => {
+    const comment: ScenarioDocComment = {
+      id: 'manual-anchor',
+      step: 1,
+      blockKind: 'narrator',
+      quote: 'Ser is for who you are.',
+      comment: 'Keep this attached.',
+      blockIndex: 1,
+    }
+    function Harness({ markdown }: { markdown: string }) {
+      const [comments, setComments] = useState([comment])
+      return (
+        <AiScenarioDocComments
+          projectId="p-1"
+          conversationId="c-1"
+          markdown={markdown}
+          comments={comments}
+          onCommentsChange={setComments}
+          preserveCommentsOnMarkdownChange
+        />
+      )
+    }
+    const view = render(<Harness markdown={MD} />)
+    const edited = MD.replace(
+      '**Narrator:** Ser is for who you are.',
+      'A new introductory note.\n\n**Narrator:** Ser is for who you are.',
+    )
+    view.rerender(<Harness markdown={edited} />)
+
+    expect(await screen.findByTestId('ai-scenario-comments-list')).toHaveTextContent(
+      'Keep this attached.',
+    )
+    const narrator = within(screen.getByTestId('ai-scenario-modal-doc')).getByText(
+      /Ser is for who you are/,
+    )
+    expect(narrator.closest('p')).toHaveClass('has-doc-comment')
+    expect(screen.queryByText(/Anchor no longer appears/)).not.toBeInTheDocument()
+  })
 })

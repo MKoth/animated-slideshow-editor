@@ -214,6 +214,7 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
     const editor = screen.getByTestId('ai-scenario-markdown-source')
     await user.clear(editor)
     await user.type(editor, '## Step 1 — Who you are\n\nA clearer line.')
+    expect(screen.getByTestId('ai-scenario-markdown-edit-warnings')).toBeInTheDocument()
     await user.click(screen.getByTestId('ai-scenario-save-md'))
 
     await screen.findByTestId('ai-scenario-modal-doc')

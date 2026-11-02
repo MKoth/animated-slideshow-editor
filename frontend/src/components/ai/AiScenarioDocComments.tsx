@@ -152,6 +152,7 @@ interface AiScenarioDocCommentsProps {
   markdown: string
   comments: ScenarioDocComment[]
   onCommentsChange: (next: ScenarioDocComment[]) => void
+  preserveCommentsOnMarkdownChange?: boolean
 }
 
 let commentSeq = 0
@@ -187,6 +188,7 @@ export function AiScenarioDocComments({
   markdown,
   comments,
   onCommentsChange,
+  preserveCommentsOnMarkdownChange = false,
 }: AiScenarioDocCommentsProps): JSX.Element {
   const docRef = useRef<HTMLDivElement | null>(null)
   const [float, setFloat] = useState<PendingAnchor | null>(null)
@@ -194,7 +196,8 @@ export function AiScenarioDocComments({
   const [draft, setDraft] = useState('')
   const streaming = useAiStore((s) => s.status) === 'streaming'
 
-  // A new doc version resolves every anchor: drop the thread.
+  // AI-generated versions clear their old thread; manual edits re-anchor
+  // surviving quotes and retain notes whose text was removed as orphans.
   const prevMarkdownRef = useRef(markdown)
   useEffect(() => {
     if (prevMarkdownRef.current !== markdown) {
@@ -202,7 +205,34 @@ export function AiScenarioDocComments({
       setFloat(null)
       setPending(null)
       setDraft('')
-      if (comments.length > 0) onCommentsChange([])
+      if (preserveCommentsOnMarkdownChange && comments.length > 0) {
+        const md = docRef.current ? markdownRoot(docRef.current) : null
+        const blocks = md
+          ? Array.from(md.children).filter(
+              (child): child is HTMLElement => child instanceof HTMLElement,
+            )
+          : []
+        onCommentsChange(
+          comments.map((comment) => {
+            const matches = (block: HTMLElement): boolean => {
+              if (comment.cell) {
+                const rows = Array.from(block.querySelectorAll('tr'))
+                const cell = rows[comment.cell.row - 1]?.children[comment.cell.col - 1]
+                return (
+                  cell instanceof HTMLElement && (cell.textContent ?? '').includes(comment.quote)
+                )
+              }
+              return (block.textContent ?? '').includes(comment.quote)
+            }
+            const oldBlock = blocks[comment.blockIndex]
+            const index =
+              oldBlock && matches(oldBlock) ? comment.blockIndex : blocks.findIndex(matches)
+            return index >= 0
+              ? { ...comment, blockIndex: index, orphaned: false }
+              : { ...comment, orphaned: true }
+          }),
+        )
+      } else if (comments.length > 0) onCommentsChange([])
     }
     // `comments`/`onCommentsChange` intentionally excluded: only a markdown
     // change may clear the thread, never a thread edit itself.
@@ -309,8 +339,10 @@ export function AiScenarioDocComments({
     for (const [blockIndex, list] of byBlock) {
       const block = blocks[blockIndex]
       if (!block) continue
+      const activeComments = list.filter((comment) => !comment.orphaned)
+      if (activeComments.length === 0) continue
       block.classList.add('has-doc-comment')
-      for (const comment of list) {
+      for (const comment of activeComments) {
         if (comment.cell) {
           const rows = block.querySelectorAll('tr')
           const row = rows[comment.cell.row - 1]
@@ -423,6 +455,7 @@ export function AiScenarioDocComments({
       y: event.clientY,
     }
     const existingComment = comments.find((comment) => {
+      if (comment.orphaned) return false
       if (comment.blockIndex !== blockIndex) return false
       if (!isCell) return !comment.cell
       const cell = btn.closest('td, th')
@@ -632,6 +665,11 @@ export function AiScenarioDocComments({
                     Delete
                   </button>
                 </div>
+                {comment.orphaned && (
+                  <div className="scenario-comment-item-orphaned" role="status">
+                    Anchor no longer appears in the document; this note is retained in the thread.
+                  </div>
+                )}
                 <blockquote className="scenario-comment-item-quote">
                   {truncateCommentText(comment.quote, QUOTE_PREVIEW)}
                 </blockquote>

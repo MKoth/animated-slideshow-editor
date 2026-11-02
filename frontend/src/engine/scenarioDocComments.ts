@@ -23,6 +23,8 @@ export interface ScenarioDocComment {
   readonly comment: string
   readonly blockIndex: number
   readonly cell?: ScenarioDocCellAnchor
+  /** Anchor text was removed; preserve the note until the user deletes it. */
+  readonly orphaned?: boolean
 }
 
 export function truncateCommentText(text: string, max: number): string {

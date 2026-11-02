@@ -193,6 +193,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const [generatingHtml, setGeneratingHtml] = useState(false)
   const [htmlProgress, setHtmlProgress] = useState('Preparing lesson preview…')
   const [editingMarkdown, setEditingMarkdown] = useState(false)
+  const [preserveCommentVersionId, setPreserveCommentVersionId] = useState<string | null>(null)
   const [markdownDraft, setMarkdownDraft] = useState('')
   const [savingMarkdown, setSavingMarkdown] = useState(false)
   const [markdownEditError, setMarkdownEditError] = useState<string | null>(null)
@@ -662,7 +663,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
       const touchedSteps = [...markdownDraft.matchAll(/^##\s+Step\s+(\d+)/gim)]
         .map((match) => Number.parseInt(match[1] ?? '', 10))
         .filter(Number.isFinite)
-      await store.api.createMarkdownVersion({
+      const created = await store.api.createMarkdownVersion({
         projectId,
         conversationId,
         content: markdownDraft,
@@ -670,9 +671,9 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         touchedSteps,
         baseVersionId: activeMarkdownVersionId ?? null,
       })
+      setPreserveCommentVersionId(created.id)
       await store.loadMarkdownVersions(projectId, conversationId)
       store.bumpScenarioDocRev(projectId)
-      setDocComments([])
       setEditingMarkdown(false)
     } catch (error) {
       setMarkdownEditError(
@@ -690,6 +691,10 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     () => (markdown ? parseScenarioMarkdown(markdown).warnings : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [markdown, scenarioDocRev],
+  )
+  const markdownDraftWarnings = useMemo(
+    () => (markdownDraft.trim() ? parseScenarioMarkdown(markdownDraft).warnings : []),
+    [markdownDraft],
   )
 
   const handleSendWarnings = () => {
@@ -1594,10 +1599,25 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
               style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginTop: 8 }}
             >
               <div>
-                {editingMarkdown ? (
+                <div hidden={editingMarkdown}>
+                  <AiScenarioDocComments
+                    projectId={projectId}
+                    conversationId={conversationId}
+                    context={context}
+                    markdown={markdown}
+                    comments={docComments}
+                    onCommentsChange={setDocComments}
+                    preserveCommentsOnMarkdownChange={
+                      preserveCommentVersionId !== null &&
+                      activeMarkdownVersionId === preserveCommentVersionId
+                    }
+                  />
+                </div>
+                {editingMarkdown && (
                   <div data-testid="ai-scenario-markdown-editor">
                     <label htmlFor="ai-scenario-markdown-source">
-                      Edit scenario markdown. Remove a block by deleting its markdown source.
+                      Edit scenario markdown. Remove a block by deleting its markdown source. Saving
+                      creates a new history version; the previous version remains recoverable.
                     </label>
                     <textarea
                       id="ai-scenario-markdown-source"
@@ -1608,21 +1628,27 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                       rows={24}
                       style={{ width: '100%', fontFamily: 'monospace' }}
                     />
+                    {markdownDraftWarnings.length > 0 && (
+                      <div data-testid="ai-scenario-markdown-edit-warnings" role="status">
+                        <div>
+                          {markdownDraftWarnings.length} scenario validation warning(s) — review
+                          before saving.
+                        </div>
+                        <ul>
+                          {markdownDraftWarnings.map((warning, index) => (
+                            <li key={`${warning.code}-${index}`}>
+                              <code>{warning.code}</code> {warning.message}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     {markdownEditError && (
                       <div role="alert" data-testid="ai-scenario-markdown-edit-error">
                         {markdownEditError}
                       </div>
                     )}
                   </div>
-                ) : (
-                  <AiScenarioDocComments
-                    projectId={projectId}
-                    conversationId={conversationId}
-                    context={context}
-                    markdown={markdown}
-                    comments={docComments}
-                    onCommentsChange={setDocComments}
-                  />
                 )}
               </div>
               <AiScenarioChecklist
