@@ -192,6 +192,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   // same LLM backend, so the button shows a loader until it resolves.
   const [generatingHtml, setGeneratingHtml] = useState(false)
   const [htmlProgress, setHtmlProgress] = useState('Preparing lesson preview…')
+  const [htmlError, setHtmlError] = useState<string | null>(null)
   const [editingMarkdown, setEditingMarkdown] = useState(false)
   const [preserveCommentVersionId, setPreserveCommentVersionId] = useState<string | null>(null)
   const [markdownDraft, setMarkdownDraft] = useState('')
@@ -331,6 +332,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     if (!engineValue?.project || generateBlocked || generatingHtml) return
     setGeneratingHtml(true)
     setHtmlProgress('Preparing lesson images…')
+    setHtmlError(null)
     try {
       const current = engineValue.project.scenario ?? createEmptyScenarioSection(markdown)
       const currentMarkdown = current.currentMarkdown ?? markdown
@@ -404,6 +406,8 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
       engineValue.project.setScenario(withScenarioHtml(next, html, pointer, foreignWords))
       setScenarioRev((n) => n + 1)
       persistScenario()
+    } catch (error) {
+      setHtmlError(error instanceof Error ? error.message : 'HTML generation failed — retry.')
     } finally {
       setGeneratingHtml(false)
     }
@@ -1270,6 +1274,14 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
             <AiProcessingStatus testId="ai-scenario-html-progress">
               {htmlProgress}
             </AiProcessingStatus>
+          )}
+          {htmlError && (
+            <div role="alert" data-testid="ai-scenario-html-error">
+              {htmlError}{' '}
+              <button type="button" onClick={() => void handleGenerate()}>
+                Retry HTML generation
+              </button>
+            </div>
           )}
           <button
             data-testid="ai-scenario-view"

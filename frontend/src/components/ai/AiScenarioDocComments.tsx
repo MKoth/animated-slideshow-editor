@@ -225,8 +225,13 @@ export function AiScenarioDocComments({
               return (block.textContent ?? '').includes(comment.quote)
             }
             const oldBlock = blocks[comment.blockIndex]
+            const matchingBlocks = blocks.flatMap((block, index) => (matches(block) ? [index] : []))
             const index =
-              oldBlock && matches(oldBlock) ? comment.blockIndex : blocks.findIndex(matches)
+              oldBlock && matches(oldBlock)
+                ? comment.blockIndex
+                : matchingBlocks.length === 1
+                  ? matchingBlocks[0]!
+                  : -1
             return index >= 0
               ? { ...comment, blockIndex: index, orphaned: false }
               : { ...comment, orphaned: true }
