@@ -27,7 +27,8 @@ const MAX_QUOTE = 2000
 const QUOTE_PREVIEW = 280
 const BLOCK_BTN_TESTID = 'ai-scenario-comment-block-btn'
 const CELL_BTN_TESTID = 'ai-scenario-comment-cell-btn'
-const BTN_SELECTOR = '[data-comment-btn]'
+const EDIT_BTN_SELECTOR = '[data-edit-block-btn]'
+const BTN_SELECTOR = `[data-comment-btn], ${EDIT_BTN_SELECTOR}`
 
 function markdownRoot(doc: HTMLElement): HTMLElement | null {
   return doc.querySelector(':scope > .ai-markdown') ?? doc.querySelector('.ai-markdown')
@@ -131,6 +132,10 @@ function commentIconSvg(size: number): string {
   )
 }
 
+function editIconSvg(size: number): string {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="m2.5 11.8-.6 2.3 2.3-.6 8.1-8.1-1.7-1.7-8.1 8.1Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="m9.9 4.1 1.7 1.7" stroke="currentColor" stroke-width="1.4"/></svg>`
+}
+
 function CommentIcon({ size = 16 }: { size?: number }): JSX.Element {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -154,6 +159,7 @@ interface AiScenarioDocCommentsProps {
   comments: ScenarioDocComment[]
   onCommentsChange: (next: ScenarioDocComment[]) => void
   preserveCommentsOnMarkdownChange?: boolean
+  onEditBlock?: (blockIndex: number, text: string) => Promise<void> | void
 }
 
 let commentSeq = 0
@@ -190,11 +196,20 @@ export function AiScenarioDocComments({
   comments,
   onCommentsChange,
   preserveCommentsOnMarkdownChange = false,
+  onEditBlock,
 }: AiScenarioDocCommentsProps): JSX.Element {
   const docRef = useRef<HTMLDivElement | null>(null)
   const [float, setFloat] = useState<PendingAnchor | null>(null)
   const [pending, setPending] = useState<PendingAnchor | null>(null)
   const [draft, setDraft] = useState('')
+  const [editingBlock, setEditingBlock] = useState<{
+    index: number
+    text: string
+    original: string
+    top: number
+  } | null>(null)
+  const [savingBlock, setSavingBlock] = useState(false)
+  const [blockEditError, setBlockEditError] = useState<string | null>(null)
   const streaming = useAiStore((s) => s.status) === 'streaming'
 
   // AI-generated versions clear their old thread; manual edits re-anchor
@@ -245,6 +260,16 @@ export function AiScenarioDocComments({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [markdown])
 
+  useEffect(() => {
+    const doc = docRef.current
+    const md = doc ? markdownRoot(doc) : null
+    const blocks = md ? Array.from(md.children) : []
+    blocks.forEach((block, index) => {
+      if (block instanceof HTMLElement)
+        block.classList.toggle('scenario-block-editing', editingBlock?.index === index)
+    })
+  }, [editingBlock])
+
   // Tag every top-level block with its anchor dataset and inject one icon
   // button per block (plus one per table cell). Re-runs only when the
   // markdown changes; React leaves these nodes alone between renders because
@@ -284,6 +309,14 @@ export function AiScenarioDocComments({
         btn.setAttribute('title', `Comment on ${label} · ${kind}`)
         btn.innerHTML = commentIconSvg(16)
         child.appendChild(btn)
+        const editBtn = document.createElement('button')
+        editBtn.type = 'button'
+        editBtn.className = 'scenario-comment-hover-btn scenario-edit-hover-btn'
+        editBtn.setAttribute('data-edit-block-btn', '1')
+        editBtn.setAttribute('aria-label', `Edit ${label} ${kind}`)
+        editBtn.setAttribute('title', `Edit ${label} · ${kind}`)
+        editBtn.innerHTML = editIconSvg(16)
+        child.appendChild(editBtn)
       }
       if (child.tagName.toLowerCase() === 'table') {
         const rows = child.querySelectorAll('tr')
@@ -439,6 +472,20 @@ export function AiScenarioDocComments({
 
   const handleDocClick = (event: ReactMouseEvent): void => {
     const target = event.target instanceof Element ? event.target : null
+    const editBtn = target?.closest?.(EDIT_BTN_SELECTOR) ?? null
+    if (editBtn instanceof HTMLElement) {
+      const scope = editBtn.closest('[data-comment-block]')
+      const md = docRef.current ? markdownRoot(docRef.current) : null
+      const blockIndex = scope && md ? Array.from(md.children).indexOf(scope) : -1
+      if (blockIndex >= 0 && scope instanceof HTMLElement) {
+        const text = scope.textContent ?? ''
+        const rootRect = docRef.current?.getBoundingClientRect()
+        const top = scope.getBoundingClientRect().top - (rootRect?.top ?? 0)
+        setBlockEditError(null)
+        setEditingBlock({ index: blockIndex, text, original: text, top })
+      }
+      return
+    }
     const btn = target?.closest?.(BTN_SELECTOR) ?? null
     if (!(btn instanceof HTMLElement)) return
     const scope = btn.closest('[data-comment-block]')
@@ -562,6 +609,61 @@ export function AiScenarioDocComments({
             No scenario markdown yet — chat to iterate or edit the doc.
           </div>
         )}
+        {editingBlock &&
+          (() => {
+            return (
+              <div
+                className="scenario-block-editor"
+                style={{ top: editingBlock.top, left: 0, width: '100%' }}
+              >
+                <textarea
+                  data-testid="ai-scenario-block-editor-input"
+                  aria-label="Edit scenario block"
+                  value={editingBlock.text}
+                  onChange={(event) =>
+                    setEditingBlock({ ...editingBlock, text: event.target.value })
+                  }
+                  rows={Math.max(3, editingBlock.text.split('\n').length)}
+                  autoFocus
+                />
+                {blockEditError && <div role="alert">{blockEditError}</div>}
+                <div className="scenario-block-editor-actions">
+                  <button
+                    type="button"
+                    data-testid="ai-scenario-block-save"
+                    disabled={
+                      savingBlock ||
+                      !editingBlock.text.trim() ||
+                      editingBlock.text === editingBlock.original
+                    }
+                    onClick={async () => {
+                      setSavingBlock(true)
+                      try {
+                        await onEditBlock?.(editingBlock.index, editingBlock.text)
+                        setEditingBlock(null)
+                      } catch (error) {
+                        setBlockEditError(
+                          error instanceof Error ? error.message : 'Could not save this block.',
+                        )
+                      } finally {
+                        setSavingBlock(false)
+                      }
+                    }}
+                  >
+                    {savingBlock ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="ai-scenario-block-cancel"
+                    disabled={savingBlock}
+                    onClick={() => setEditingBlock(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )
+          })()}
       </div>
 
       {float && !pending && (
