@@ -157,6 +157,15 @@ beforeEach(() => {
 })
 
 describe('AiReconciliationView Stage B gate', () => {
+  it('explains asset reconciliation while the request is active', () => {
+    useAiStore.setState({ reconciliationBusy: true })
+    renderOpen()
+    expect(screen.getByTestId('ai-reconciliation-generating')).toHaveTextContent(
+      'Comparing scenario assets with the library…',
+    )
+    expect(screen.getByTestId('ai-reconciliation-generating')).toHaveAttribute('role', 'status')
+  })
+
   function renderOpen() {
     return render(
       <AiReconciliationView

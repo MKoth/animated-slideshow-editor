@@ -157,6 +157,34 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
     expect(screen.getByTestId('ai-scenario-modal-empty')).toBeInTheDocument()
   })
 
+  it('shows scenario generation feedback while drafting', async () => {
+    const { value } = setupEngine(MD)
+    useAiStore.setState({
+      scenarioGenerating: true,
+    })
+    renderModal(value)
+
+    expect(await screen.findByTestId('ai-scenario-generating')).toHaveTextContent(
+      'Drafting scenario…',
+    )
+  })
+
+  it('offers an explicit retry for a failed scenario draft', async () => {
+    const user = userEvent.setup()
+    const { value } = setupEngine(MD)
+    const proposeScenario = vi.fn().mockResolvedValue(null)
+    useAiStore.setState({
+      scenarioGenerating: false,
+      scenarioError: { code: 'provider_error', message: 'Provider unavailable.' },
+      scenarioRequest: 'Draft an intro',
+      proposeScenario,
+    })
+    renderModal(value)
+
+    await user.click(screen.getByTestId('ai-scenario-retry'))
+    expect(proposeScenario).toHaveBeenCalledWith('p-1', 'c-1', 'Draft an intro', undefined)
+  })
+
   it('modal shows doc center, right-rail checklist, top-bar actions, and Doc vs History vs Preview tabs', async () => {
     const { value } = setupEngine(MD)
     useAiStore.setState({ scenarioModalOpen: true })

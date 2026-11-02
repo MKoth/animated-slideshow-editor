@@ -150,6 +150,15 @@ function renderView(disabled = false, markdown?: string | null, html?: string | 
 }
 
 describe('AiBoardView Stage E gate', () => {
+  it('explains board script generation while the request is active', () => {
+    useAiStore.setState({ boardBusy: true })
+    renderView()
+    expect(screen.getByTestId('ai-board-generating')).toHaveTextContent(
+      'Drafting synchronized board scripts…',
+    )
+    expect(screen.getByTestId('ai-board-generating')).toHaveAttribute('role', 'status')
+  })
+
   it('renders fresh scripts with marks and a blocked gate before compile', () => {
     renderView()
     expect(screen.getByTestId('ai-board-section')).toBeInTheDocument()

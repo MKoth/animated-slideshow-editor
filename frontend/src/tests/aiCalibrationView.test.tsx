@@ -112,6 +112,15 @@ function renderView(disabled = false) {
 }
 
 describe('AiCalibrationView Stage D gate', () => {
+  it('explains readiness checks while calibration is running', () => {
+    useAiStore.setState({ calibrationBusy: true })
+    renderView()
+    expect(screen.getByTestId('ai-calibration-generating')).toHaveTextContent(
+      'Checking voice, rig, and camera readiness…',
+    )
+    expect(screen.getByTestId('ai-calibration-generating')).toHaveAttribute('role', 'status')
+  })
+
   it('renders verify-only checks with intro/outro timing and fallback marked', () => {
     renderView()
     expect(screen.getByTestId('ai-calibration-section')).toBeInTheDocument()

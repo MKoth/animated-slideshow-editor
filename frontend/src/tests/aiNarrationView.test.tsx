@@ -126,6 +126,15 @@ function renderView(disabled = false, markdown?: string | null, html?: string | 
 }
 
 describe('AiNarrationView Stage C gate', () => {
+  it('explains narration preparation while the request is active', () => {
+    useAiStore.setState({ narrationBusy: true })
+    renderView()
+    expect(screen.getByTestId('ai-narration-generating')).toHaveTextContent(
+      'Preparing narration and step timing…',
+    )
+    expect(screen.getByTestId('ai-narration-generating')).toHaveAttribute('role', 'status')
+  })
+
   it('renders verbatim parts with estimate timing and stale-blocked gate', () => {
     renderView()
     expect(screen.getByTestId('ai-narration-section')).toBeInTheDocument()

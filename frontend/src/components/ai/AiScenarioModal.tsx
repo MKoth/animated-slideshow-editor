@@ -199,6 +199,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const [savingMarkdown, setSavingMarkdown] = useState(false)
   const [markdownEditError, setMarkdownEditError] = useState<string | null>(null)
   const [confirmingMarkdownWarnings, setConfirmingMarkdownWarnings] = useState(false)
+  const [scenarioRetryMode, setScenarioRetryMode] = useState<'draft' | 'revise'>('draft')
   const [confirmingDeleteDoc, setConfirmingDeleteDoc] = useState(false)
   const [confirmingDeleteHtml, setConfirmingDeleteHtml] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -252,6 +253,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
 
   const handlePropose = () => {
     if (!projectId || !conversationId || !scenarioRequest.trim() || scenarioGenerating) return
+    setScenarioRetryMode('draft')
     void store.proposeScenario(projectId, conversationId, scenarioRequest, context)
   }
 
@@ -264,6 +266,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
       scenarioGenerating
     )
       return
+    setScenarioRetryMode('revise')
     void store.proposeScenario(
       projectId,
       conversationId,
@@ -1741,7 +1744,19 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                 Drafting scenario…
               </AiProcessingStatus>
             )}
-            {scenarioError && <span data-testid="ai-scenario-error">{scenarioError.message}</span>}
+            {scenarioError && (
+              <span data-testid="ai-scenario-error">
+                {scenarioError.message}{' '}
+                <button
+                  type="button"
+                  data-testid="ai-scenario-retry"
+                  disabled={scenarioGenerating}
+                  onClick={scenarioRetryMode === 'revise' ? handleRevise : handlePropose}
+                >
+                  Retry scenario
+                </button>
+              </span>
+            )}
           </div>
 
           {scenarios.length > 0 && (
