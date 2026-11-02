@@ -292,7 +292,19 @@ export function AiBoardView({
             Drafting synchronized board scripts…
           </AiProcessingStatus>
         )}
-        {boardError && <span data-testid="ai-board-error">{boardError.message}</span>}
+        {boardError && (
+          <span data-testid="ai-board-error">
+            {boardError.message}{' '}
+            <button
+              type="button"
+              data-testid="ai-board-retry"
+              disabled={boardBusy}
+              onClick={() => void handleRun()}
+            >
+              Retry board scripts
+            </button>
+          </span>
+        )}
       </div>
 
       {boards.length > 0 && (

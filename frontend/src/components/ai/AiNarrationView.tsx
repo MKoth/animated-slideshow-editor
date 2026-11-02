@@ -233,7 +233,19 @@ export function AiNarrationView({
             Preparing narration and step timing…
           </AiProcessingStatus>
         )}
-        {narrationError && <span data-testid="ai-narration-error">{narrationError.message}</span>}
+        {narrationError && (
+          <span data-testid="ai-narration-error">
+            {narrationError.message}{' '}
+            <button
+              type="button"
+              data-testid="ai-narration-retry"
+              disabled={narrationBusy}
+              onClick={() => void handleRun()}
+            >
+              Retry narration
+            </button>
+          </span>
+        )}
       </div>
 
       {narrations.length > 0 && (

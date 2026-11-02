@@ -110,7 +110,17 @@ export function AiReconciliationView({
             </AiProcessingStatus>
           )}
           {reconciliationError && (
-            <span data-testid="ai-reconciliation-error">{reconciliationError.message}</span>
+            <span data-testid="ai-reconciliation-error">
+              {reconciliationError.message}{' '}
+              <button
+                type="button"
+                data-testid="ai-reconciliation-retry"
+                disabled={reconciliationBusy}
+                onClick={() => void handleRun()}
+              >
+                Retry reconciliation
+              </button>
+            </span>
           )}
         </div>
 

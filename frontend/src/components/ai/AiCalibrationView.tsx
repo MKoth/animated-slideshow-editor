@@ -179,7 +179,17 @@ export function AiCalibrationView({
           </AiProcessingStatus>
         )}
         {calibrationError && (
-          <span data-testid="ai-calibration-error">{calibrationError.message}</span>
+          <span data-testid="ai-calibration-error">
+            {calibrationError.message}{' '}
+            <button
+              type="button"
+              data-testid="ai-calibration-retry"
+              disabled={calibrationBusy}
+              onClick={() => void handleRun()}
+            >
+              Retry checks
+            </button>
+          </span>
         )}
       </div>
 

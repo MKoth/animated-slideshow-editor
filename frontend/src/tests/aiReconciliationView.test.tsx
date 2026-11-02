@@ -166,6 +166,14 @@ describe('AiReconciliationView Stage B gate', () => {
     expect(screen.getByTestId('ai-reconciliation-generating')).toHaveAttribute('role', 'status')
   })
 
+  it('offers a retry after reconciliation fails', () => {
+    useAiStore.setState({
+      reconciliationError: { code: 'provider_error', message: 'Reconciliation failed.' },
+    })
+    renderOpen()
+    expect(screen.getByTestId('ai-reconciliation-retry')).toBeEnabled()
+  })
+
   function renderOpen() {
     return render(
       <AiReconciliationView

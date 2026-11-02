@@ -135,6 +135,14 @@ describe('AiNarrationView Stage C gate', () => {
     expect(screen.getByTestId('ai-narration-generating')).toHaveAttribute('role', 'status')
   })
 
+  it('offers a retry after narration generation fails', () => {
+    useAiStore.setState({
+      narrationError: { code: 'provider_error', message: 'Narration draft failed.' },
+    })
+    renderView()
+    expect(screen.getByTestId('ai-narration-retry')).toBeEnabled()
+  })
+
   it('renders verbatim parts with estimate timing and stale-blocked gate', () => {
     renderView()
     expect(screen.getByTestId('ai-narration-section')).toBeInTheDocument()

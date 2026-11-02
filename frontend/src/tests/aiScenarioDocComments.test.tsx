@@ -285,6 +285,56 @@ describe('AiScenarioDocComments in the scenario modal', () => {
     )
   })
 
+  it('lets the author choose among multiple comments anchored to one block', async () => {
+    const user = userEvent.setup()
+    const comments: ScenarioDocComment[] = [
+      {
+        id: 'first-on-block',
+        step: 1,
+        blockKind: 'narrator',
+        quote: 'Ser is for who you are.',
+        comment: 'First note.',
+        blockIndex: 1,
+      },
+      {
+        id: 'second-on-block',
+        step: 1,
+        blockKind: 'narrator',
+        quote: 'Ser is for who you are.',
+        comment: 'Second note.',
+        blockIndex: 1,
+      },
+    ]
+    function Harness() {
+      const [current, setCurrent] = useState(comments)
+      return (
+        <AiScenarioDocComments
+          projectId="p-1"
+          conversationId="c-1"
+          markdown={MD}
+          comments={current}
+          onCommentsChange={setCurrent}
+        />
+      )
+    }
+    render(<Harness />)
+    const doc = await screen.findByTestId('ai-scenario-modal-doc')
+    const narrator = within(doc).getByText(/Ser is for who you are/)
+    await user.click(within(narrator.closest('p')!).getByTestId('ai-scenario-comment-block-btn'))
+    const chooser = await screen.findByTestId('ai-scenario-comment-select-existing')
+    await user.selectOptions(chooser, 'second-on-block')
+    const input = screen.getByTestId('ai-scenario-comment-input')
+    expect(input).toHaveValue('Second note.')
+    await user.clear(input)
+    await user.type(input, 'Second note updated.')
+    await user.click(screen.getByTestId('ai-scenario-comment-save'))
+
+    expect(screen.getByTestId('ai-scenario-comment-edit-first-on-block')).toHaveValue('First note.')
+    expect(screen.getByTestId('ai-scenario-comment-edit-second-on-block')).toHaveValue(
+      'Second note updated.',
+    )
+  })
+
   it('resolve sends one edit: message with every comment', async () => {
     const user = userEvent.setup()
     renderModal()

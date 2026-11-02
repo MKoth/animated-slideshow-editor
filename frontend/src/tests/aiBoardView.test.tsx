@@ -159,6 +159,12 @@ describe('AiBoardView Stage E gate', () => {
     expect(screen.getByTestId('ai-board-generating')).toHaveAttribute('role', 'status')
   })
 
+  it('offers a retry after board generation fails', () => {
+    useAiStore.setState({ boardError: { code: 'provider_error', message: 'Board draft failed.' } })
+    renderView()
+    expect(screen.getByTestId('ai-board-retry')).toBeEnabled()
+  })
+
   it('renders fresh scripts with marks and a blocked gate before compile', () => {
     renderView()
     expect(screen.getByTestId('ai-board-section')).toBeInTheDocument()

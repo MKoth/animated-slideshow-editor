@@ -18,6 +18,7 @@ interface PendingAnchor {
   readonly cell?: ScenarioDocCellAnchor
   readonly quote: string
   readonly commentId?: string
+  readonly commentIds?: readonly string[]
   readonly x: number
   readonly y: number
 }
@@ -459,7 +460,7 @@ export function AiScenarioDocComments({
       x: event.clientX,
       y: event.clientY,
     }
-    const existingComment = comments.find((comment) => {
+    const existingComments = comments.filter((comment) => {
       if (comment.orphaned) return false
       if (comment.blockIndex !== blockIndex) return false
       if (!isCell) return !comment.cell
@@ -468,8 +469,14 @@ export function AiScenarioDocComments({
       const coords = cellCoords(cell)
       return comment.cell?.row === coords.row && comment.cell?.col === coords.col
     })
-    if (existingComment) {
-      setPending({ ...anchor, quote: existingComment.quote, commentId: existingComment.id })
+    if (existingComments.length > 0) {
+      const existingComment = existingComments[0]!
+      setPending({
+        ...anchor,
+        quote: existingComment.quote,
+        commentId: existingComment.id,
+        commentIds: existingComments.map((comment) => comment.id),
+      })
       setDraft(existingComment.comment)
       setFloat(null)
       return
@@ -584,6 +591,31 @@ export function AiScenarioDocComments({
           <div className="scenario-comment-composer-head">
             {commentStepLabel(pending)} · {pending.blockKind}
           </div>
+          {pending.commentIds && pending.commentIds.length > 1 && (
+            <label>
+              Comment
+              <select
+                data-testid="ai-scenario-comment-select-existing"
+                aria-label="Choose comment to edit"
+                value={pending.commentId}
+                onChange={(event) => {
+                  const comment = comments.find((item) => item.id === event.target.value)
+                  if (!comment) return
+                  setPending({ ...pending, commentId: comment.id, quote: comment.quote })
+                  setDraft(comment.comment)
+                }}
+              >
+                {comments
+                  .filter((comment) => pending.commentIds?.includes(comment.id))
+                  .map((comment) => (
+                    <option key={comment.id} value={comment.id}>
+                      {truncateCommentText(comment.quote, 80)} —{' '}
+                      {truncateCommentText(comment.comment, 80)}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
           <blockquote
             data-testid="ai-scenario-comment-quote"
             className="scenario-comment-composer-quote"

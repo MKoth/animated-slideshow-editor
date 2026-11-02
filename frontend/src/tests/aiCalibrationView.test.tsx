@@ -121,6 +121,14 @@ describe('AiCalibrationView Stage D gate', () => {
     expect(screen.getByTestId('ai-calibration-generating')).toHaveAttribute('role', 'status')
   })
 
+  it('offers a retry after calibration fails', () => {
+    useAiStore.setState({
+      calibrationError: { code: 'provider_error', message: 'Readiness check failed.' },
+    })
+    renderView()
+    expect(screen.getByTestId('ai-calibration-retry')).toBeEnabled()
+  })
+
   it('renders verify-only checks with intro/outro timing and fallback marked', () => {
     renderView()
     expect(screen.getByTestId('ai-calibration-section')).toBeInTheDocument()
