@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AiPanel } from '../components/ai/AiPanel'
@@ -66,6 +66,64 @@ beforeEach(() => {
 })
 
 describe('AiPanel scenario version links (issue #462)', () => {
+  it('creates a scenario conversation when sending the first message', async () => {
+    const user = userEvent.setup()
+    renderPanel()
+    vi.mocked(fetch).mockImplementation(async (url: unknown, init?: RequestInit) => {
+      const path = String(url)
+      if (path.includes('/api/ai/conversations?')) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      if (path.endsWith('/api/ai/conversations') && init?.method === 'POST') {
+        const projectId = JSON.parse(String(init.body)).projectId as string
+        return new Response(
+          JSON.stringify({
+            id: 'c-first-message',
+            projectId,
+            title: 'Scenario chat',
+            mode: 'scenario',
+            created: new Date().toISOString(),
+            modified: new Date().toISOString(),
+          }),
+          { status: 201 },
+        )
+      }
+      if (path.includes('/api/ai/conversations/c-first-message/messages')) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      if (path.endsWith('/api/ai/chat')) {
+        return new Response(JSON.stringify({ detail: 'Provider unavailable.' }), { status: 503 })
+      }
+      return new Response(JSON.stringify([]), { status: 200 })
+    })
+    await user.type(screen.getByTestId('ai-input'), 'Create a short scenario')
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => {
+      expect(
+        vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/api/ai/chat')),
+      ).toBe(true)
+    })
+    const firstUserMessage = await screen.findByTestId(/ai-message-local-user-/)
+    expect(firstUserMessage).toHaveTextContent('Create a short scenario')
+    expect(within(firstUserMessage).getByText('Request failed.')).toBeInTheDocument()
+    await user.type(screen.getByTestId('ai-input'), 'A second message')
+    await user.click(screen.getByTestId('ai-send'))
+    await waitFor(() => {
+      expect(
+        vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/api/ai/chat')),
+      ).toHaveLength(2)
+    })
+    const createCall = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([url, init]) =>
+          String(url).endsWith('/api/ai/conversations') &&
+          (init as RequestInit | undefined)?.method === 'POST',
+      )
+    expect(createCall).toBeDefined()
+  })
+
   it('shows the submitted user message immediately while the assistant is processing', async () => {
     const user = userEvent.setup()
     const convId = 'c-pending'

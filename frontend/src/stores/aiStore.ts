@@ -333,6 +333,27 @@ function requestErrorMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
+function mergeServerMessagesWithPending(
+  savedMessages: AiMessage[],
+  currentMessages: AiMessage[],
+): AiMessage[] {
+  const optimistic = currentMessages.filter((message) => message.optimistic)
+  const matches = (saved: AiMessage, local: AiMessage): boolean =>
+    saved.role === 'user' &&
+    saved.content === local.content &&
+    Date.parse(saved.created) >= Date.parse(local.created) - 1000
+  const merged = savedMessages.map((saved) => {
+    const local = optimistic.find((message) => matches(saved, message))
+    return local && local.requestStatus !== 'sent'
+      ? { ...saved, requestStatus: local.requestStatus }
+      : saved
+  })
+  for (const local of optimistic) {
+    if (!savedMessages.some((saved) => matches(saved, local))) merged.push(local)
+  }
+  return merged
+}
+
 export const useAiStore = create<AiState>()(
   persist(
     (set, get) => ({
@@ -569,10 +590,16 @@ export const useAiStore = create<AiState>()(
       loadMessages: async (conversationId) => {
         try {
           const messages = await get().api.listMessages(conversationId)
-          set((state) => ({
-            messagesById: { ...state.messagesById, [conversationId]: messages },
-            status: 'idle' as const,
-          }))
+          set((state) => {
+            const currentMessages = state.messagesById[conversationId] ?? []
+            return {
+              messagesById: {
+                ...state.messagesById,
+                [conversationId]: mergeServerMessagesWithPending(messages, currentMessages),
+              },
+              status: state.status === 'streaming' ? state.status : ('idle' as const),
+            }
+          })
         } catch (error) {
           set({ status: isBackendDown(error) ? 'unavailable' : 'idle' })
         }

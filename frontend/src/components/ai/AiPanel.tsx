@@ -105,6 +105,7 @@ export function AiPanel() {
     id: string
     status: 'copied' | 'failed'
   } | null>(null)
+  const [creatingFirstConversation, setCreatingFirstConversation] = useState(false)
   const proposals = useAiStore((s) => s.proposals)
 
   const store = useAiStore.getState()
@@ -274,9 +275,21 @@ export function AiPanel() {
   const isStageMode = mode === 'scenario' || mode === 'audio' || mode === 'blackboard'
   const usesAssetChrome = !isStageMode
 
-  const handleSend = () => {
-    if (!projectId || !activeId || !draft.trim() || isStreaming || unavailable) return
-    void store.sendMessage(projectId, activeId, draft, context, normalizeAiMode(assistantMode))
+  const handleSend = async () => {
+    const text = draft.trim()
+    if (!projectId || !text || isStreaming || unavailable || creatingFirstConversation) return
+    let conversationId = activeId
+    if (!conversationId) {
+      setCreatingFirstConversation(true)
+      try {
+        const created = await store.createConversation(projectId, mode)
+        conversationId = created?.id ?? null
+      } finally {
+        setCreatingFirstConversation(false)
+      }
+    }
+    if (!conversationId) return
+    void store.sendMessage(projectId, conversationId, text, context, mode)
   }
 
   const handleRegenerate = () => {
@@ -1170,6 +1183,7 @@ export function AiPanel() {
           <div className="ai-panel__input">
             <textarea
               data-testid="ai-input"
+              disabled={creatingFirstConversation}
               placeholder={
                 mode === 'animation'
                   ? 'Describe the performance…'
@@ -1198,10 +1212,15 @@ export function AiPanel() {
             <button
               data-testid="ai-send"
               onClick={handleSend}
-              disabled={isStreaming || !draft.trim()}
+              disabled={isStreaming || creatingFirstConversation || !draft.trim()}
             >
-              Send
+              {creatingFirstConversation ? 'Starting…' : 'Send'}
             </button>
+            {creatingFirstConversation && (
+              <AiProcessingStatus testId="ai-first-conversation-progress">
+                Starting a scenario conversation…
+              </AiProcessingStatus>
+            )}
             <button
               data-testid="ai-regenerate"
               onClick={handleRegenerate}
