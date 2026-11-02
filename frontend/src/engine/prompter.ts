@@ -286,9 +286,16 @@ export function createAudioSegment(input: {
   requireString(id, 'AudioSegment id')
   if (typeof input.text !== 'string') throw new Error('AudioSegment text must be a string')
   requireString(input.audioClipId, 'AudioSegment audioClipId')
-  if (input.audioAssetId !== undefined) requireString(input.audioAssetId, 'AudioSegment audioAssetId')
-  if (!Number.isInteger(input.order) || input.order < 0) throw new Error('AudioSegment order must be a non-negative integer')
-  const segment: AudioSegment = { id, text: input.text, audioClipId: input.audioClipId, order: input.order }
+  if (input.audioAssetId !== undefined)
+    requireString(input.audioAssetId, 'AudioSegment audioAssetId')
+  if (!Number.isInteger(input.order) || input.order < 0)
+    throw new Error('AudioSegment order must be a non-negative integer')
+  const segment: AudioSegment = {
+    id,
+    text: input.text,
+    audioClipId: input.audioClipId,
+    order: input.order,
+  }
   if (input.audioAssetId !== undefined) segment.audioAssetId = input.audioAssetId
   return segment
 }
@@ -328,7 +335,13 @@ export function createPrompterPart(input: {
   if (input.segments !== undefined) {
     if (!Array.isArray(input.segments)) throw new Error('PrompterPart segments must be an array')
     const segs = input.segments.map((s, idx) => {
-      const seg = createAudioSegment({ id: s.id, text: s.text, audioClipId: s.audioClipId, audioAssetId: s.audioAssetId, order: s.order })
+      const seg = createAudioSegment({
+        id: s.id,
+        text: s.text,
+        audioClipId: s.audioClipId,
+        audioAssetId: s.audioAssetId,
+        order: s.order,
+      })
       if (seg.order !== idx) throw new Error('AudioSegment order must equal its index')
       return seg
     })
@@ -401,8 +414,8 @@ export function prompterFromJSON(json: PrompterJSON): Prompter {
       audioAssetId: partJson.audioAssetId,
       promptId: partJson.promptId,
       status: partJson.status as PrompterPartStatus | undefined,
-      segments: (partJson as { segments?: import('./json').AudioSegmentJSON[] }).segments?.map((s) =>
-        audioSegmentFromJSON(s),
+      segments: (partJson as { segments?: import('./json').AudioSegmentJSON[] }).segments?.map(
+        (s) => audioSegmentFromJSON(s),
       ),
     }),
   )
@@ -420,7 +433,7 @@ export function validatePrompterJSON(errors: string[], value: unknown, slideId: 
     return
   }
   const ids = new Set<string>()
-  let expectedStart = 0
+  let previousStart = Number.NEGATIVE_INFINITY
   for (let i = 0; i < v.parts.length; i++) {
     const part = v.parts[i] as Record<string, unknown>
     const where = `Slide "${slideId}" prompter.parts[${i}]`
@@ -450,14 +463,11 @@ export function validatePrompterJSON(errors: string[], value: unknown, slideId: 
     ) {
       if (Math.abs(part.duration - (part.endTime - part.startTime)) > PROMPTER_DURATION_TOLERANCE)
         errors.push(`${where} duration must equal endTime - startTime`)
-      // Allow gaps (user can leave space between parts or before first), but forbid overlaps and require sorted order
-      if (part.startTime < expectedStart - PROMPTER_DURATION_TOLERANCE) {
-        errors.push(
-          `${where} startTime must not overlap previous end (previous end ${expectedStart}, got ${part.startTime})`,
-        )
+      // Parts are stored in timeline order, but may overlap freely.
+      if (part.startTime < previousStart - PROMPTER_DURATION_TOLERANCE) {
+        errors.push(`${where} startTime must be sorted by timeline order`)
       }
-      // For sorted check, ensure startTime >= previous startTime (already via expectedStart) — gaps allowed
-      expectedStart = Math.max(expectedStart, part.endTime)
+      previousStart = Math.max(previousStart, part.startTime)
     }
     if (
       part.audioClipId !== undefined &&
@@ -494,7 +504,10 @@ export function validatePrompterJSON(errors: string[], value: unknown, slideId: 
           if (typeof seg.text !== 'string') errors.push(`${segWhere} text must be a string`)
           if (typeof seg.audioClipId !== 'string' || seg.audioClipId === '')
             errors.push(`${segWhere} audioClipId must be a non-empty string`)
-          if (seg.audioAssetId !== undefined && (typeof seg.audioAssetId !== 'string' || seg.audioAssetId === ''))
+          if (
+            seg.audioAssetId !== undefined &&
+            (typeof seg.audioAssetId !== 'string' || seg.audioAssetId === '')
+          )
             errors.push(`${segWhere} audioAssetId must be a non-empty string`)
           if (typeof seg.order !== 'number' || !Number.isInteger(seg.order) || seg.order < 0)
             errors.push(`${segWhere} order must be a non-negative integer`)

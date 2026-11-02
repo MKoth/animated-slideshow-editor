@@ -27,7 +27,6 @@ import {
   TrimAudioClipCommand,
   UnitePrompterPartsCommand,
   UpdatePrompterPartCommand,
-  UpdatePrompterPartWithShiftCommand,
 } from '../../engine/commands'
 import { usePlaybackController } from '../../stores/playbackStore'
 import {
@@ -198,7 +197,6 @@ export function AudioTimelineBody({
     partId: string
     startX: number
     startTime: number
-    oldIndex: number
   } | null>(null)
   const [prompterMovePreview, setPrompterMovePreview] = useState<{
     partId: string
@@ -807,7 +805,6 @@ export function AudioTimelineBody({
             clipId,
             timelineStart: snapped,
             trackId: finalTrack,
-            push: true,
           }),
         )
         if (!result.ok) useNotificationStore.getState().notify(result.error.message)
@@ -870,8 +867,24 @@ export function AudioTimelineBody({
       const toDispatch: { sourceStart?: number; sourceEnd?: number } = {}
       if (patch.sourceStart !== undefined) toDispatch.sourceStart = patch.sourceStart
       if (patch.sourceEnd !== undefined) toDispatch.sourceEnd = patch.sourceEnd
+      const trim = new TrimAudioClipCommand({ slideId: slide.id, clipId, ...toDispatch })
+      const linkedPart = slide.prompter?.parts.find((part) => part.audioClipId === clipId)
+      const sourceStart = patch.sourceStart ?? clipSnapshot.sourceStart
+      const sourceEnd = patch.sourceEnd ?? clipSnapshot.sourceEnd
+      const resizedDuration = (sourceEnd - sourceStart) / (clipSnapshot.playbackRate || 1)
       const result = dispatch(
-        new TrimAudioClipCommand({ slideId: slide.id, clipId, ...toDispatch }),
+        new TransactionCommand([
+          trim,
+          ...(linkedPart
+            ? [
+                new UpdatePrompterPartCommand({
+                  slideId: slide.id,
+                  partId: linkedPart.id,
+                  duration: resizedDuration,
+                }),
+              ]
+            : []),
+        ]),
       )
       if (!result.ok) useNotificationStore.getState().notify(result.error.message)
       setTrimPreview(null)
@@ -882,8 +895,26 @@ export function AudioTimelineBody({
         setTrimPreview(null)
         return
       }
+      const rate = new SetAudioClipPlaybackRateCommand({
+        slideId: slide.id,
+        clipId,
+        playbackRate: newRate,
+      })
+      const linkedPart = slide.prompter?.parts.find((part) => part.audioClipId === clipId)
+      const resizedDuration = (clipSnapshot.sourceEnd - clipSnapshot.sourceStart) / newRate
       const result = dispatch(
-        new SetAudioClipPlaybackRateCommand({ slideId: slide.id, clipId, playbackRate: newRate }),
+        new TransactionCommand([
+          rate,
+          ...(linkedPart
+            ? [
+                new UpdatePrompterPartCommand({
+                  slideId: slide.id,
+                  partId: linkedPart.id,
+                  duration: resizedDuration,
+                }),
+              ]
+            : []),
+        ]),
       )
       if (!result.ok) useNotificationStore.getState().notify(result.error.message)
       setTrimPreview(null)
@@ -912,7 +943,7 @@ export function AudioTimelineBody({
     window.addEventListener('pointerup', onUp)
   }
 
-  // Prompter move — free drag with gaps by default; hold Shift for gap-free reorder (prefix-sum reflow). Clips move atomically, one Transaction.
+  // A Prompter part and its linked audio move together; neighboring pieces never ripple.
   const onPrompterMovePointerDown = (e: React.PointerEvent, partId: string) => {
     if (e.button !== 0) return
     const targetEl = e.target as HTMLElement
@@ -922,53 +953,20 @@ export function AudioTimelineBody({
     if (targetEl.closest('[data-testid^="record-btn"]')) return
     e.preventDefault()
     e.stopPropagation()
-    const partsSnapshot = [...(slide.prompter?.parts ?? [])]
-    const part = partsSnapshot.find((p) => p.id === partId)
+    const part = slide.prompter?.parts.find((p) => p.id === partId)
     if (!part) return
-    const oldIndex = partsSnapshot.findIndex((p) => p.id === partId)
     const oldStartTime = part.startTime
     setFocusedId(partId)
-    prompterMoveRef.current = { partId, startX: e.clientX, startTime: oldStartTime, oldIndex }
+    prompterMoveRef.current = { partId, startX: e.clientX, startTime: oldStartTime }
     const target = e.currentTarget as HTMLElement
     target.setPointerCapture(e.pointerId)
-    // Precompute remaining gap times for Shift+gap-free index calculation — use visual borders (prevEnd) so preview aligns with '+' that hugs previous block
-    const remaining = partsSnapshot.filter((p) => p.id !== partId)
-    const gapTimes: number[] = []
-    if (remaining.length === 0) {
-      gapTimes.push(0)
-    } else {
-      gapTimes.push(0)
-      for (let i = 1; i < remaining.length; i++) {
-        gapTimes.push(remaining[i - 1].endTime)
-      }
-      gapTimes.push(remaining[remaining.length - 1].endTime)
-    }
-    const computeNewIndex = (snapped: number): number => {
-      let best = 0
-      let bestDist = Math.abs(snapped - gapTimes[0])
-      for (let i = 1; i < gapTimes.length; i++) {
-        const dist = Math.abs(snapped - gapTimes[i])
-        if (dist < bestDist) {
-          bestDist = dist
-          best = i
-        }
-      }
-      return best
-    }
     const onMove = (ev: PointerEvent) => {
       if (!prompterMoveRef.current) return
       const dx = ev.clientX - prompterMoveRef.current.startX
       const dt = dx / pps
       const raw = prompterMoveRef.current.startTime + dt
       const snapped = computeSnappedTime(Math.max(0, raw))
-      if (ev.shiftKey) {
-        const newIndex = computeNewIndex(snapped)
-        const gapTime = gapTimes[newIndex] ?? 0
-        setPrompterMovePreview({ partId, startTime: gapTime, newIndex })
-      } else {
-        // Free placement — show ghost at snapped time, no gap highlight
-        setPrompterMovePreview({ partId, startTime: snapped, newIndex: -1 })
-      }
+      setPrompterMovePreview({ partId, startTime: snapped, newIndex: -1 })
     }
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', onMove)
@@ -978,26 +976,11 @@ export function AudioTimelineBody({
       const dt = dx / pps
       const raw = prompterMoveRef.current.startTime + dt
       const snapped = computeSnappedTime(Math.max(0, raw))
-      if (ev.shiftKey) {
-        const newIndex = computeNewIndex(snapped)
-        if (newIndex !== oldIndex) {
-          const result = dispatch(
-            new MovePrompterPartCommand({ slideId: slide.id, partId, newIndex } as never),
-          )
-          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
-        }
-      } else {
-        if (Math.abs(snapped - oldStartTime) > 1e-6) {
-          const result = dispatch(
-            new MovePrompterPartCommand({
-              slideId: slide.id,
-              partId,
-              newStartTime: snapped,
-              push: true,
-            } as never),
-          )
-          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
-        }
+      if (Math.abs(snapped - oldStartTime) > 1e-6) {
+        const result = dispatch(
+          new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: snapped }),
+        )
+        if (!result.ok) useNotificationStore.getState().notify(result.error.message)
       }
       setPrompterMovePreview(null)
       prompterMoveRef.current = null
@@ -1043,26 +1026,55 @@ export function AudioTimelineBody({
       if (side === 'right') {
         const newDuration = Math.max(0.2, startDuration + dt)
         if (Math.abs(newDuration - startDuration) > 1e-6) {
-          // Unified gap-free: resizing always pushes downstream (reflow prefix sum) — no Shift needed
+          const linkedClip = part.audioClipId
+            ? slide.audio.clips.find((clip) => clip.id === part.audioClipId)
+            : undefined
+          const update = new UpdatePrompterPartCommand({
+            slideId: slide.id,
+            partId,
+            duration: newDuration,
+          })
           const result = dispatch(
-            new UpdatePrompterPartWithShiftCommand({
-              slideId: slide.id,
-              partId,
-              duration: newDuration,
-              shiftDownstream: true,
-            }),
+            new TransactionCommand([
+              update,
+              ...(linkedClip
+                ? [
+                    new SetAudioClipPlaybackRateCommand({
+                      slideId: slide.id,
+                      clipId: linkedClip.id,
+                      playbackRate: (linkedClip.sourceEnd - linkedClip.sourceStart) / newDuration,
+                    }),
+                  ]
+                : []),
+            ]),
           )
           if (!result.ok) useNotificationStore.getState().notify(result.error.message)
         }
       } else {
         const newDuration = Math.max(0.2, startDuration - dt)
         const newStart = Math.max(0, partStart + (startDuration - newDuration))
-        // Left handle: move start and change duration, keep end fixed — as one Transaction per gesture
+        // Move and resize only this part and its linked audio; neighbors stay put.
         if (Math.abs(newDuration - startDuration) > 1e-6 || Math.abs(newStart - partStart) > 1e-6) {
+          const linkedClip = part.audioClipId
+            ? slide.audio.clips.find((clip) => clip.id === part.audioClipId)
+            : undefined
           const result = dispatch(
             new TransactionCommand([
               new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: newStart }),
-              new UpdatePrompterPartCommand({ slideId: slide.id, partId, duration: newDuration }),
+              new UpdatePrompterPartCommand({
+                slideId: slide.id,
+                partId,
+                duration: newDuration,
+              }),
+              ...(linkedClip
+                ? [
+                    new SetAudioClipPlaybackRateCommand({
+                      slideId: slide.id,
+                      clipId: linkedClip.id,
+                      playbackRate: (linkedClip.sourceEnd - linkedClip.sourceStart) / newDuration,
+                    }),
+                  ]
+                : []),
             ]),
           )
           if (!result.ok) useNotificationStore.getState().notify(result.error.message)

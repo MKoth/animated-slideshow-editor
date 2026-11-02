@@ -97,7 +97,6 @@ import { computeBakedVertices } from './bakedShape'
 import {
   clampAudioFade,
   createAudioClip,
-  getAudioClipEnd,
   getAudioClipPlaybackDuration,
   getAudioClipSourceDuration,
   isAudioTrackId,
@@ -1170,7 +1169,11 @@ export class Engine {
       for (const seg of part.segments) clipIdsToDelete.add(seg.audioClipId)
     }
     // Capture downstream parts before mutation for undo and gap-free tracking
-    const shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[] = []
+    const shiftedParts: {
+      id: string
+      oldStartTime: number
+      oldEndTime: number
+    }[] = []
     for (let i = index + 1; i < slide.prompter.parts.length; i++) {
       const p = slide.prompter.parts[i]
       shiftedParts.push({ id: p.id, oldStartTime: p.startTime, oldEndTime: p.endTime })
@@ -1306,7 +1309,6 @@ export class Engine {
     slideId: string,
     partId: string,
     newStartTime: number,
-    opts?: { push?: boolean },
   ): {
     oldStartTime: number
     oldEndTime: number
@@ -1314,6 +1316,7 @@ export class Engine {
       id: string
       oldTimelineStart: number
       oldTrackId?: AudioTrackId
+      oldPlaybackRate?: number
     }[]
     shiftedParts: readonly { id: string; oldStartTime: number; oldEndTime: number }[]
   } {
@@ -1330,12 +1333,16 @@ export class Engine {
     const draggedClipIds = new Set<string>()
     if (part.audioClipId) draggedClipIds.add(part.audioClipId)
     if (part.segments) for (const seg of part.segments) draggedClipIds.add(seg.audioClipId)
-    const clipOld = new Map<string, { oldTimelineStart: number; oldTrackId: AudioTrackId }>()
+    const clipOld = new Map<
+      string,
+      { oldTimelineStart: number; oldTrackId: AudioTrackId; oldPlaybackRate: number }
+    >()
     for (const clip of slide.audio.clips) {
       if (draggedClipIds.has(clip.id))
         clipOld.set(clip.id, {
           oldTimelineStart: clip.timelineStart,
           oldTrackId: clip.trackId,
+          oldPlaybackRate: clip.playbackRate,
         })
     }
     part.startTime = newStartTime
@@ -1345,87 +1352,11 @@ export class Engine {
     // Move only dragged part's clips with it (atomically)
     for (const cid of draggedClipIds) {
       const clip = slide.audio.clips.find((c) => c.id === cid)
-      if (clip) clip.timelineStart = part.startTime
-    }
-    const partOld = new Map<string, { oldStartTime: number; oldEndTime: number }>()
-    if (opts?.push) {
-      // Compact downstream push: dragged part stays where dropped; shift only
-      // overlapped downstream neighbors right, cascading. Gaps preserved.
-      const parts = slide.prompter.parts
-      const draggedIdx = parts.findIndex((p) => p.id === partId)
-      let cursor = parts[draggedIdx]!.endTime
-      for (let i = draggedIdx + 1; i < parts.length; i++) {
-        const downstream = parts[i]!
-        if (downstream.startTime < cursor - 1e-9) {
-          if (!partOld.has(downstream.id)) {
-            partOld.set(downstream.id, {
-              oldStartTime: downstream.startTime,
-              oldEndTime: downstream.endTime,
-            })
-          }
-          downstream.startTime = cursor
-          downstream.endTime = cursor + downstream.duration
-          // Pushed part's linked clips ride along (single level — no recursion back)
-          if (downstream.audioClipId) {
-            const clip = slide.audio.clips.find((c) => c.id === downstream.audioClipId)
-            if (clip && !clipOld.has(clip.id)) {
-              clipOld.set(clip.id, {
-                oldTimelineStart: clip.timelineStart,
-                oldTrackId: clip.trackId,
-              })
-            }
-            if (clip) clip.timelineStart = downstream.startTime
-          }
-          if (downstream.segments) {
-            for (const seg of downstream.segments) {
-              const clip = slide.audio.clips.find((c) => c.id === seg.audioClipId)
-              if (clip && !clipOld.has(clip.id)) {
-                clipOld.set(clip.id, {
-                  oldTimelineStart: clip.timelineStart,
-                  oldTrackId: clip.trackId,
-                })
-              }
-              if (clip) clip.timelineStart = downstream.startTime
-            }
-          }
-          cursor = downstream.endTime
-        } else {
-          cursor = downstream.endTime
-        }
-      }
-      // Same-track compact audio push for every moved clip. Moved clips stay;
-      // only non-moved downstream clips that would intersect are shifted right.
-      // Pushed audio clips do NOT propagate back to prompter (single-level rule).
-      const movedClipIds = new Set(clipOld.keys())
-      const byTrack = new Map<AudioTrackId, AudioClip[]>()
-      for (const clip of slide.audio.clips) {
-        const arr = byTrack.get(clip.trackId) ?? []
-        arr.push(clip)
-        byTrack.set(clip.trackId, arr)
-      }
-      for (const trackClips of byTrack.values()) {
-        const sorted = [...trackClips].sort(
-          (a, b) => a.timelineStart - b.timelineStart || (a.id < b.id ? -1 : 1),
-        )
-        let audioCursor = Number.NEGATIVE_INFINITY
-        for (const clip of sorted) {
-          const end = getAudioClipEnd(clip)
-          if (movedClipIds.has(clip.id)) {
-            audioCursor = Math.max(audioCursor, end)
-            continue
-          }
-          if (clip.timelineStart < audioCursor - 1e-9) {
-            if (!clipOld.has(clip.id)) {
-              clipOld.set(clip.id, {
-                oldTimelineStart: clip.timelineStart,
-                oldTrackId: clip.trackId,
-              })
-            }
-            clip.timelineStart = audioCursor
-            audioCursor = audioCursor + getAudioClipPlaybackDuration(clip)
-          } else {
-            audioCursor = end
-          }
+      if (clip) {
+        clip.timelineStart = part.startTime
+        if (cid === part.audioClipId) {
+          const sourceDuration = clip.sourceEnd - clip.sourceStart
+          if (part.duration > 0) clip.playbackRate = sourceDuration / part.duration
         }
       }
     }
@@ -1440,7 +1371,7 @@ export class Engine {
       oldStartTime,
       oldEndTime,
       shiftedClips: [...clipOld.entries()].map(([id, v]) => ({ id, ...v })),
-      shiftedParts: [...partOld.entries()].map(([id, v]) => ({ id, ...v })),
+      shiftedParts: [],
     }
   }
 
@@ -1482,11 +1413,15 @@ export class Engine {
     slideId: string,
     clipId: string,
     patch: { timelineStart: number; trackId?: AudioTrackId },
-    opts?: { push?: boolean },
   ): {
     oldTimelineStart: number
     oldTrackId: AudioTrackId
-    shiftedParts: readonly { id: string; oldStartTime: number; oldEndTime: number }[]
+    shiftedParts: readonly {
+      id: string
+      oldStartTime: number
+      oldEndTime: number
+      oldDuration: number
+    }[]
     shiftedClips: readonly {
       id: string
       oldTimelineStart: number
@@ -1508,146 +1443,29 @@ export class Engine {
     }
     const oldTimelineStart = clip.timelineStart
     const oldTrackId = clip.trackId
+    const shiftedParts: {
+      id: string
+      oldStartTime: number
+      oldEndTime: number
+      oldDuration: number
+    }[] = []
     clip.timelineStart = patch.timelineStart
     if (patch.trackId !== undefined) clip.trackId = patch.trackId
-    const clipOld = new Map<string, { oldTimelineStart: number; oldTrackId: AudioTrackId }>()
-    const partOld = new Map<string, { oldStartTime: number; oldEndTime: number }>()
-    // Bidirectional sync (single level): dragged clip's linked part(s) follow to
-    // the clip start; each followed part's OTHER linked clips ride along.
-    // Applies to all moves (drags + nudges) so keyboard nudges stay in sync.
-    if (slide.prompter) {
-      const linkedParts = slide.prompter.parts.filter(
-        (p) =>
-          p.audioClipId === clipId || (p.segments ?? []).some((seg) => seg.audioClipId === clipId),
-      )
-      for (const linkedPart of linkedParts) {
-        if (!partOld.has(linkedPart.id)) {
-          partOld.set(linkedPart.id, {
-            oldStartTime: linkedPart.startTime,
-            oldEndTime: linkedPart.endTime,
-          })
-        }
-        linkedPart.startTime = clip.timelineStart
-        linkedPart.endTime = clip.timelineStart + linkedPart.duration
-        const siblingIds = new Set<string>()
-        if (linkedPart.audioClipId) siblingIds.add(linkedPart.audioClipId)
-        if (linkedPart.segments)
-          for (const seg of linkedPart.segments) siblingIds.add(seg.audioClipId)
-        for (const sid of siblingIds) {
-          if (sid === clipId) continue
-          const sibling = slide.audio.clips.find((c) => c.id === sid)
-          if (sibling && !clipOld.has(sibling.id)) {
-            clipOld.set(sibling.id, {
-              oldTimelineStart: sibling.timelineStart,
-              oldTrackId: sibling.trackId,
-            })
-          }
-          if (sibling) sibling.timelineStart = linkedPart.startTime
-        }
-      }
-      if (linkedParts.length > 0) {
-        slide.prompter.parts.sort((a, b) => a.startTime - b.startTime)
-      }
-      if (opts?.push && linkedParts.length > 0) {
-        // Compact downstream prompter push for followed parts (drags only).
-        const parts = slide.prompter.parts
-        const followedIds = new Set(linkedParts.map((p) => p.id))
-        const minIdx = Math.min(...linkedParts.map((p) => parts.findIndex((x) => x.id === p.id)))
-        let cursor = Math.max(...linkedParts.map((p) => p.endTime))
-        // If several parts followed to the same start, chain them first.
-        const sortedFollowed = [...linkedParts].sort((a, b) => a.startTime - b.startTime)
-        for (let k = 1; k < sortedFollowed.length; k++) {
-          const fp = parts.find((x) => x.id === sortedFollowed[k]!.id)!
-          if (fp.startTime < cursor - 1e-9) {
-            fp.startTime = cursor
-            fp.endTime = cursor + fp.duration
-            if (fp.audioClipId) {
-              const c = slide.audio.clips.find((x) => x.id === fp.audioClipId)
-              if (c) c.timelineStart = fp.startTime
-            }
-            if (fp.segments) {
-              for (const seg of fp.segments) {
-                const c = slide.audio.clips.find((x) => x.id === seg.audioClipId)
-                if (c) c.timelineStart = fp.startTime
-              }
-            }
-            cursor = fp.endTime
-          } else {
-            cursor = Math.max(cursor, fp.endTime)
-          }
-        }
-        for (let i = minIdx; i < parts.length; i++) {
-          const downstream = parts[i]!
-          if (followedIds.has(downstream.id)) continue
-          if (downstream.startTime < cursor - 1e-9) {
-            if (!partOld.has(downstream.id)) {
-              partOld.set(downstream.id, {
-                oldStartTime: downstream.startTime,
-                oldEndTime: downstream.endTime,
-              })
-            }
-            downstream.startTime = cursor
-            downstream.endTime = cursor + downstream.duration
-            if (downstream.audioClipId) {
-              const c = slide.audio.clips.find((x) => x.id === downstream.audioClipId)
-              if (c && !clipOld.has(c.id)) {
-                clipOld.set(c.id, { oldTimelineStart: c.timelineStart, oldTrackId: c.trackId })
-              }
-              if (c) c.timelineStart = downstream.startTime
-            }
-            if (downstream.segments) {
-              for (const seg of downstream.segments) {
-                const c = slide.audio.clips.find((x) => x.id === seg.audioClipId)
-                if (c && !clipOld.has(c.id)) {
-                  clipOld.set(c.id, { oldTimelineStart: c.timelineStart, oldTrackId: c.trackId })
-                }
-                if (c) c.timelineStart = downstream.startTime
-              }
-            }
-            cursor = downstream.endTime
-          } else {
-            cursor = Math.max(cursor, downstream.endTime)
-          }
-        }
-      }
-    }
-    if (opts?.push) {
-      // Same-track compact audio push on the destination track (drags only).
-      // Moved clips (dragged + siblings + pushed parts' clips) stay; only
-      // non-moved downstream clips that would intersect shift right.
-      // Pushed audio clips do NOT propagate back to prompter (single-level).
-      const movedClipIds = new Set<string>([clipId, ...clipOld.keys()])
-      const byTrack = new Map<AudioTrackId, AudioClip[]>()
-      for (const c of slide.audio.clips) {
-        const arr = byTrack.get(c.trackId) ?? []
-        arr.push(c)
-        byTrack.set(c.trackId, arr)
-      }
-      for (const trackClips of byTrack.values()) {
-        const sorted = [...trackClips].sort(
-          (a, b) => a.timelineStart - b.timelineStart || (a.id < b.id ? -1 : 1),
-        )
-        let audioCursor = Number.NEGATIVE_INFINITY
-        for (const c of sorted) {
-          const end = getAudioClipEnd(c)
-          if (movedClipIds.has(c.id)) {
-            audioCursor = Math.max(audioCursor, end)
-            continue
-          }
-          if (c.timelineStart < audioCursor - 1e-9) {
-            if (!clipOld.has(c.id)) {
-              clipOld.set(c.id, { oldTimelineStart: c.timelineStart, oldTrackId: c.trackId })
-            }
-            c.timelineStart = audioCursor
-            audioCursor = audioCursor + getAudioClipPlaybackDuration(c)
-          } else {
-            audioCursor = end
-          }
-        }
-      }
+    const linkedPart = slide.prompter?.parts.find((part) => part.audioClipId === clipId)
+    if (linkedPart) {
+      shiftedParts.push({
+        id: linkedPart.id,
+        oldStartTime: linkedPart.startTime,
+        oldEndTime: linkedPart.endTime,
+        oldDuration: linkedPart.duration,
+      })
+      linkedPart.startTime = clip.timelineStart
+      linkedPart.duration = getAudioClipPlaybackDuration(clip)
+      linkedPart.endTime = linkedPart.startTime + linkedPart.duration
+      slide.prompter!.parts.sort((a, b) => a.startTime - b.startTime)
     }
     this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
-    if (partOld.size > 0) {
+    if (linkedPart) {
       this.#bus.emit({
         type: 'PrompterChanged',
         slideId,
@@ -1656,8 +1474,8 @@ export class Engine {
     return {
       oldTimelineStart,
       oldTrackId,
-      shiftedParts: [...partOld.entries()].map(([id, v]) => ({ id, ...v })),
-      shiftedClips: [...clipOld.entries()].map(([id, v]) => ({ id, ...v })),
+      shiftedParts,
+      shiftedClips: [],
     }
   }
 

@@ -8,7 +8,6 @@ export interface MovePrompterPartParameters {
   readonly newStartTime: number
   // Legacy newIndex still accepted for reorder-only callers
   readonly newIndex?: number
-  readonly push?: boolean
 }
 
 export interface MovePrompterPartInverse {
@@ -21,6 +20,7 @@ export interface MovePrompterPartInverse {
     id: string
     oldTimelineStart: number
     oldTrackId?: unknown
+    oldPlaybackRate?: number
   }[]
   readonly shiftedParts?: readonly { id: string; oldStartTime: number; oldEndTime: number }[]
 }
@@ -32,20 +32,17 @@ export class MovePrompterPartCommand implements Command<MovePrompterPartInverse>
   readonly #partId: string
   readonly #newStartTime: number | undefined
   readonly #newIndex: number | undefined
-  readonly #push: boolean | undefined
 
   constructor(input: MovePrompterPartParameters) {
     this.#slideId = input.slideId
     this.#partId = input.partId
     this.#newStartTime = input.newStartTime
     this.#newIndex = input.newIndex
-    this.#push = input.push
     this.parameters = {
       slideId: input.slideId,
       partId: input.partId,
       ...(input.newStartTime !== undefined ? { newStartTime: input.newStartTime } : {}),
       ...(input.newIndex !== undefined ? { newIndex: input.newIndex } : {}),
-      ...(input.push !== undefined ? { push: input.push } : {}),
     }
   }
 
@@ -78,9 +75,7 @@ export class MovePrompterPartCommand implements Command<MovePrompterPartInverse>
   execute(engine: Engine): MovePrompterPartInverse {
     if (this.#newStartTime !== undefined) {
       const { oldStartTime, oldEndTime, shiftedClips, shiftedParts } =
-        engine.movePrompterPartToTime(this.#slideId, this.#partId, this.#newStartTime, {
-          push: this.#push,
-        })
+        engine.movePrompterPartToTime(this.#slideId, this.#partId, this.#newStartTime)
       return {
         slideId: this.#slideId,
         partId: this.#partId,

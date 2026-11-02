@@ -1704,7 +1704,13 @@ export function applyUndo(
       const partId = inv.partId as string
       const oldIndex = inv.oldIndex as number | undefined
       const shiftedClips = inv.shiftedClips as
-        readonly { id: string; oldTimelineStart: number; oldTrackId?: unknown }[] | undefined
+        | readonly {
+            id: string
+            oldTimelineStart: number
+            oldTrackId?: unknown
+            oldPlaybackRate?: number
+          }[]
+        | undefined
       const shiftedParts = inv.shiftedParts as
         readonly { id: string; oldStartTime: number; oldEndTime: number }[] | undefined
       const slide = engine.getSlide(slideId)
@@ -1740,6 +1746,7 @@ export function applyUndo(
           const clip = slide.audio.clips.find((c) => c.id === sc.id)
           if (clip) {
             clip.timelineStart = sc.oldTimelineStart
+            if (sc.oldPlaybackRate !== undefined) clip.playbackRate = sc.oldPlaybackRate
             if (sc.oldTrackId === 'voice' || sc.oldTrackId === 'sfx' || sc.oldTrackId === 'music') {
               clip.trackId = sc.oldTrackId
             }
@@ -1846,7 +1853,13 @@ export function applyUndo(
       const oldTimelineStart = inv.oldTimelineStart as number
       const oldTrackId = inv.oldTrackId as import('../audioClip').AudioTrackId
       const shiftedParts = inv.shiftedParts as
-        readonly { id: string; oldStartTime: number; oldEndTime: number }[] | undefined
+        | readonly {
+            id: string
+            oldStartTime: number
+            oldEndTime: number
+            oldDuration?: number
+          }[]
+        | undefined
       const shiftedClips = inv.shiftedClips as
         readonly { id: string; oldTimelineStart: number; oldTrackId?: unknown }[] | undefined
       const slide = engine.getSlide(slideId)
@@ -1861,6 +1874,7 @@ export function applyUndo(
           if (p) {
             p.startTime = sp.oldStartTime
             p.endTime = sp.oldEndTime
+            if (sp.oldDuration !== undefined) p.duration = sp.oldDuration
           }
         }
         slide.prompter?.parts.sort((a, b) => a.startTime - b.startTime)
@@ -4031,7 +4045,6 @@ export function applyRedo(
           params.slideId as string,
           params.partId as string,
           params.newStartTime as number,
-          { push: params.push as boolean | undefined },
         )
       return
     case 'SetPrompterPartAudio':
@@ -4104,15 +4117,10 @@ export function applyRedo(
       return
     }
     case 'MoveAudioClip':
-      engine.moveAudioClip(
-        params.slideId as string,
-        params.clipId as string,
-        {
-          timelineStart: params.timelineStart as number,
-          trackId: params.trackId as import('../audioClip').AudioTrackId | undefined,
-        },
-        { push: params.push as boolean | undefined },
-      )
+      engine.moveAudioClip(params.slideId as string, params.clipId as string, {
+        timelineStart: params.timelineStart as number,
+        trackId: params.trackId as import('../audioClip').AudioTrackId | undefined,
+      })
       return
     case 'TrimAudioClip':
       engine.trimAudioClip(params.slideId as string, params.clipId as string, {

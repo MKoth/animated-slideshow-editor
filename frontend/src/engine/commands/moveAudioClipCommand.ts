@@ -9,7 +9,6 @@ export interface MoveAudioClipParameters {
   readonly clipId: string
   readonly timelineStart: number
   readonly trackId?: AudioTrackId
-  readonly push?: boolean
 }
 
 export interface MoveAudioClipInverse {
@@ -17,7 +16,12 @@ export interface MoveAudioClipInverse {
   readonly clipId: string
   readonly oldTimelineStart: number
   readonly oldTrackId: AudioTrackId
-  readonly shiftedParts?: readonly { id: string; oldStartTime: number; oldEndTime: number }[]
+  readonly shiftedParts?: readonly {
+    id: string
+    oldStartTime: number
+    oldEndTime: number
+    oldDuration?: number
+  }[]
   readonly shiftedClips?: readonly {
     id: string
     oldTimelineStart: number
@@ -32,20 +36,17 @@ export class MoveAudioClipCommand implements Command<MoveAudioClipInverse> {
   readonly #clipId: string
   readonly #timelineStart: number
   readonly #trackId?: AudioTrackId
-  readonly #push?: boolean
 
   constructor(input: MoveAudioClipParameters) {
     this.#slideId = input.slideId
     this.#clipId = input.clipId
     this.#timelineStart = input.timelineStart
     this.#trackId = input.trackId
-    this.#push = input.push
     this.parameters = {
       slideId: input.slideId,
       clipId: input.clipId,
       timelineStart: input.timelineStart,
       ...(input.trackId !== undefined ? { trackId: input.trackId } : {}),
-      ...(input.push !== undefined ? { push: input.push } : {}),
     }
   }
 
@@ -58,15 +59,10 @@ export class MoveAudioClipCommand implements Command<MoveAudioClipInverse> {
   }
 
   execute(engine: Engine): MoveAudioClipInverse {
-    const result = engine.moveAudioClip(
-      this.#slideId,
-      this.#clipId,
-      {
-        timelineStart: this.#timelineStart,
-        trackId: this.#trackId,
-      },
-      { push: this.#push },
-    )
+    const result = engine.moveAudioClip(this.#slideId, this.#clipId, {
+      timelineStart: this.#timelineStart,
+      trackId: this.#trackId,
+    })
     return {
       slideId: this.#slideId,
       clipId: this.#clipId,

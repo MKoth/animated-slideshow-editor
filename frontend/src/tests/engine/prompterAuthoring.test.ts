@@ -448,7 +448,7 @@ describe('Prompter Authoring 15.02', () => {
     }
     const engine3 = createEngineInternal()
     expect(() => engine3.restoreFromJSON(gapJson)).not.toThrow()
-    // overlap should throw
+    // overlapping parts are valid; timeline placement is intentionally free
     const overlapJson = JSON.parse(JSON.stringify(json)) as unknown as LessonJSON
     if (
       overlapJson.slides[0].prompter &&
@@ -467,7 +467,7 @@ describe('Prompter Authoring 15.02', () => {
       o1.endTime = 0.1 + o1.duration
     }
     const engine4 = createEngineInternal()
-    expect(() => engine4.restoreFromJSON(overlapJson)).toThrow(/overlap/)
+    expect(() => engine4.restoreFromJSON(overlapJson)).not.toThrow()
   })
 
   it('reflow after every mutation maintains invariants duration = end-start', () => {
