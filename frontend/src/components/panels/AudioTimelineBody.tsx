@@ -68,6 +68,7 @@ import { getPrompterRecordingShortcut, getPrompterSecondsPerCharacter } from '..
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { captureAudioSnapshot } from '../../app/assetSnapshot'
 import { TtsGlobalSettings } from '../settings/TtsGlobalSettings'
+import { usePopularAudioStore } from '../../stores/popularAudioStore'
 
 const PROMPTER_STRIP_HEIGHT = 42
 const AUDIO_LANE_HEIGHT = 56
@@ -3642,6 +3643,58 @@ export function AudioTimelineBody({
             }}
           >
             Edit waveform…
+          </button>
+          <button
+            data-testid="audio-clip-save-popular-btn"
+            onClick={async () => {
+              const clip = slide.audio.clips.find((item) => item.id === audioClipContextMenu.clipId)
+              if (!clip) return
+              let asset = engine.getEmbeddedAsset(clip.assetId)
+              if (!asset) {
+                await captureAudioSnapshot(
+                  engine as unknown as import('../../engine').EnginePublic,
+                  clip.assetId,
+                )
+                asset = engine.getEmbeddedAsset(clip.assetId)
+              }
+              if (!asset) {
+                useNotificationStore.getState().notify('Could not copy this audio recording')
+                setAudioClipContextMenu(null)
+                return
+              }
+              const metadata = asset.metadata as Record<string, unknown> | undefined
+              const duration =
+                typeof metadata?.duration === 'number' ? metadata.duration : clip.sourceEnd
+              usePopularAudioStore.getState().add({
+                id: `popular-audio-${crypto.randomUUID()}`,
+                name: asset.name,
+                data: asset.data,
+                mimeType: asset.mimeType,
+                duration,
+                ...(Array.isArray(metadata?.waveformPeaks)
+                  ? { waveformPeaks: metadata.waveformPeaks as number[] }
+                  : {}),
+                sourceStart: clip.sourceStart,
+                sourceEnd: clip.sourceEnd,
+                volume: clip.volume,
+                playbackRate: clip.playbackRate,
+                pitchSemitones: clip.pitchSemitones,
+                noiseReduction: clip.noiseReduction,
+              })
+              setAudioClipContextMenu(null)
+            }}
+            style={{
+              padding: '6px 10px',
+              textAlign: 'left',
+              background: '#2a2a3a',
+              color: '#e0e0e0',
+              border: '1px solid #444',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontSize: 11,
+            }}
+          >
+            Save to popular recordings
           </button>
           <button
             data-testid="audio-clip-delete-btn"

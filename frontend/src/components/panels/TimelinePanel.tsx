@@ -13,9 +13,14 @@ import { ClipEditBody } from './ClipEditBody'
 import { AudioTimelineBody } from './AudioTimelineBody'
 import { useSyncedAudio } from '../../audio/useSyncedAudio'
 import { useViewportWidth } from './useViewportWidth'
+import { PopularAudioModal } from '../audio/PopularAudioModal'
+import { usePopularAudioStore } from '../../stores/popularAudioStore'
+import { CreateAudioClipCommand } from '../../engine/commands'
+import { usePlaybackController } from '../../stores/playbackStore'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 export function TimelinePanel({ height }: { height: number }) {
-  const { engine } = useEngine()
+  const { engine, dispatch } = useEngine()
   const [, setTick] = useState(0)
   useEngineEvent((event) => {
     setTick((tick) => tick + 1)
@@ -54,6 +59,8 @@ export function TimelinePanel({ height }: { height: number }) {
   const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)
   const authoringModeByHost = useTimelineViewStore((state) => state.authoringModeByHost)
   const [activeTab, setActiveTab] = useState<'animation' | 'audio'>('animation')
+  const [showPopularAudio, setShowPopularAudio] = useState(false)
+  const currentTime = usePlaybackController((state) => state.currentTimes[slide?.id ?? ''] ?? 0)
   const viewportWidth = useViewportWidth(scrollerRef, [
     slide?.id ?? null,
     hasObjects,
@@ -231,6 +238,15 @@ export function TimelinePanel({ height }: { height: number }) {
               Audio
             </button>
           </div>
+          {activeTab === 'audio' && (
+            <button
+              className="popular-audio-open-button"
+              data-testid="open-popular-audio"
+              onClick={() => setShowPopularAudio(true)}
+            >
+              Popular recordings
+            </button>
+          )}
         </div>
       )}
       {(slide || isClipEdit) && (
@@ -247,6 +263,43 @@ export function TimelinePanel({ height }: { height: number }) {
         />
       )}
       {body}
+      {showPopularAudio && slide && (
+        <PopularAudioModal
+          slideId={slide.id}
+          onClose={() => setShowPopularAudio(false)}
+          onAdd={(id) => {
+            const recording = usePopularAudioStore
+              .getState()
+              .recordings.find((item) => item.id === id)
+            if (!recording) return
+            const assetId = `popular-asset-${recording.id}`
+            if (!engine.getEmbeddedAsset(assetId))
+              engine.embedAsset({
+                id: assetId,
+                name: recording.name,
+                data: recording.data,
+                mimeType: recording.mimeType,
+                metadata: { duration: recording.duration, waveformPeaks: recording.waveformPeaks },
+              })
+            const result = dispatch(
+              new CreateAudioClipCommand({
+                slideId: slide.id,
+                assetId,
+                trackId: 'voice',
+                timelineStart: Math.max(0, currentTime),
+                sourceStart: recording.sourceStart,
+                sourceEnd: recording.sourceEnd,
+                volume: recording.volume,
+                playbackRate: recording.playbackRate,
+                pitchSemitones: recording.pitchSemitones,
+                noiseReduction: recording.noiseReduction,
+              }),
+            )
+            if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+            else setShowPopularAudio(false)
+          }}
+        />
+      )}
     </div>
   )
 }

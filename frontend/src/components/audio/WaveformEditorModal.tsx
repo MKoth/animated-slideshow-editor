@@ -21,11 +21,19 @@ import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { getPitchScaleForSemitones } from '../../engine/audioClip'
 import { applyAudioEffects, getTimeRatioForPlaybackRate } from '../../audio/timeStretch'
 import { AudioEffectsMismatchDialog } from './AudioEffectsMismatchDialog'
+import type { PopularAudio } from '../../stores/popularAudioStore'
 
 interface WaveformEditorModalProps {
   readonly slideId: string
   readonly clipId: string
   readonly onClose: () => void
+  readonly libraryRecording?: PopularAudio
+  readonly onSaveLibrary?: (
+    value: Pick<
+      PopularAudio,
+      'sourceStart' | 'sourceEnd' | 'playbackRate' | 'pitchSemitones' | 'noiseReduction'
+    > & { deletedRange?: { start: number; end: number } },
+  ) => void | Promise<void>
 }
 
 function getAssetDurationFromMetadata(
@@ -58,7 +66,13 @@ function base64ToBytes(base64: string): Uint8Array | null {
   }
 }
 
-export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditorModalProps) {
+export function WaveformEditorModal({
+  slideId,
+  clipId,
+  onClose,
+  libraryRecording,
+  onSaveLibrary,
+}: WaveformEditorModalProps) {
   const { engine, dispatch } = useEngine()
   // Hooks must be called unconditionally before any early return (rules-of-hooks)
   // Derive slide/clip safely; render fallback UI if missing after hooks
@@ -66,7 +80,21 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
   let clip: ReturnType<typeof engine.getSlide>['audio']['clips'][number] | undefined
   try {
     slide = engine.getSlide(slideId)
-    clip = slide.audio.clips.find((c) => c.id === clipId)
+    clip = libraryRecording
+      ? {
+          id: clipId,
+          assetId: `popular-asset-${libraryRecording.id}`,
+          trackId: 'voice',
+          timelineStart: 0,
+          sourceStart: libraryRecording.sourceStart,
+          sourceEnd: libraryRecording.sourceEnd,
+          volume: libraryRecording.volume,
+          muted: false,
+          playbackRate: libraryRecording.playbackRate,
+          pitchSemitones: libraryRecording.pitchSemitones,
+          noiseReduction: libraryRecording.noiseReduction,
+        }
+      : slide.audio.clips.find((c) => c.id === clipId)
   } catch {
     slide = undefined
     clip = undefined
@@ -96,6 +124,9 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
   // Selection for middle delete — interval inside [editStart, editEnd] to delete
   const [selStart, setSelStart] = useState<number | null>(null)
   const [selEnd, setSelEnd] = useState<number | null>(null)
+  const [selectionAction, setSelectionAction] = useState<'delete-selected' | 'keep-selected'>(
+    'delete-selected',
+  )
   const [isDragging, setIsDragging] = useState<
     'left' | 'right' | 'selLeft' | 'selRight' | 'selMove' | null
   >(null)
@@ -251,7 +282,15 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
     setEditPitch(clip.pitchSemitones ?? 0)
     setEditNoise(clip.noiseReduction ?? 0)
     setEditRate(clip.playbackRate ?? 1)
-  }, [clip?.sourceStart, clip?.sourceEnd, clip?.pitchSemitones, clip?.noiseReduction, clip?.playbackRate, isDragging, clip])
+  }, [
+    clip?.sourceStart,
+    clip?.sourceEnd,
+    clip?.pitchSemitones,
+    clip?.noiseReduction,
+    clip?.playbackRate,
+    isDragging,
+    clip,
+  ])
 
   // Ruler calculation — shares timeline ruler logic
   const width = 640
@@ -337,7 +376,8 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
         useNotificationStore.getState().notify('Nothing to audition — interval empty')
         return
       }
-      const hasEffects = Math.abs(editPitch) > 1e-6 || Math.abs(editNoise) > 1e-6 || Math.abs(editRate - 1) > 1e-6
+      const hasEffects =
+        Math.abs(editPitch) > 1e-6 || Math.abs(editNoise) > 1e-6 || Math.abs(editRate - 1) > 1e-6
       // If effects present, use Web Audio OfflineAudioContext preview (non-destructive, no asset rewrite)
       if (hasEffects) {
         try {
@@ -345,15 +385,27 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           let arrayBuffer: ArrayBuffer | null = null
           if (asset) {
             const bytes = base64ToBytes(asset.data)
-            if (bytes) arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+            if (bytes)
+              arrayBuffer = bytes.buffer.slice(
+                bytes.byteOffset,
+                bytes.byteOffset + bytes.byteLength,
+              ) as ArrayBuffer
           } else if (globalDef?.original_url) {
             try {
               const resp = await fetch(globalDef.original_url)
               if (resp.ok) arrayBuffer = await resp.arrayBuffer()
-            } catch { /* ignore */ }
+            } catch {
+              /* ignore */
+            }
           }
           if (!arrayBuffer) throw new Error('no buffer')
-          const Ctor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext ??
+          const Ctor =
+            (
+              window as unknown as {
+                AudioContext?: typeof AudioContext
+                webkitAudioContext?: typeof AudioContext
+              }
+            ).AudioContext ??
             (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
           let tmpCtx: AudioContext | null = null
           let decoded: AudioBuffer | null = null
@@ -363,7 +415,12 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
               decoded = await tmpCtx.decodeAudioData(arrayBuffer.slice(0))
             }
           } finally {
-            if (tmpCtx) try { await tmpCtx.close() } catch { /* ignore */ }
+            if (tmpCtx)
+              try {
+                await tmpCtx.close()
+              } catch {
+                /* ignore */
+              }
           }
           if (!decoded) throw new Error('decode failed')
           const timeRatio = getTimeRatioForPlaybackRate(editRate || 1)
@@ -371,7 +428,7 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           // slice interval in processed domain: processed duration = original * timeRatio, pitch doesn't change duration
           const processedStart = startSrc * timeRatio
           const processedEnd = endSrc * timeRatio
-          const auditionDuration = (processedEnd - processedStart) // at rate 1 post-process, playback is 1:1
+          const auditionDuration = processedEnd - processedStart // at rate 1 post-process, playback is 1:1
           // Play via AudioContext buffer source
           const playCtxCtor = Ctor
           if (!playCtxCtor) throw new Error('no ctx')
@@ -383,18 +440,33 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           source.connect(gainNode)
           gainNode.connect(playCtx.destination)
           // Keep ref for stop
-          const fakeAudio: unknown = { pause: () => { try { source.stop(); playCtx.close() } catch { /* ignore */ } }, currentTime: 0 }
+          const fakeAudio: unknown = {
+            pause: () => {
+              try {
+                source.stop()
+                playCtx.close()
+              } catch {
+                /* ignore */
+              }
+            },
+            currentTime: 0,
+          }
           audioRef.current = fakeAudio as HTMLAudioElement
           source.start(0, processedStart, auditionDuration)
           setIsPlaying(true)
           setTimeout(
             () => {
-              try { source.stop(); playCtx.close() } catch { /* ignore */ }
+              try {
+                source.stop()
+                playCtx.close()
+              } catch {
+                /* ignore */
+              }
               stopAudition()
             },
             auditionDuration * 1000 + 300,
           )
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
           void getPitchScaleForSemitones
           return
         } catch {
@@ -606,7 +678,7 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
     // Check if anything changed
     const trimChanged =
       Math.abs(editStart - clip.sourceStart) > 1e-6 || Math.abs(editEnd - clip.sourceEnd) > 1e-6
-    const hasDelete = selectionActive && isInteriorDelete
+    const hasDelete = selectionActive && (selectionAction === 'keep-selected' || isInteriorDelete)
     const hasEdgeDelete = selectionActive && isEdgeTrimSelection
     const pitchChanged = Math.abs(editPitch - (clip.pitchSemitones ?? 0)) > 1e-6
     const noiseChanged = Math.abs(editNoise - (clip.noiseReduction ?? 0)) > 1e-6
@@ -622,19 +694,24 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
     selEnd,
     clip,
     isInteriorDelete,
+    selectionAction,
     isEdgeTrimSelection,
     editPitch,
     editNoise,
     editRate,
   ])
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     if (!clip || !slide) return
     // Determine effective trim
     let effectiveStart = editStart
     let effectiveEnd = editEnd
+    if (selectionActive && selectionAction === 'keep-selected') {
+      effectiveStart = selStart!
+      effectiveEnd = selEnd!
+    }
     // If selection is edge trim (delete at edge), adjust effectiveStart/End to reflect delete
-    if (selectionActive && isEdgeTrimSelection) {
+    if (selectionActive && selectionAction === 'delete-selected' && isEdgeTrimSelection) {
       const a = selStart!
       const b = selEnd!
       const eps = 1e-6
@@ -655,7 +732,8 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
     const trimChanged =
       Math.abs(effectiveStart - clip.sourceStart) > 1e-6 ||
       Math.abs(effectiveEnd - clip.sourceEnd) > 1e-6
-    const hasInteriorDelete = selectionActive && isInteriorDelete
+    const hasInteriorDelete =
+      selectionActive && selectionAction === 'delete-selected' && isInteriorDelete
     const pitchChanged = Math.abs(editPitch - (clip.pitchSemitones ?? 0)) > 1e-6
     const noiseChanged = Math.abs(editNoise - (clip.noiseReduction ?? 0)) > 1e-6
     const rateChanged = Math.abs(editRate - (clip.playbackRate ?? 1)) > 1e-6
@@ -663,7 +741,7 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
 
     // Compute derived duration after effects (pitch/noise don't change duration, only rate)
     const sourceDurationForDerived = hasInteriorDelete
-      ? (selStart! - effectiveStart) + (effectiveEnd - selEnd!)
+      ? selStart! - effectiveStart + (effectiveEnd - selEnd!)
       : effectiveEnd - effectiveStart
     const derivedDuration = sourceDurationForDerived / (editRate || 1)
 
@@ -701,6 +779,27 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
 
     if (!trimChanged && !hasInteriorDelete && !effectsChanged) {
       useNotificationStore.getState().notify('No changes to save')
+      return
+    }
+
+    if (onSaveLibrary && libraryRecording) {
+      try {
+        await onSaveLibrary({
+          sourceStart: effectiveStart,
+          sourceEnd: effectiveEnd,
+          playbackRate: editRate,
+          pitchSemitones: editPitch,
+          noiseReduction: editNoise,
+          ...(hasInteriorDelete ? { deletedRange: { start: selStart!, end: selEnd! } } : {}),
+        })
+      } catch (error) {
+        useNotificationStore
+          .getState()
+          .notify(error instanceof Error ? error.message : 'Could not save edited recording')
+        return
+      }
+      stopAudition()
+      onClose()
       return
     }
 
@@ -820,16 +919,28 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
     isInteriorDelete,
     stopAudition,
     onClose,
+    onSaveLibrary,
+    libraryRecording,
+    selectionAction,
   ])
 
   const handleMismatchChoice = useCallback(
     (choice: 'stretch' | 'trim' | 'shift') => {
       if (!clip || !slide || !mismatch) return
-      const { derivedDuration, prompterDuration, partId, effectiveStart, effectiveEnd, selStart: mSelStart, selEnd: mSelEnd, isInteriorDelete } = mismatch
+      const {
+        derivedDuration,
+        prompterDuration,
+        partId,
+        effectiveStart,
+        effectiveEnd,
+        selStart: mSelStart,
+        selEnd: mSelEnd,
+        isInteriorDelete,
+      } = mismatch
       const commands: Array<Parameters<typeof dispatch>[0]> = []
       const hasInterior = isInteriorDelete && mSelStart !== null && mSelEnd !== null
       const sourceDurationForDerived = hasInterior
-        ? (mSelStart! - effectiveStart) + (effectiveEnd - mSelEnd!)
+        ? mSelStart! - effectiveStart + (effectiveEnd - mSelEnd!)
         : effectiveEnd - effectiveStart
 
       // Helper to push trim/split base commands (same as handleSave but without mismatch check)
@@ -945,7 +1056,19 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
       stopAudition()
       onClose()
     },
-    [clip, slide, mismatch, slideId, clipId, editPitch, editNoise, editRate, dispatch, stopAudition, onClose],
+    [
+      clip,
+      slide,
+      mismatch,
+      slideId,
+      clipId,
+      editPitch,
+      editNoise,
+      editRate,
+      dispatch,
+      stopAudition,
+      onClose,
+    ],
   )
 
   const clippedPeaksForDisplay = useMemo(() => {
@@ -1040,6 +1163,62 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           {isDecoding && ' • decoding…'}
           {clip.muted ? ' • muted' : ` • vol ${clip.volume.toFixed(2)}`}
           {rate !== 1 ? ` • rate ${rate}` : ''}
+        </div>
+        <div
+          data-testid="waveform-selection-guidance"
+          style={{
+            marginBottom: 10,
+            padding: '10px 12px',
+            borderRadius: 6,
+            border: '1px solid #49445d',
+            background: '#252435',
+            fontSize: 11,
+            lineHeight: 1.5,
+          }}
+        >
+          <strong style={{ display: 'block', marginBottom: 7, color: '#fff' }}>
+            {selectionActive
+              ? selectionAction === 'delete-selected'
+                ? 'Highlighted range will be deleted. Everything else in the kept audio stays.'
+                : 'Highlighted range will be kept. Everything else in the kept audio will be deleted.'
+              : 'Drag across the waveform to select a range, then choose what to keep.'}
+          </strong>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              type="button"
+              aria-pressed={selectionAction === 'delete-selected'}
+              onClick={() => setSelectionAction('delete-selected')}
+              style={{
+                padding: '5px 9px',
+                borderRadius: 4,
+                border: `1px solid ${selectionAction === 'delete-selected' ? '#ff6868' : '#49445d'}`,
+                background:
+                  selectionAction === 'delete-selected' ? 'rgba(255,80,80,.18)' : '#1e1e2e',
+                color: '#eee',
+                cursor: 'pointer',
+                fontSize: 10,
+              }}
+            >
+              Delete selected
+            </button>
+            <button
+              type="button"
+              aria-pressed={selectionAction === 'keep-selected'}
+              onClick={() => setSelectionAction('keep-selected')}
+              style={{
+                padding: '5px 9px',
+                borderRadius: 4,
+                border: `1px solid ${selectionAction === 'keep-selected' ? '#69d6a6' : '#49445d'}`,
+                background:
+                  selectionAction === 'keep-selected' ? 'rgba(70,200,140,.18)' : '#1e1e2e',
+                color: '#eee',
+                cursor: 'pointer',
+                fontSize: 10,
+              }}
+            >
+              Keep selected, delete rest
+            </button>
+          </div>
         </div>
         {/* Ruler sharing timeline ruler */}
         <div
@@ -1152,8 +1331,13 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
                 bottom: 0,
                 left: selLeftPx,
                 width: selWidthPx,
-                background: isInteriorDelete ? 'rgba(255,80,80,0.35)' : 'rgba(255,180,80,0.35)',
-                border: `1px dashed ${isInteriorDelete ? '#ff4d4d' : '#ffb74d'}`,
+                background:
+                  selectionAction === 'keep-selected'
+                    ? 'rgba(70,200,140,0.3)'
+                    : isInteriorDelete
+                      ? 'rgba(255,80,80,0.35)'
+                      : 'rgba(255,180,80,0.35)',
+                border: `1px dashed ${selectionAction === 'keep-selected' ? '#46c88c' : isInteriorDelete ? '#ff4d4d' : '#ffb74d'}`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -1163,7 +1347,11 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
               }}
             >
               <span style={{ background: 'rgba(0,0,0,0.6)', padding: '1px 4px', borderRadius: 3 }}>
-                {isInteriorDelete ? 'Delete → 2 clips' : 'Edge trim'}
+                {selectionAction === 'keep-selected'
+                  ? 'Keep selected'
+                  : isInteriorDelete
+                    ? 'Delete → 2 clips'
+                    : 'Delete selection'}
               </span>
             </div>
           )}
@@ -1228,8 +1416,11 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
                   bottom: 0,
                   width: 12,
                   cursor: 'ew-resize',
-                  background: 'rgba(255,80,80,0.18)',
-                  borderLeft: '2px solid #ff4d4d',
+                  background:
+                    selectionAction === 'keep-selected'
+                      ? 'rgba(70,200,140,0.18)'
+                      : 'rgba(255,80,80,0.18)',
+                  borderLeft: `2px solid ${selectionAction === 'keep-selected' ? '#46c88c' : '#ff4d4d'}`,
                   zIndex: 3,
                 }}
               />
@@ -1246,8 +1437,11 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
                   bottom: 0,
                   width: 12,
                   cursor: 'ew-resize',
-                  background: 'rgba(255,80,80,0.18)',
-                  borderRight: '2px solid #ff4d4d',
+                  background:
+                    selectionAction === 'keep-selected'
+                      ? 'rgba(70,200,140,0.18)'
+                      : 'rgba(255,80,80,0.18)',
+                  borderRight: `2px solid ${selectionAction === 'keep-selected' ? '#46c88c' : '#ff4d4d'}`,
                   zIndex: 3,
                 }}
               />
@@ -1337,7 +1531,11 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           {selectionActive && (
             <span style={{ color: isInteriorDelete ? '#ff6b6b' : '#ffb74d' }}>
               sel {selStart!.toFixed(2)}–{selEnd!.toFixed(2)} ({(selEnd! - selStart!).toFixed(2)}s){' '}
-              {isInteriorDelete ? '→ split gap-free' : '→ edge'}
+              {selectionAction === 'keep-selected'
+                ? '→ remove all outside selected range'
+                : isInteriorDelete
+                  ? '→ split gap-free'
+                  : '→ remove highlighted edge'}
             </span>
           )}
           <button
@@ -1377,7 +1575,10 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
         >
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 140 }}>
             <span style={{ color: '#aaa' }}>
-              Pitch {editPitch > 0 ? `+${editPitch}` : editPitch} semitones {Math.abs(editPitch) > 1e-6 ? `(×${getPitchScaleForSemitones(editPitch).toFixed(3)})` : '(×1.000)'}
+              Pitch {editPitch > 0 ? `+${editPitch}` : editPitch} semitones{' '}
+              {Math.abs(editPitch) > 1e-6
+                ? `(×${getPitchScaleForSemitones(editPitch).toFixed(3)})`
+                : '(×1.000)'}
             </span>
             <input
               data-testid="waveform-pitch"
@@ -1389,10 +1590,14 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
               onChange={(e) => setEditPitch(parseFloat(e.target.value))}
               style={{ width: 140 }}
             />
-            <span style={{ fontSize: 10, color: '#777' }}>-12..+12 (RubberBand pitch, preview OfflineAudioContext, export bake)</span>
+            <span style={{ fontSize: 10, color: '#777' }}>
+              -12..+12 (RubberBand pitch, preview OfflineAudioContext, export bake)
+            </span>
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 140 }}>
-            <span style={{ color: '#aaa' }}>Noise reduction {(editNoise * 100).toFixed(0)}% ({editNoise.toFixed(2)})</span>
+            <span style={{ color: '#aaa' }}>
+              Noise reduction {(editNoise * 100).toFixed(0)}% ({editNoise.toFixed(2)})
+            </span>
             <input
               data-testid="waveform-noise"
               type="range"
@@ -1403,10 +1608,14 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
               onChange={(e) => setEditNoise(parseFloat(e.target.value))}
               style={{ width: 140 }}
             />
-            <span style={{ fontSize: 10, color: '#777' }}>0..1 (0 off, 1 max, afftdn at export, Offline filter preview)</span>
+            <span style={{ fontSize: 10, color: '#777' }}>
+              0..1 (0 off, 1 max, afftdn at export, Offline filter preview)
+            </span>
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 140 }}>
-            <span style={{ color: '#aaa' }}>Playback rate ×{editRate.toFixed(2)} (tempo { (1/editRate).toFixed(3)})</span>
+            <span style={{ color: '#aaa' }}>
+              Playback rate ×{editRate.toFixed(2)} (tempo {(1 / editRate).toFixed(3)})
+            </span>
             <input
               data-testid="waveform-rate"
               type="range"
@@ -1419,8 +1628,12 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
             />
             <span style={{ fontSize: 10, color: '#777' }}>0.5×–2× pitch-preserved RubberBand</span>
           </label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: '#888' }}>
-            Original asset never rewritten — preview offline, bake FFmpeg. Derived {(editEnd - editStart).toFixed(2)}s / {editRate.toFixed(2)} = {((editEnd - editStart) / editRate).toFixed(2)}s
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: '#888' }}
+          >
+            Original asset never rewritten — preview offline, bake FFmpeg. Derived{' '}
+            {(editEnd - editStart).toFixed(2)}s / {editRate.toFixed(2)} ={' '}
+            {((editEnd - editStart) / editRate).toFixed(2)}s
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
@@ -1534,9 +1747,13 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           Drag on waveform to select middle interval; handles for edge trim; interior delete splits
           into <strong>two clips gap-free</strong> — timeline reflects new clips. Audition respects{' '}
           <code>
-            volume {clip.volume} {clip.muted ? '(muted)' : ''} pitch {clip.pitchSemitones ?? 0} noise {clip.noiseReduction ?? 0}
+            volume {clip.volume} {clip.muted ? '(muted)' : ''} pitch {clip.pitchSemitones ?? 0}{' '}
+            noise {clip.noiseReduction ?? 0}
           </code>
-          . Single undo entry. Original asset bytes never rewritten. Preview via OfflineAudioContext — export bake via FFmpeg RubberBand (pitch+tempo) + afftdn (denoise). Works for TTS and recorded assets; preview equals export per timestamp determinism (same evaluator, same derived buffer).
+          . Single undo entry. Original asset bytes never rewritten. Preview via OfflineAudioContext
+          — export bake via FFmpeg RubberBand (pitch+tempo) + afftdn (denoise). Works for TTS and
+          recorded assets; preview equals export per timestamp determinism (same evaluator, same
+          derived buffer).
         </div>
       </div>
       {mismatch && (

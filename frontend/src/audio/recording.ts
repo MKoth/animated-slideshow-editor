@@ -62,6 +62,55 @@ export function encodeWavFromAudioBuffer(buffer: AudioBuffer): string {
   return btoa(binary)
 }
 
+/** Decode and physically crop audio into a standalone WAV file. */
+export async function cropAudioToWav(
+  base64: string,
+  startSeconds: number,
+  endSeconds: number,
+  removedRange?: { start: number; end: number },
+): Promise<{ data: string; duration: number; waveformPeaks: number[] }> {
+  const Ctor =
+    window.AudioContext ??
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!Ctor) throw new Error('Audio decoding is unavailable in this browser')
+  const context = new Ctor()
+  try {
+    const source = await context.decodeAudioData(base64ToArrayBuffer(base64))
+    const start = Math.max(0, Math.min(source.duration, startSeconds))
+    const end = Math.max(start, Math.min(source.duration, endSeconds))
+    const firstFrame = Math.floor(start * source.sampleRate)
+    const lastFrame = Math.floor(end * source.sampleRate)
+    const removeStart = removedRange ? Math.max(start, Math.min(end, removedRange.start)) : end
+    const removeEnd = removedRange ? Math.max(removeStart, Math.min(end, removedRange.end)) : end
+    const removeStartFrame = Math.floor(removeStart * source.sampleRate)
+    const removeEndFrame = Math.floor(removeEnd * source.sampleRate)
+    const outputLength = removedRange
+      ? removeStartFrame - firstFrame + lastFrame - removeEndFrame
+      : lastFrame - firstFrame
+    if (outputLength <= 0) throw new Error('Selected audio range is empty')
+    const cropped = context.createBuffer(source.numberOfChannels, outputLength, source.sampleRate)
+    for (let channel = 0; channel < source.numberOfChannels; channel++) {
+      const target = cropped.getChannelData(channel)
+      const input = source.getChannelData(channel)
+      if (removedRange) {
+        const left = input.subarray(firstFrame, removeStartFrame)
+        const right = input.subarray(removeEndFrame, lastFrame)
+        target.set(left)
+        target.set(right, left.length)
+      } else {
+        target.set(input.subarray(firstFrame, lastFrame))
+      }
+    }
+    return {
+      data: encodeWavFromAudioBuffer(cropped),
+      duration: cropped.duration,
+      waveformPeaks: computePeaksFromAudioBuffer(cropped),
+    }
+  } finally {
+    await context.close().catch(() => undefined)
+  }
+}
+
 function interleaveChannels(buffer: AudioBuffer): Float32Array {
   const numChannels = buffer.numberOfChannels
   if (numChannels === 1) return buffer.getChannelData(0).slice()
@@ -75,7 +124,12 @@ function interleaveChannels(buffer: AudioBuffer): Float32Array {
   return out
 }
 
-function encodeWav(samples: Float32Array, numChannels: number, sampleRate: number, bitsPerSample: number): ArrayBuffer {
+function encodeWav(
+  samples: Float32Array,
+  numChannels: number,
+  sampleRate: number,
+  bitsPerSample: number,
+): ArrayBuffer {
   const bytesPerSample = bitsPerSample / 8
   const blockAlign = numChannels * bytesPerSample
   const byteRate = sampleRate * blockAlign
@@ -121,7 +175,10 @@ export interface DecodedAudioMetadata {
 export type AudioContextFactory = () => AudioContext | null
 
 export function getAudioContextCtor(): typeof AudioContext | null {
-  const w = globalThis as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }
+  const w = globalThis as unknown as {
+    AudioContext?: typeof AudioContext
+    webkitAudioContext?: typeof AudioContext
+  }
   return w.AudioContext ?? w.webkitAudioContext ?? null
 }
 
@@ -174,7 +231,10 @@ export async function decodeAudioMetadata(
   }
 }
 
-export function createWavBase64FromBlobFallback(blob: Blob, decoded: DecodedAudioMetadata): string | null {
+export function createWavBase64FromBlobFallback(
+  blob: Blob,
+  decoded: DecodedAudioMetadata,
+): string | null {
   void blob
   void decoded
   return null
@@ -185,7 +245,10 @@ export function createWavBase64FromBlobFallback(blob: Blob, decoded: DecodedAudi
 // ----------------------------------------------------------------------------
 
 export type GetUserMediaLike = (constraints: MediaStreamConstraints) => Promise<MediaStream>
-export type MediaRecorderCtorLike = new (stream: MediaStream, options?: MediaRecorderOptions) => MediaRecorderLike
+export type MediaRecorderCtorLike = new (
+  stream: MediaStream,
+  options?: MediaRecorderOptions,
+) => MediaRecorderLike
 export interface MediaRecorderLike {
   readonly state: string
   ondataavailable: ((event: { data: Blob }) => void) | null

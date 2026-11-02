@@ -4218,6 +4218,197 @@ button:disabled {
   position: relative;
 }
 
+.popular-audio-open-button {
+  padding: 4px 14px;
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.popular-audio-open-button:hover,
+.popular-audio-button--primary:hover {
+  filter: brightness(1.12);
+}
+.popular-audio-backdrop {
+  backdrop-filter: blur(5px);
+  padding: 24px;
+}
+.popular-audio-dialog {
+  width: min(760px, 92vw) !important;
+  max-height: min(760px, 84vh) !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: 14px !important;
+  background: var(--color-bg-panel) !important;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.62) !important;
+}
+.popular-audio-dialog__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 24px 26px 20px;
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-accent) 15%, var(--color-bg-panel)),
+    var(--color-bg-panel) 65%
+  );
+}
+.popular-audio-dialog__header h2 {
+  margin: 5px 0 4px;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+.popular-audio-dialog__header p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.popular-audio-dialog__eyebrow {
+  color: var(--color-accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+.popular-audio-dialog__close {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
+  cursor: pointer;
+}
+.popular-audio-empty {
+  margin: 24px;
+  padding: 26px;
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  color: var(--color-text-muted);
+  text-align: center;
+  line-height: 1.6;
+}
+.popular-audio-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 16px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-bg) 68%, transparent);
+}
+.popular-audio-card__main {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+}
+.popular-audio-card__icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  height: 36px;
+  border-radius: 9px;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 17%, transparent);
+  font-size: 19px;
+}
+.popular-audio-card__name {
+  flex: 1;
+  min-width: 100px;
+  padding: 8px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+}
+.popular-audio-button {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.popular-audio-button--primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-weight: 600;
+}
+.popular-audio-button--danger {
+  color: #ff8585;
+}
+.popular-audio-name-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 700;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(4, 5, 12, 0.72);
+  backdrop-filter: blur(4px);
+}
+.popular-audio-name-dialog__content {
+  width: min(390px, 92vw);
+  padding: 22px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg-panel);
+  color: var(--color-text);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+}
+.popular-audio-name-dialog__content h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.popular-audio-name-dialog__content p {
+  margin: 0 0 18px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.popular-audio-name-dialog__content label {
+  display: grid;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.popular-audio-name-dialog__content input {
+  padding: 9px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+}
+.popular-audio-name-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+@media (max-width: 700px) {
+  .popular-audio-card__main {
+    flex-wrap: wrap;
+  }
+  .popular-audio-card__name {
+    flex-basis: 65%;
+  }
+}
+
 .audio-prompter-strip {
   height: 42px;
   background: var(--color-bg-panel);
