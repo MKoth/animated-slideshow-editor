@@ -261,6 +261,9 @@ describe('AiScenarioModal Generate lifecycle (issue #464)', () => {
       expect(screen.getByTestId('ai-scenario-generate')).toHaveTextContent('Generating HTML…')
     })
     expect(screen.getByTestId('ai-scenario-generate')).toBeDisabled()
+    expect(screen.getByTestId('ai-scenario-html-progress')).toHaveTextContent(
+      'Checking language highlights…',
+    )
     resolveForeign(new Response(JSON.stringify({ words: [] }), { status: 200 }))
     await pressed
     expect(await screen.findByTestId('ai-scenario-html-state')).toHaveTextContent('ready')

@@ -13,6 +13,7 @@ import { computeProjectFingerprint } from '../../ai/proposals'
 import { CreateAudioAssetCommand } from '../../engine/commands/createAudioAssetCommand'
 import { newId } from '../../engine/ids'
 import { useAiStore } from '../../stores/aiStore'
+import { AiProcessingStatus } from './AiProcessingStatus'
 
 interface AiNarrationViewProps {
   projectId: string
@@ -227,7 +228,11 @@ export function AiNarrationView({
         >
           Fill prompter verbatim
         </button>
-        {narrationBusy && <span data-testid="ai-narration-generating">Working…</span>}
+        {narrationBusy && (
+          <AiProcessingStatus testId="ai-narration-generating">
+            Preparing narration and step timing…
+          </AiProcessingStatus>
+        )}
         {narrationError && <span data-testid="ai-narration-error">{narrationError.message}</span>}
       </div>
 

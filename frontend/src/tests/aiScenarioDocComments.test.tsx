@@ -147,6 +147,32 @@ describe('AiScenarioDocComments in the scenario modal', () => {
     )
   }
 
+  it('keeps every anchor highlighted in a large comment thread', async () => {
+    const lines = Array.from({ length: 120 }, (_, index) => `Commentable paragraph ${index + 1}.`)
+    const markdown = `## Step 1 — Many comments\n\n${lines.join('\n\n')}`
+    const comments: ScenarioDocComment[] = lines.map((line, index) => ({
+      id: `many-${index}`,
+      step: 1,
+      blockKind: 'paragraph',
+      quote: line,
+      comment: `Note ${index + 1}`,
+      blockIndex: index + 1,
+    }))
+    const { container } = render(
+      <AiScenarioDocComments
+        projectId="p-1"
+        conversationId="c-1"
+        markdown={markdown}
+        comments={comments}
+        onCommentsChange={vi.fn()}
+      />,
+    )
+
+    await screen.findByText('Note 120')
+    expect(container.querySelectorAll('.has-doc-comment')).toHaveLength(120)
+    expect(container.querySelectorAll('mark.scenario-comment-mark')).toHaveLength(120)
+  })
+
   it('clicking a block icon button adds a listed comment with a stable anchor', async () => {
     const user = userEvent.setup()
     const { container } = renderModal()
@@ -237,6 +263,26 @@ describe('AiScenarioDocComments in the scenario modal', () => {
     await user.click(screen.getByTestId(`ai-scenario-comment-delete-${commentId}`))
     expect(screen.queryByTestId('ai-scenario-comments-list')).not.toBeInTheDocument()
     expect(screen.getByTestId('ai-scenario-comments-send')).toBeDisabled()
+  })
+
+  it('opens an existing comment for editing from its document marker', async () => {
+    const user = userEvent.setup()
+    renderModal()
+    const doc = await screen.findByTestId('ai-scenario-modal-doc')
+    const narrator = within(doc).getByText(/Ser is for who you are/)
+    await user.click(within(narrator).getByTestId('ai-scenario-comment-block-btn'))
+    await user.type(screen.getByTestId('ai-scenario-comment-input'), 'Use a warmer voice.')
+    await user.click(screen.getByTestId('ai-scenario-comment-save'))
+
+    await user.click(within(narrator).getByTestId('ai-scenario-comment-block-btn'))
+    expect(screen.getByTestId('ai-scenario-comment-input')).toHaveValue('Use a warmer voice.')
+    await user.clear(screen.getByTestId('ai-scenario-comment-input'))
+    await user.type(screen.getByTestId('ai-scenario-comment-input'), 'Keep it concise.')
+    await user.click(screen.getByTestId('ai-scenario-comment-save'))
+    expect(screen.getByTestId('ai-scenario-comments-list')).toHaveTextContent('Keep it concise.')
+    expect(screen.getByTestId('ai-scenario-comments-list')).not.toHaveTextContent(
+      'Use a warmer voice.',
+    )
   })
 
   it('resolve sends one edit: message with every comment', async () => {

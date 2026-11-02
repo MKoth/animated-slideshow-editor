@@ -75,6 +75,8 @@ export interface AiMessage {
   scenarioSummary?: string | null
   scenarioTouchedSteps?: number[]
   created: string
+  /** Frontend-only optimistic user message, replaced by the persisted copy. */
+  optimistic?: boolean
 }
 
 export interface AiModels {
@@ -687,6 +689,20 @@ export class AiApi {
     if (conversationId) params.set('conversationId', conversationId)
     return this.client.get<ScenarioMarkdownVersion[]>(
       `/api/ai/scenarios/markdown/versions?${params.toString()}`,
+    )
+  }
+
+  async createMarkdownVersion(input: {
+    projectId: string
+    conversationId: string
+    content: string
+    summary: string
+    touchedSteps: number[]
+    baseVersionId?: string | null
+  }): Promise<ScenarioMarkdownVersion> {
+    return this.client.post<ScenarioMarkdownVersion>(
+      '/api/ai/scenarios/markdown/versions',
+      JSON.stringify(input),
     )
   }
 

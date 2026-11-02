@@ -1,5 +1,6 @@
 import type { PlannerResult } from '../../ai/scenarioPlanner'
 import { highlightAnimationScript } from '../panels/AnimationScriptViewer'
+import { AiProcessingStatus } from './AiProcessingStatus'
 
 export interface ScenarioScriptPreview {
   readonly acceptedVersionId: string
@@ -321,6 +322,11 @@ export function AiScenarioScriptPanel({
               : '1. Apply prompter text'}
         </button>
       </div>
+      {prompterApplying && (
+        <AiProcessingStatus testId="ai-scenario-script-prompter-progress">
+          Applying scenario narration and timing…
+        </AiProcessingStatus>
+      )}
       {prompterApplied && (
         <div data-testid="ai-scenario-script-prompter-done">
           Prompter text applied — per-step TTS and board buttons below.
@@ -401,6 +407,21 @@ export function AiScenarioScriptPanel({
                       : `Repair sounds — Step ${step.position}`}
                   </button>
                 </div>
+                {step.ttsStatus === 'applying' && (
+                  <AiProcessingStatus testId={`ai-scenario-script-tts-status-${step.position}`}>
+                    Generating narration audio for Step {step.position}…
+                  </AiProcessingStatus>
+                )}
+                {step.boardStatus === 'applying' && (
+                  <AiProcessingStatus testId={`ai-scenario-script-board-status-${step.position}`}>
+                    Building board animation for Step {step.position}…
+                  </AiProcessingStatus>
+                )}
+                {step.soundStatus === 'applying' && (
+                  <AiProcessingStatus testId={`ai-scenario-script-sound-status-${step.position}`}>
+                    Repairing effect sounds for Step {step.position}…
+                  </AiProcessingStatus>
+                )}
                 {step.ttsProgress && (
                   <div data-testid={`ai-scenario-script-tts-progress-${step.position}`}>
                     Generating TTS: {step.ttsProgress.done} of {step.ttsProgress.total}

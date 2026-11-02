@@ -17,6 +17,7 @@ interface PendingAnchor {
   readonly blockIndex: number
   readonly cell?: ScenarioDocCellAnchor
   readonly quote: string
+  readonly commentId?: string
   readonly x: number
   readonly y: number
 }
@@ -421,6 +422,20 @@ export function AiScenarioDocComments({
       x: event.clientX,
       y: event.clientY,
     }
+    const existingComment = comments.find((comment) => {
+      if (comment.blockIndex !== blockIndex) return false
+      if (!isCell) return !comment.cell
+      const cell = btn.closest('td, th')
+      if (!(cell instanceof HTMLElement)) return false
+      const coords = cellCoords(cell)
+      return comment.cell?.row === coords.row && comment.cell?.col === coords.col
+    })
+    if (existingComment) {
+      setPending({ ...anchor, quote: existingComment.quote, commentId: existingComment.id })
+      setDraft(existingComment.comment)
+      setFloat(null)
+      return
+    }
     if (isCell) {
       const cell = btn.closest('td, th')
       if (!(cell instanceof HTMLElement)) return
@@ -444,19 +459,27 @@ export function AiScenarioDocComments({
   const handleSave = (): void => {
     const body = draft.trim()
     if (!pending || !body) return
-    onCommentsChange([
-      ...comments,
-      {
-        id: nextCommentId(),
-        step: pending.step,
-        stepTitle: pending.stepTitle,
-        blockKind: pending.blockKind,
-        quote: pending.quote,
-        comment: body,
-        blockIndex: pending.blockIndex,
-        ...(pending.cell ? { cell: pending.cell } : {}),
-      },
-    ])
+    if (pending.commentId) {
+      onCommentsChange(
+        comments.map((comment) =>
+          comment.id === pending.commentId ? { ...comment, comment: body } : comment,
+        ),
+      )
+    } else {
+      onCommentsChange([
+        ...comments,
+        {
+          id: nextCommentId(),
+          step: pending.step,
+          stepTitle: pending.stepTitle,
+          blockKind: pending.blockKind,
+          quote: pending.quote,
+          comment: body,
+          blockIndex: pending.blockIndex,
+          ...(pending.cell ? { cell: pending.cell } : {}),
+        },
+      ])
+    }
     setPending(null)
     setDraft('')
     clearSelection()
@@ -544,7 +567,7 @@ export function AiScenarioDocComments({
               disabled={!draft.trim()}
               onClick={handleSave}
             >
-              Add comment
+              {pending.commentId ? 'Save comment' : 'Add comment'}
             </button>
             <button
               type="button"

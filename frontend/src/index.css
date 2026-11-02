@@ -5852,6 +5852,30 @@ button:disabled {
   animation: ai-spin 0.8s linear infinite;
 }
 
+.ai-processing-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-muted, var(--color-text));
+  font-size: 0.9em;
+}
+
+.ai-processing-status__spinner {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: ai-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-processing-status__spinner {
+    animation-duration: 2s;
+  }
+}
+
 @keyframes ai-spin {
   to {
     transform: rotate(360deg);

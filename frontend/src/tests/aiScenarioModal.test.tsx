@@ -177,6 +177,61 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
     ).toBeInTheDocument()
   })
 
+  it('lets the author edit and remove markdown blocks, saving the result as a new version', async () => {
+    const user = userEvent.setup()
+    const { value } = setupEngine(MD)
+    renderModal(value)
+    await screen.findByTestId('ai-scenario-modal-doc')
+    const version = {
+      id: 'v-manual',
+      projectId: 'p-1',
+      conversationId: 'c-1',
+      messageId: null,
+      summary: 'Manual scenario edit',
+      touchedSteps: [1],
+      timestamp: new Date().toISOString(),
+      content: '## Step 1 — Who you are\n\nA clearer line.',
+      baseVersionId: null,
+    }
+    vi.mocked(fetch).mockImplementation(async (url: unknown, init?: RequestInit) => {
+      const path = String(url)
+      if (path.endsWith('/api/ai/scenarios/markdown/versions') && init?.method === 'POST') {
+        return new Response(JSON.stringify(version), { status: 201 })
+      }
+      if (path.includes('/api/ai/scenarios/markdown/versions?')) {
+        return new Response(JSON.stringify([version]), { status: 200 })
+      }
+      if (path.includes('/api/ai/scenarios/markdown/active?')) {
+        return new Response(
+          JSON.stringify({ projectId: 'p-1', activeVersionId: version.id, version }),
+          { status: 200 },
+        )
+      }
+      return new Response(JSON.stringify([]), { status: 200 })
+    })
+
+    await user.click(screen.getByTestId('ai-scenario-edit-md'))
+    const editor = screen.getByTestId('ai-scenario-markdown-source')
+    await user.clear(editor)
+    await user.type(editor, '## Step 1 — Who you are\n\nA clearer line.')
+    await user.click(screen.getByTestId('ai-scenario-save-md'))
+
+    await screen.findByTestId('ai-scenario-modal-doc')
+    const createCall = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([url, init]) =>
+          String(url).endsWith('/api/ai/scenarios/markdown/versions') &&
+          (init as RequestInit | undefined)?.method === 'POST',
+      )
+    expect(createCall).toBeDefined()
+    expect(JSON.parse(String((createCall![1] as RequestInit).body))).toMatchObject({
+      content: '## Step 1 — Who you are\n\nA clearer line.',
+      summary: 'Manual scenario edit',
+      touchedSteps: [1],
+    })
+  })
+
   it('Generate hard-blocked with unbound count; View disabled with no-HTML-yet explanation', async () => {
     const { value } = setupEngine(MD, {})
     useAiStore.setState({ scenarioModalOpen: true })

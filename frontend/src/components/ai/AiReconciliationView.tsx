@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AiImageBrief, AiReconciliation } from '../../api/aiApi'
 import { useAiStore } from '../../stores/aiStore'
+import { AiProcessingStatus } from './AiProcessingStatus'
 
 interface AiReconciliationViewProps {
   projectId: string
@@ -104,7 +105,9 @@ export function AiReconciliationView({
             Reconcile middle steps
           </button>
           {reconciliationBusy && (
-            <span data-testid="ai-reconciliation-generating">Reconciling…</span>
+            <AiProcessingStatus testId="ai-reconciliation-generating">
+              Comparing scenario assets with the library…
+            </AiProcessingStatus>
           )}
           {reconciliationError && (
             <span data-testid="ai-reconciliation-error">{reconciliationError.message}</span>

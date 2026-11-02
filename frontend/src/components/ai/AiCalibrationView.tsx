@@ -9,6 +9,7 @@ import {
 import { computeProjectFingerprint } from '../../ai/proposals'
 import { useEngine } from '../../app/useEngine'
 import { useAiStore } from '../../stores/aiStore'
+import { AiProcessingStatus } from './AiProcessingStatus'
 
 interface AiCalibrationViewProps {
   projectId: string
@@ -172,7 +173,11 @@ export function AiCalibrationView({
             placeholder="Open"
           />
         </label>
-        {calibrationBusy && <span data-testid="ai-calibration-generating">Working…</span>}
+        {calibrationBusy && (
+          <AiProcessingStatus testId="ai-calibration-generating">
+            Checking voice, rig, and camera readiness…
+          </AiProcessingStatus>
+        )}
         {calibrationError && (
           <span data-testid="ai-calibration-error">{calibrationError.message}</span>
         )}

@@ -9,6 +9,7 @@ import { checkAnimationScript } from '../../engine/animationScriptCheck'
 import { computeProjectFingerprint } from '../../ai/proposals'
 import { useEngine } from '../../app/useEngine'
 import { useAiStore } from '../../stores/aiStore'
+import { AiProcessingStatus } from './AiProcessingStatus'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 
 function collectGlobalAudioAssets(): readonly { id: string; name: string; duration: number }[] {
@@ -286,7 +287,11 @@ export function AiBoardView({
         >
           Author board scripts from zero
         </button>
-        {boardBusy && <span data-testid="ai-board-generating">Working…</span>}
+        {boardBusy && (
+          <AiProcessingStatus testId="ai-board-generating">
+            Drafting synchronized board scripts…
+          </AiProcessingStatus>
+        )}
         {boardError && <span data-testid="ai-board-error">{boardError.message}</span>}
       </div>
 

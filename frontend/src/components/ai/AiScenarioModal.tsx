@@ -60,6 +60,7 @@ import { measuredNodeSize } from '../../pixi/renderer/nodeMeasurement'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { AiScenarioChecklist } from './AiScenarioChecklist'
 import { AiScenarioHistory } from './AiScenarioHistory'
+import { AiProcessingStatus } from './AiProcessingStatus'
 import type { AiScenario, AiScenarioStep, ScenarioMarkdownVersion } from '../../api/aiApi'
 import { ApiError } from '../../api/apiClient'
 import type { AssetDefinition } from '../../api'
@@ -174,6 +175,9 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const markdownVersions = useAiStore(
     (s) => s.markdownVersionsByProject[projectId] ?? EMPTY_MARKDOWN_VERSIONS,
   )
+  const activeMarkdownVersionId = useAiStore(
+    (s) => s.activeMarkdownVersionIdByProject[projectId] ?? null,
+  )
   const store = useAiStore.getState()
   const allDefinitions = useAssetLibraryStore((s) => s.allDefinitions)
   const definitions = useAssetLibraryStore((s) => s.definitions)
@@ -187,6 +191,11 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   // Generate is async now: the narrator foreign-word list comes from the
   // same LLM backend, so the button shows a loader until it resolves.
   const [generatingHtml, setGeneratingHtml] = useState(false)
+  const [htmlProgress, setHtmlProgress] = useState('Preparing lesson preview…')
+  const [editingMarkdown, setEditingMarkdown] = useState(false)
+  const [markdownDraft, setMarkdownDraft] = useState('')
+  const [savingMarkdown, setSavingMarkdown] = useState(false)
+  const [markdownEditError, setMarkdownEditError] = useState<string | null>(null)
   const [confirmingDeleteDoc, setConfirmingDeleteDoc] = useState(false)
   const [confirmingDeleteHtml, setConfirmingDeleteHtml] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -319,6 +328,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     const engineValue = engine
     if (!engineValue?.project || generateBlocked || generatingHtml) return
     setGeneratingHtml(true)
+    setHtmlProgress('Preparing lesson images…')
     try {
       const current = engineValue.project.scenario ?? createEmptyScenarioSection(markdown)
       const currentMarkdown = current.currentMarkdown ?? markdown
@@ -347,6 +357,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
           .steps.map((step) => step.narrator?.trim() ?? '')
           .filter((line) => line !== '')
         if (narrators.length > 0) {
+          setHtmlProgress('Checking language highlights…')
           const detected = await store.api.detectForeignWords({
             projectId,
             ...(conversationId ? { conversationId } : {}),
@@ -366,6 +377,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         useNotificationStore.getState().notify(`HTML highlights skipped: ${message}`)
       }
 
+      setHtmlProgress('Rendering lesson HTML…')
       const html = renderScenarioChalkHtml(currentMarkdown, { imageFiles, foreignWords })
 
       // Pointer must match content for ready: reuse the version whose content
@@ -640,6 +652,35 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         window.setTimeout(() => setCopyMdState(null), 2500)
       }
     })()
+  }
+
+  const saveManualMarkdown = async () => {
+    if (!conversationId || !markdownDraft.trim() || savingMarkdown) return
+    setSavingMarkdown(true)
+    setMarkdownEditError(null)
+    try {
+      const touchedSteps = [...markdownDraft.matchAll(/^##\s+Step\s+(\d+)/gim)]
+        .map((match) => Number.parseInt(match[1] ?? '', 10))
+        .filter(Number.isFinite)
+      await store.api.createMarkdownVersion({
+        projectId,
+        conversationId,
+        content: markdownDraft,
+        summary: 'Manual scenario edit',
+        touchedSteps,
+        baseVersionId: activeMarkdownVersionId ?? null,
+      })
+      await store.loadMarkdownVersions(projectId, conversationId)
+      store.bumpScenarioDocRev(projectId)
+      setDocComments([])
+      setEditingMarkdown(false)
+    } catch (error) {
+      setMarkdownEditError(
+        error instanceof Error ? error.message : 'Could not save scenario edits.',
+      )
+    } finally {
+      setSavingMarkdown(false)
+    }
   }
 
   // Warnings-only validation surfaced in the Doc tab: the model drifts from
@@ -1218,6 +1259,11 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                 ? `Generate HTML (blocked — ${unboundCount} unbound)`
                 : 'Generate HTML'}
           </button>
+          {generatingHtml && (
+            <AiProcessingStatus testId="ai-scenario-html-progress">
+              {htmlProgress}
+            </AiProcessingStatus>
+          )}
           <button
             data-testid="ai-scenario-view"
             disabled={htmlState === 'empty'}
@@ -1291,6 +1337,44 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                 ? 'Copy failed'
                 : 'Copy MD'}
           </button>
+          {!editingMarkdown ? (
+            <button
+              data-testid="ai-scenario-edit-md"
+              disabled={!markdown || !conversationId || markdownBusy || scenarioTab !== 'doc'}
+              title={
+                !conversationId
+                  ? 'Start a scenario conversation before editing so changes are versioned'
+                  : 'Edit any scenario block directly; saving creates a new history version'
+              }
+              onClick={() => {
+                setMarkdownDraft(markdown)
+                setMarkdownEditError(null)
+                setEditingMarkdown(true)
+              }}
+            >
+              Edit doc
+            </button>
+          ) : (
+            <>
+              <button
+                data-testid="ai-scenario-save-md"
+                disabled={!markdownDraft.trim() || savingMarkdown || markdownDraft === markdown}
+                onClick={() => void saveManualMarkdown()}
+              >
+                {savingMarkdown ? 'Saving version…' : 'Save version'}
+              </button>
+              <button
+                data-testid="ai-scenario-cancel-md"
+                disabled={savingMarkdown}
+                onClick={() => {
+                  setEditingMarkdown(false)
+                  setMarkdownEditError(null)
+                }}
+              >
+                Cancel
+              </button>
+            </>
+          )}
           <button
             data-testid="ai-scenario-generate-script"
             disabled={!hasAcceptedSnapshot}
@@ -1345,28 +1429,28 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         <div data-testid="ai-scenario-modal-tabs">
           <button
             data-testid="ai-scenario-modal-tab-doc"
-            disabled={scenarioTab === 'doc'}
+            disabled={scenarioTab === 'doc' || editingMarkdown}
             onClick={() => store.setScenarioTab('doc')}
           >
             Doc
           </button>
           <button
             data-testid="ai-scenario-modal-tab-history"
-            disabled={scenarioTab === 'history'}
+            disabled={scenarioTab === 'history' || editingMarkdown}
             onClick={() => store.setScenarioTab('history')}
           >
             History
           </button>
           <button
             data-testid="ai-scenario-modal-tab-preview"
-            disabled={scenarioTab === 'preview'}
+            disabled={scenarioTab === 'preview' || editingMarkdown}
             onClick={() => store.setScenarioTab('preview')}
           >
             Preview
           </button>
           <button
             data-testid="ai-scenario-modal-tab-script"
-            disabled={scenarioTab === 'script' || !scriptPreview}
+            disabled={scenarioTab === 'script' || !scriptPreview || editingMarkdown}
             title={scriptPreview ? 'Review the generated script draft' : 'Generate Script first'}
             onClick={() => {
               if (scriptPreview) store.setScenarioTab('script')
@@ -1510,14 +1594,36 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
               style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginTop: 8 }}
             >
               <div>
-                <AiScenarioDocComments
-                  projectId={projectId}
-                  conversationId={conversationId}
-                  context={context}
-                  markdown={markdown}
-                  comments={docComments}
-                  onCommentsChange={setDocComments}
-                />
+                {editingMarkdown ? (
+                  <div data-testid="ai-scenario-markdown-editor">
+                    <label htmlFor="ai-scenario-markdown-source">
+                      Edit scenario markdown. Remove a block by deleting its markdown source.
+                    </label>
+                    <textarea
+                      id="ai-scenario-markdown-source"
+                      data-testid="ai-scenario-markdown-source"
+                      aria-label="Edit scenario markdown"
+                      value={markdownDraft}
+                      onChange={(event) => setMarkdownDraft(event.target.value)}
+                      rows={24}
+                      style={{ width: '100%', fontFamily: 'monospace' }}
+                    />
+                    {markdownEditError && (
+                      <div role="alert" data-testid="ai-scenario-markdown-edit-error">
+                        {markdownEditError}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <AiScenarioDocComments
+                    projectId={projectId}
+                    conversationId={conversationId}
+                    context={context}
+                    markdown={markdown}
+                    comments={docComments}
+                    onCommentsChange={setDocComments}
+                  />
+                )}
               </div>
               <AiScenarioChecklist
                 projectId={projectId}
@@ -1556,7 +1662,9 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
               Revise scenario
             </button>
             {scenarioGenerating && (
-              <span data-testid="ai-scenario-generating">Drafting scenario…</span>
+              <AiProcessingStatus testId="ai-scenario-generating">
+                Drafting scenario…
+              </AiProcessingStatus>
             )}
             {scenarioError && <span data-testid="ai-scenario-error">{scenarioError.message}</span>}
           </div>

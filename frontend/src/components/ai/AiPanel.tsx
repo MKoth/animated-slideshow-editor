@@ -16,6 +16,7 @@ import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useBackendStore } from '../../stores/backendStore'
 import { AiProposalModal, type ProposalModalState } from './AiProposalModal'
+import { AiProcessingStatus } from './AiProcessingStatus'
 import { AiProposalDetail } from './AiProposalView'
 import { AiAnimationView } from './AiAnimationView'
 import { AiBoardView } from './AiBoardView'
@@ -941,6 +942,17 @@ export function AiPanel() {
                   ) : (
                     <div>{message.content}</div>
                   )}
+                  {message.optimistic && (
+                    <div
+                      data-testid={`ai-message-status-${message.id}`}
+                      role="status"
+                      aria-live="polite"
+                    >
+                      {isStreaming && streamingConversationId === activeId
+                        ? 'Sent · processing…'
+                        : 'Sent'}
+                    </div>
+                  )}
                   {message.role === 'assistant' && message.scenarioIntent && (
                     <div data-testid={`ai-message-scenario-${message.id}`}>
                       {message.scenarioIntent === 'edit' ? (
@@ -1109,7 +1121,13 @@ export function AiPanel() {
             })}
             {isStreaming && (
               <div data-testid="ai-streaming">
-                <AiMarkdown content={streamingContent || '…'} />
+                {streamingContent ? (
+                  <AiMarkdown content={streamingContent} />
+                ) : (
+                  <AiProcessingStatus testId="ai-streaming-status">
+                    Generating response…
+                  </AiProcessingStatus>
+                )}
                 <button data-testid="ai-stop" onClick={() => store.stopStreaming()}>
                   Stop
                 </button>

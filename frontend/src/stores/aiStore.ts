@@ -590,6 +590,15 @@ export const useAiStore = create<AiState>()(
         // collection conversation id and poisoned its history with the wrong prompt.
         if (existing && conversationModeOf(existing) !== wanted) return
         const aborter = new AbortController()
+        const optimisticMessage: AiMessage = {
+          id: `local-user-${Date.now()}`,
+          role: 'user',
+          content: clean,
+          stopped: false,
+          errorCode: null,
+          created: new Date().toISOString(),
+          optimistic: true,
+        }
         set({
           status: 'streaming',
           streamingConversationId: conversationId,
@@ -597,6 +606,12 @@ export const useAiStore = create<AiState>()(
           lastError: null,
           aborter,
         })
+        set((state) => ({
+          messagesById: {
+            ...state.messagesById,
+            [conversationId]: [...(state.messagesById[conversationId] ?? []), optimisticMessage],
+          },
+        }))
         // Clear the draft for this project + mode once sent.
         set((state) => ({ drafts: { ...state.drafts, [aiActiveKey(projectId, wanted)]: '' } }))
         let collected = ''
@@ -628,12 +643,21 @@ export const useAiStore = create<AiState>()(
         // Refresh from the server: source of truth (user + assistant persisted).
         try {
           const messages = await get().api.listMessages(conversationId)
-          set((state) => ({
-            messagesById: { ...state.messagesById, [conversationId]: messages },
-            conversations: state.conversations.map((c) =>
-              c.id === conversationId ? { ...c, modified: new Date().toISOString() } : c,
-            ),
-          }))
+          set((state) => {
+            const pending = (state.messagesById[conversationId] ?? []).filter(
+              (message) =>
+                message.optimistic &&
+                !messages.some(
+                  (saved) => saved.role === 'user' && saved.content === message.content,
+                ),
+            )
+            return {
+              messagesById: { ...state.messagesById, [conversationId]: [...messages, ...pending] },
+              conversations: state.conversations.map((c) =>
+                c.id === conversationId ? { ...c, modified: new Date().toISOString() } : c,
+              ),
+            }
+          })
         } catch {
           // Keep the streamed content visible even if the refresh fails.
           if (collected) {

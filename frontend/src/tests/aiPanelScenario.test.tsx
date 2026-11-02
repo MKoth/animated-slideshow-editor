@@ -66,6 +66,36 @@ beforeEach(() => {
 })
 
 describe('AiPanel scenario version links (issue #462)', () => {
+  it('shows the submitted user message immediately while the assistant is processing', async () => {
+    const user = userEvent.setup()
+    const convId = 'c-pending'
+    vi.mocked(fetch).mockImplementation(async (url: unknown) => {
+      const path = String(url)
+      if (path.includes('/api/ai/conversations?')) {
+        const projectId = new URL(String(url), 'http://localhost').searchParams.get('projectId')
+        return new Response(
+          JSON.stringify([{ id: convId, projectId, title: 'Scenario chat', mode: 'scenario' }]),
+          { status: 200 },
+        )
+      }
+      if (path.includes(`/api/ai/conversations/${convId}/messages`)) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      if (path.endsWith('/api/ai/chat')) return await new Promise<Response>(() => undefined)
+      return new Response(JSON.stringify([]), { status: 200 })
+    })
+    renderPanel()
+    await screen.findByTestId(`ai-conversation-${convId}`)
+    await user.type(screen.getByTestId('ai-input'), 'Make the intro clearer')
+    await user.click(screen.getByTestId('ai-send'))
+
+    expect(await screen.findByTestId(/ai-message-local-user-/)).toHaveTextContent(
+      'Make the intro clearer',
+    )
+    expect(screen.getByTestId('ai-streaming')).toBeInTheDocument()
+    expect(screen.getByText('Sent · processing…')).toBeInTheDocument()
+  })
+
   it('renders stored inline summaries with version links and mixed split, never deriving from raw content', async () => {
     const projectId = renderPanel()
     const convId = 'c-scen-1'
