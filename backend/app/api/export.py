@@ -370,11 +370,11 @@ def _validate_descriptor(job: ExportJobRequest) -> None:
                             status_code=422,
                             detail=f"clip {clip.id} with playbackRate !=1 must have rubberbandTempo",
                         )
-                    expected_tempo = 1 / clip.playbackRate
+                    expected_tempo = clip.playbackRate
                     if abs(clip.rubberbandTempo - expected_tempo) > 1e-4:
                         raise HTTPException(
                             status_code=422,
-                            detail=f"clip {clip.id} tempo {clip.rubberbandTempo} != 1/playbackRate {expected_tempo}",
+                            detail=f"clip {clip.id} tempo {clip.rubberbandTempo} != playbackRate {expected_tempo}",
                         )
                 if has_pitch:
                     if clip.rubberbandPitch is None:
@@ -622,7 +622,9 @@ def _clip_audio_filter(
     has_tempo = abs(rate - 1) > 1e-9
     has_pitch = abs(pitch) > 1e-9
     if has_tempo or has_pitch:
-        tempo = 1 / rate if rate else 1.0
+        # FFmpeg tempo is a speed multiplier, unlike the preview stretcher's
+        # output/input time ratio. playbackRate > 1 must shorten the clip.
+        tempo = rate if rate else 1.0
         if has_pitch and use_rubberband:
             import math
 
@@ -647,12 +649,12 @@ def _clip_audio_filter(
     parts.append(f"volume={volume}")
     fade_in = clip.get("fadeIn")
     fade_out = clip.get("fadeOut")
-    if isinstance(fade_in, (int, float)) and fade_in > 0:
+    if isinstance(fade_in, (int, float)) and fade_in / (rate or 1.0) > 1e-6:
         # Stored fades are source seconds (preview divides by playbackRate);
         # the chain below already applied tempo, so convert to playback seconds.
         fade_in_pb = fade_in / rate if rate else fade_in
         parts.append(f"afade=t=in:st=0:d={fade_in_pb}")
-    if isinstance(fade_out, (int, float)) and fade_out > 0:
+    if isinstance(fade_out, (int, float)) and fade_out / (rate or 1.0) > 1e-6:
         fade_out_pb = fade_out / rate if rate else fade_out
         src_dur = max(0.0, source_end - source_start)
         playback_dur = src_dur / rate if rate else src_dur

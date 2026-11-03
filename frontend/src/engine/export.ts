@@ -5,7 +5,7 @@
 // Job descriptors are deterministic and asserted in unit tests (no live FFmpeg).
 
 import type { AudioClip } from './audioClip'
-import { AUDIO_TRACK_IDS, getPitchScaleForSemitones } from './audioClip'
+import { AUDIO_TRACK_IDS, getPitchScaleForSemitones, getVoiceClipHandoff } from './audioClip'
 import type { Slide } from './slide'
 import type { Project } from './project'
 import type { SceneEffect } from './sceneEffect'
@@ -75,12 +75,12 @@ export function getExportFrameTimestamps(duration: number, fps: number): number[
   return out
 }
 
-// RubberBand tempo for non-destructive playbackRate
-// Spec 15.11 says tempo=1/playbackRate (timeRatio) — pitch preserved, original WAV untouched
+// FFmpeg tempo is a speed multiplier; the preview stretcher's time ratio is
+// its inverse. Keep the exported duration aligned with the preview.
 export function getRubberbandTempoForPlaybackRate(playbackRate: number): number {
   if (!Number.isFinite(playbackRate) || playbackRate <= 0)
     throw new Error('playbackRate must be positive finite')
-  return 1 / playbackRate
+  return playbackRate
 }
 
 export function getRubberbandPitchForSemitones(pitchSemitones: number): number {
@@ -274,6 +274,17 @@ export function buildPerSlideExportDescriptor(
   const sortedClips = [...slide.audio.clips].sort((a, b) => a.id.localeCompare(b.id))
 
   const perClipDescriptors: ExportPerClipDescriptor[] = sortedClips.map((clip) => {
+    const handoff = getVoiceClipHandoff(clip, slide.audio.clips)
+    const effectiveClip = handoff
+      ? {
+          ...clip,
+          sourceEnd: Math.min(
+            clip.sourceEnd,
+            clip.sourceStart + (handoff.endTime - clip.timelineStart) * (clip.playbackRate || 1),
+          ),
+          fadeOut: Math.max(clip.fadeOut ?? 0, handoff.fadeOutSeconds * (clip.playbackRate || 1)),
+        }
+      : clip
     const rate = clip.playbackRate ?? 1
     const pitch = clip.pitchSemitones ?? 0
     const nr = clip.noiseReduction ?? 0
@@ -287,21 +298,21 @@ export function buildPerSlideExportDescriptor(
     const cacheKey = isStretched
       ? getDerivedAssetCacheKey(clip.assetId, rate, pitch, nr)
       : undefined
-    const filterFragment = buildPerClipFilter(clip, duration)
+    const filterFragment = buildPerClipFilter(effectiveClip, duration)
     return {
       id: clip.id,
       assetId: clip.assetId,
       trackId: clip.trackId,
       timelineStart: clip.timelineStart,
       sourceStart: clip.sourceStart,
-      sourceEnd: clip.sourceEnd,
+      sourceEnd: effectiveClip.sourceEnd,
       volume: clip.volume * (TRACK_GAINS[clip.trackId] ?? 1),
       muted: clip.muted,
       playbackRate: rate,
       pitchSemitones: pitch,
       noiseReduction: nr,
       ...(clip.fadeIn !== undefined ? { fadeIn: clip.fadeIn } : {}),
-      ...(clip.fadeOut !== undefined ? { fadeOut: clip.fadeOut } : {}),
+      ...(effectiveClip.fadeOut !== undefined ? { fadeOut: effectiveClip.fadeOut } : {}),
       isStretched,
       ...(tempo !== undefined ? { rubberbandTempo: tempo } : {}),
       ...(pitchScale !== undefined ? { rubberbandPitch: pitchScale } : {}),

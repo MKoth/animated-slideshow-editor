@@ -134,6 +134,11 @@ export function ExportVideoDialog({
 
   const canExport = orderedSelected.length > 0 && phase !== 'working'
 
+  const previewCameraPath = () => {
+    useUiStore.getState().setCameraAnimationMode(true)
+    onClose()
+  }
+
   const toggleSlide = (slideId: string) => {
     setSelected((prev) => {
       const next = new Set(prev)
@@ -326,9 +331,32 @@ export function ExportVideoDialog({
         }}
       >
         <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Export video</h3>
+        <button
+          data-testid="export-preview-camera"
+          onClick={previewCameraPath}
+          style={{ display: 'block', marginBottom: 10, padding: '7px 12px' }}
+        >
+          View rendered camera path before export
+        </button>
         <p style={{ margin: '0 0 12px', fontSize: 11, color: '#999' }}>
           Fixed 30 fps · 1920×1080 letterbox · MP4 + SRT/VTT in one ZIP
         </p>
+
+        <div
+          data-testid="export-camera-preview-note"
+          style={{
+            marginBottom: 12,
+            padding: 10,
+            border: '1px solid #806b35',
+            borderRadius: 4,
+            background: '#332d20',
+            fontSize: 12,
+          }}
+        >
+          Export follows the animated camera for the entire video. Your free-navigation scene view
+          may show a different area. Preview and scrub the camera path before exporting to check
+          that every element stays in frame.
+        </div>
 
         {blocked && (
           <p data-testid="export-blocked-message" style={{ fontSize: 12, color: '#ffb74d' }}>

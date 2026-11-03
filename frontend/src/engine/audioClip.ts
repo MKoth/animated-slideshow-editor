@@ -153,8 +153,10 @@ export function audioClipFromJSON(json: AudioClipJSON): AudioClip {
     fadeIn: json.fadeIn,
     fadeOut: json.fadeOut,
     playbackRate: json.playbackRate ?? 1,
-    pitchSemitones: (json as { pitchSemitones?: unknown }).pitchSemitones as number | undefined ?? 0,
-    noiseReduction: (json as { noiseReduction?: unknown }).noiseReduction as number | undefined ?? 0,
+    pitchSemitones:
+      ((json as { pitchSemitones?: unknown }).pitchSemitones as number | undefined) ?? 0,
+    noiseReduction:
+      ((json as { noiseReduction?: unknown }).noiseReduction as number | undefined) ?? 0,
   })
 }
 
@@ -232,6 +234,35 @@ export function getAudioClipPlaybackDuration(clip: AudioClip): number {
 
 export function getAudioClipEnd(clip: AudioClip): number {
   return clip.timelineStart + getAudioClipPlaybackDuration(clip)
+}
+
+export const VOICE_HANDOFF_FADE_SECONDS = 0.15
+
+/**
+ * Match subtitle takeover behavior for overlapping Voice clips: when a later
+ * voice clip extends beyond this clip, start fading at its start and finish
+ * the handoff shortly after the overlap begins.
+ */
+export function getVoiceClipHandoff(
+  clip: AudioClip,
+  clips: readonly AudioClip[],
+): { readonly endTime: number; readonly fadeOutSeconds: number } | null {
+  if (clip.trackId !== 'voice') return null
+  const clipEnd = getAudioClipEnd(clip)
+  const takeover = clips
+    .filter(
+      (next) =>
+        next.trackId === 'voice' &&
+        next.id !== clip.id &&
+        next.timelineStart > clip.timelineStart &&
+        next.timelineStart < clipEnd &&
+        getAudioClipEnd(next) > clipEnd,
+    )
+    .sort((a, b) => a.timelineStart - b.timelineStart)[0]
+  if (!takeover) return null
+  const fadeOutSeconds = Math.min(VOICE_HANDOFF_FADE_SECONDS, clipEnd - takeover.timelineStart)
+  if (fadeOutSeconds <= 1e-6) return null
+  return { endTime: takeover.timelineStart + fadeOutSeconds, fadeOutSeconds }
 }
 
 export function clampAudioFade(

@@ -14,7 +14,7 @@ import {
 } from '../engine/audioSync'
 import { AudioBufferCache } from '../engine/audioBufferCache'
 import type { EnginePublic } from '../engine'
-import { getAudioClipSourceDuration } from '../engine/audioClip'
+import { getAudioClipSourceDuration, getVoiceClipHandoff } from '../engine/audioClip'
 import { TRACK_GAINS } from './audioMix'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 import {
@@ -55,7 +55,11 @@ export interface AudioBufferSourceNodeLike {
 }
 
 export interface GainNodeLike {
-  gain: { value: number }
+  gain: {
+    value: number
+    setValueAtTime?(value: number, time: number): unknown
+    linearRampToValueAtTime?(value: number, time: number): unknown
+  }
   connect(node: unknown): void
   disconnect?(): void
 }
@@ -721,6 +725,7 @@ export class SyncedAudioController {
         if (stretched) {
           this.scheduleStretchedClip(
             clip,
+            clips,
             playhead,
             audioTime,
             ctx,
@@ -748,7 +753,7 @@ export class SyncedAudioController {
         })
         continue
       }
-      this.scheduleClip(clip, playhead, audioTime, ctx, slideDuration)
+      this.scheduleClip(clip, clips, playhead, audioTime, ctx, slideDuration)
     }
 
     // Cleanup nodes that are no longer audible and have finished
@@ -773,12 +778,17 @@ export class SyncedAudioController {
 
   private scheduleClip(
     clip: import('../engine/audioClip').AudioClip,
+    clips: readonly import('../engine/audioClip').AudioClip[],
     playhead: number,
     audioTime: number,
     ctx: AudioContextLike,
     slideDuration: number,
   ): void {
-    const clippedDuration = getClippedPlaybackDuration(clip, slideDuration)
+    const handoff = getVoiceClipHandoff(clip, clips)
+    const clippedDuration = Math.min(
+      getClippedPlaybackDuration(clip, slideDuration),
+      handoff ? Math.max(0, handoff.endTime - clip.timelineStart) : Infinity,
+    )
     if (clippedDuration <= 1e-9) return
     const clipStart = clip.timelineStart
     const clipEnd = clipStart + clippedDuration
@@ -828,6 +838,17 @@ export class SyncedAudioController {
       // Our `duration` variable above is wall/playback time (clippedPlaybackDuration etc.),
       // so convert to source duration for the AudioBufferSourceNode.
       const sourceDurationParam = duration * playbackRate
+      if (handoff) {
+        const fadeDuration = Math.min(handoff.fadeOutSeconds, duration)
+        const fadeRemaining = Math.min(duration, Math.max(0, handoff.endTime - playhead))
+        const fadeStartRemaining = Math.max(0, fadeRemaining - fadeDuration)
+        const initialFade = fadeRemaining < fadeDuration ? fadeRemaining / fadeDuration : 1
+        gainNode.gain.setValueAtTime?.(gainValue * initialFade, when)
+        gainNode.gain.linearRampToValueAtTime?.(
+          0,
+          when + fadeStartRemaining + fadeDuration * initialFade,
+        )
+      }
       source.start(when, offset, sourceDurationParam)
       const node: ScheduledNode = {
         clipId: clip.id,
@@ -853,13 +874,18 @@ export class SyncedAudioController {
   // We schedule the *stretched* AudioBuffer at playbackRate 1.
   private scheduleStretchedClip(
     clip: import('../engine/audioClip').AudioClip,
+    clips: readonly import('../engine/audioClip').AudioClip[],
     playhead: number,
     audioTime: number,
     ctx: AudioContextLike,
     slideDuration: number,
     stretchedBuffer: AudioBuffer,
   ): void {
-    const clippedDuration = getClippedPlaybackDuration(clip, slideDuration)
+    const handoff = getVoiceClipHandoff(clip, clips)
+    const clippedDuration = Math.min(
+      getClippedPlaybackDuration(clip, slideDuration),
+      handoff ? Math.max(0, handoff.endTime - clip.timelineStart) : Infinity,
+    )
     if (clippedDuration <= 1e-9) return
     const clipStart = clip.timelineStart
     const clipEnd = clipStart + clippedDuration
@@ -896,6 +922,17 @@ export class SyncedAudioController {
       source.buffer = stretchedBuffer as unknown as AudioBuffer
       source.connect(gainNode)
       gainNode.connect(ctx.destination)
+      if (handoff) {
+        const fadeDuration = Math.min(handoff.fadeOutSeconds, duration)
+        const fadeRemaining = Math.min(duration, Math.max(0, handoff.endTime - playhead))
+        const fadeStartRemaining = Math.max(0, fadeRemaining - fadeDuration)
+        const initialFade = fadeRemaining < fadeDuration ? fadeRemaining / fadeDuration : 1
+        gainNode.gain.setValueAtTime?.(gainValue * initialFade, when)
+        gainNode.gain.linearRampToValueAtTime?.(
+          0,
+          when + fadeStartRemaining + fadeDuration * initialFade,
+        )
+      }
       // For stretched buffer, source duration == wall duration (rate 1)
       source.start(when, offset, duration)
       const node: ScheduledNode = {

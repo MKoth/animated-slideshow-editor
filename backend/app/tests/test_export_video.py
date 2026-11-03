@@ -325,6 +325,35 @@ def _tone_magnitude(path: Any, freq: float, center: float, width: float = 0.4) -
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not available")
+def test_fast_voice_playback_rate_does_not_prolong_exported_audio(tmp_path: Any) -> None:
+    """A 0.96s voice clip at 2.651x must finish in ~0.362s, like preview."""
+    rate = 2.651186997908066
+    _write_tone(tmp_path / "and.wav", 440.0, 0.96)
+    slide = {
+        "slideId": "step-four-and",
+        "duration": 1.5,
+        "audio": {
+            "clips": [
+                {
+                    "assetId": "and",
+                    "muted": False,
+                    "sourceStart": 0.0,
+                    "sourceEnd": 0.96,
+                    "timelineStart": 0.0,
+                    "volume": 1.0,
+                    "playbackRate": rate,
+                }
+            ]
+        },
+    }
+    out = export_module._build_slide_audio(
+        slide, {"and": str(tmp_path / "and.wav")}, tmp_path, use_rubberband=False
+    )
+    assert _tone_magnitude(out, 440.0, 0.2) > 1e-3
+    assert _tone_magnitude(out, 440.0, 0.8) < 1e-3
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not available")
 def test_delayed_tempo_clip_keeps_its_timeline_offset(tmp_path: Any) -> None:
     """Regression: delayed tempo-processed clips must not stack at t=0.
 
@@ -440,6 +469,21 @@ def test_fade_out_starts_at_clip_end() -> None:
     # while the editor preview faded only at the end.
     assert "afade=t=out:st=1.5:d=0.5" in chain
     assert "afade=t=out:st=0:" not in chain
+
+
+def test_ignores_sub_microsecond_fades_ffmpeg_cannot_represent() -> None:
+    clip = {
+        "assetId": "a",
+        "muted": False,
+        "sourceStart": 0.0,
+        "sourceEnd": 1.0,
+        "timelineStart": 0.0,
+        "volume": 1.0,
+        "playbackRate": 1.0,
+        "fadeOut": 8.881784197001252e-16,
+    }
+    chain, _ = export_module._clip_audio_filter(clip, 2.0, False)
+    assert "afade=" not in chain
 
 
 def test_dual_pass_loudnorm_is_linear(monkeypatch: pytest.MonkeyPatch) -> None:

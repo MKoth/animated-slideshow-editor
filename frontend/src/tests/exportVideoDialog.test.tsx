@@ -7,6 +7,7 @@ import type { Engine } from '../engine/internal'
 import { ApiClient, ApiError } from '../api/apiClient'
 import { ExportApi } from '../api/exportApi'
 import { AddKeyframeCommand, CommandDispatcher, UndoStack } from '../engine/commands'
+import { useUiStore } from '../stores/uiStore'
 
 function animateCamera(internal: Engine, slideId: string): void {
   const slide = internal.getSlide(slideId)
@@ -118,6 +119,7 @@ function makeApi(overrides: Partial<ExportApi> = [] as unknown as Partial<Export
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  useUiStore.getState().setCameraAnimationMode(false)
   // jsdom URL.createObjectURL is undefined — stub for download.
   ;(URL as unknown as { createObjectURL: unknown }).createObjectURL = vi
     .fn()
@@ -126,6 +128,25 @@ beforeEach(() => {
 })
 
 describe('ExportVideoDialog', () => {
+  it('offers a camera-path preview before export and returns to the editor in camera mode', async () => {
+    const { readonly } = makeEngineWithSlides()
+    const api = makeApi()
+    const onClose = vi.fn()
+    render(<ExportVideoDialog engine={readonly} exportApi={api} onClose={onClose} />)
+
+    expect(screen.getByTestId('export-camera-preview-note')).toHaveTextContent(
+      'Export follows the animated camera for the entire video',
+    )
+    expect(
+      screen.getByRole('button', { name: 'View rendered camera path before export' }),
+    ).toBeVisible()
+    expect(api.createJob).not.toHaveBeenCalled()
+    await userEvent.setup().click(screen.getByTestId('export-preview-camera'))
+
+    expect(useUiStore.getState().cameraAnimationMode).toBe(true)
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
   it('checkboxes default to all, totals show cue counts + duration + frames', async () => {
     const { readonly } = makeEngineWithSlides()
     const api = makeApi()

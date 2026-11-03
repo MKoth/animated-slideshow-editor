@@ -7,6 +7,7 @@ import {
   SetSlideSceneEffectsCommand,
 } from '../../engine/commands'
 import { CommandDispatcher, UndoStack } from '../../engine/commands'
+import { createAudioClip } from '../../engine/audioClip'
 import {
   EXPORT_AMIX_FILTER,
   EXPORT_LOUDNORM_FILTER,
@@ -59,6 +60,67 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     undo = new UndoStack()
     dispatcher = new CommandDispatcher(engine, undo, () => {})
     engine.createProject({ name: 'Export Test' })
+  })
+
+  it('fades an overlapping Voice clip out when the next Voice clip takes over', () => {
+    const slide = engine.createSlide('Voice handoff')
+    engine.setSlideDuration(slide.id, 12)
+    const previous = createAudioClip({
+      id: 'voice-previous',
+      assetId: 'voice-a',
+      trackId: 'voice',
+      timelineStart: 0,
+      sourceEnd: 8,
+    })
+    const next = createAudioClip({
+      id: 'voice-next',
+      assetId: 'voice-b',
+      trackId: 'voice',
+      timelineStart: 4,
+      sourceEnd: 8,
+    })
+    const sfx = createAudioClip({
+      id: 'sfx-overlap',
+      assetId: 'sfx',
+      trackId: 'sfx',
+      timelineStart: 0,
+      sourceEnd: 8,
+    })
+    slide.audio.clips.push(previous, next, sfx)
+
+    const descriptor = engine.buildPerSlideExportDescriptor(slide.id, { fps: 30 })
+    const previousOutput = descriptor.audio.clips.find((clip) => clip.id === previous.id)!
+    const nextOutput = descriptor.audio.clips.find((clip) => clip.id === next.id)!
+    const sfxOutput = descriptor.audio.clips.find((clip) => clip.id === sfx.id)!
+    expect(previousOutput.sourceEnd).toBe(4.15)
+    expect(previousOutput.fadeOut).toBe(0.15)
+    expect(nextOutput.sourceEnd).toBe(8)
+    expect(sfxOutput.sourceEnd).toBe(8)
+  })
+
+  it('ignores floating-point-only Voice overlaps instead of exporting a zero-length fade', () => {
+    const slide = engine.createSlide('Voice precision')
+    engine.setSlideDuration(slide.id, 2)
+    const previous = createAudioClip({
+      id: 'voice-precision-previous',
+      assetId: 'voice-a',
+      trackId: 'voice',
+      timelineStart: 0,
+      sourceEnd: 1,
+    })
+    const next = createAudioClip({
+      id: 'voice-precision-next',
+      assetId: 'voice-b',
+      trackId: 'voice',
+      timelineStart: 1 - Number.EPSILON,
+      sourceEnd: 0.5,
+    })
+    slide.audio.clips.push(previous, next)
+
+    const descriptor = engine.buildPerSlideExportDescriptor(slide.id, { fps: 30 })
+    const previousOutput = descriptor.audio.clips.find((clip) => clip.id === previous.id)!
+    expect(previousOutput.fadeOut).toBeUndefined()
+    expect(previousOutput.sourceEnd).toBe(1)
   })
 
   it('Per-Slide: render frames at exact timestamps via shared evaluator (N=round(duration×fps)) → FFmpeg video input', () => {
@@ -180,10 +242,10 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
       expect(clip.filterFragment).toContain(`atrim=end=${slide.duration}`)
       expect(clip.trimEnd).toBe(slide.duration)
     }
-    // rubberband tempo = 1/playbackRate when !=1
+    // FFmpeg rubberband tempo is the playback speed multiplier.
     const stretched = desc.audio.clips.find((c) => c.playbackRate !== 1)!
     expect(stretched).toBeDefined()
-    expect(stretched.rubberbandTempo).toBeCloseTo(1 / stretched.playbackRate, 6)
+    expect(stretched.rubberbandTempo).toBeCloseTo(stretched.playbackRate, 6)
     expect(stretched.derivedAssetKey).toBe(
       engine.getDerivedAssetCacheKey(stretched.assetId, stretched.playbackRate),
     )
@@ -383,9 +445,9 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     expect(keys).toHaveLength(2) // 1.5 and 0.75
     expect(keys).toContain(engine.getDerivedAssetCacheKey(assetId, 1.5))
     expect(keys).toContain(engine.getDerivedAssetCacheKey(assetId, 0.75))
-    // tempo = 1/playbackRate
+    // tempo is the playback speed multiplier (inverse of output/input ratio).
     for (const entry of job.derivedAssetCache) {
-      expect(entry.tempo).toBeCloseTo(1 / entry.playbackRate, 6)
+      expect(entry.tempo).toBeCloseTo(entry.playbackRate, 6)
     }
     // original WAV untouched
     const origAfter = engine.getEmbeddedAsset(assetId)!
@@ -396,8 +458,8 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
   it('getExportFrameCount and getRubberbandTempo helpers', () => {
     expect(engine.getExportFrameCount(2.5, 30)).toBe(Math.round(2.5 * 30))
     expect(engine.getExportFrameCount(0, 60)).toBe(0)
-    expect(engine.getRubberbandTempoForPlaybackRate(2)).toBeCloseTo(0.5)
-    expect(engine.getRubberbandTempoForPlaybackRate(0.5)).toBeCloseTo(2.0)
+    expect(engine.getRubberbandTempoForPlaybackRate(2)).toBeCloseTo(2)
+    expect(engine.getRubberbandTempoForPlaybackRate(0.5)).toBeCloseTo(0.5)
     expect(engine.getDerivedAssetCacheKey('asset-123', 1.5)).toBe('asset-123:1.5')
     // helper timestamps deterministic
     const ts = engine.getExportFrameTimestamps(1.0, 10)

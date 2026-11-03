@@ -216,9 +216,9 @@ describe('Issue #246 — Audio clip resize: Trim vs Time-stretch', () => {
       expect(getAudioClipPlaybackDuration(after)).toBeCloseTo(6, 6)
       const asset = engine.getEmbeddedAsset('a1')!
       expect(asset.data).toBe('data:audio/wav;base64,AAA=')
-      // export derives stretched asset via tempo 1/rate
+      // export derives stretched asset via the playback speed multiplier
       const tempo = getRubberbandTempoForPlaybackRate(after.playbackRate)
-      expect(tempo).toBeCloseTo(1 / after.playbackRate, 6)
+      expect(tempo).toBeCloseTo(after.playbackRate, 6)
       const key = getDerivedAssetCacheKey(after.assetId, after.playbackRate)
       expect(key).toBe('a1:0.666667')
     })
@@ -348,7 +348,7 @@ describe('Issue #246 — Audio clip resize: Trim vs Time-stretch', () => {
       const notStretched = desc.audio.clips.find((c) => c.assetId === 'a2')!
       expect(stretched.isStretched).toBe(true)
       expect(stretched.derivedAssetKey).toBe('a1:2')
-      expect(stretched.rubberbandTempo).toBeCloseTo(0.5, 6)
+      expect(stretched.rubberbandTempo).toBeCloseTo(2, 6)
       expect(stretched.filterFragment).toContain('rubberband')
       expect(notStretched.isStretched).toBe(false)
       expect(notStretched.derivedAssetKey).toBeUndefined()

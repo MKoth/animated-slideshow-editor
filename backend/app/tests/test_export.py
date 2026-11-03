@@ -50,7 +50,7 @@ def _make_descriptor(fps: float = 30, durations: list[float] | None = None) -> d
         if idx == 0:
             asset_id = "asset-voice-1"
             playback_rate = 1.5
-            tempo = 1 / playback_rate
+            tempo = playback_rate
             cache_key = f"{asset_id}:{playback_rate}"
             clips.append(
                 {

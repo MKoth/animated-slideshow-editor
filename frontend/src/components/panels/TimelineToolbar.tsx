@@ -205,8 +205,8 @@ export function TimelineToolbar({
             aria-pressed={cameraAnimationMode}
             title={
               cameraAnimationMode
-                ? 'Camera animation mode: pan, zoom and reset create camera keyframes'
-                : 'Camera base mode: pan, zoom and reset change stored camera values'
+                ? 'Preview the animated camera framing; pan, zoom and reset create camera keyframes'
+                : 'Free navigation: pan and zoom the editor view without changing the rendered camera'
             }
             onClick={() => useUiStore.getState().toggleCameraAnimationMode()}
           >
