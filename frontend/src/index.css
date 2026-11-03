@@ -5563,6 +5563,10 @@ button:disabled {
   right: 36px;
 }
 
+.scenario-delete-hover-btn {
+  right: 64px;
+}
+
 .scenario-block-editing {
   visibility: hidden;
 }

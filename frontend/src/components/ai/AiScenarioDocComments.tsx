@@ -151,6 +151,10 @@ function CommentIcon({ size = 16 }: { size?: number }): JSX.Element {
   )
 }
 
+function deleteIconSvg(size: number): string {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 4.5h11M6 4.5V3h4v1.5m2.5 0-.6 9h-7.8l-.6-9M6.5 7v4m3-4v4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+}
+
 interface AiScenarioDocCommentsProps {
   projectId: string
   conversationId: string | null
@@ -160,6 +164,7 @@ interface AiScenarioDocCommentsProps {
   onCommentsChange: (next: ScenarioDocComment[]) => void
   preserveCommentsOnMarkdownChange?: boolean
   onEditBlock?: (blockIndex: number, text: string) => Promise<void> | void
+  onDeleteBlock?: (blockIndex: number) => Promise<void> | void
 }
 
 let commentSeq = 0
@@ -197,6 +202,7 @@ export function AiScenarioDocComments({
   onCommentsChange,
   preserveCommentsOnMarkdownChange = false,
   onEditBlock,
+  onDeleteBlock,
 }: AiScenarioDocCommentsProps): JSX.Element {
   const docRef = useRef<HTMLDivElement | null>(null)
   const [float, setFloat] = useState<PendingAnchor | null>(null)
@@ -318,6 +324,14 @@ export function AiScenarioDocComments({
         editBtn.setAttribute('title', `Edit ${label} · ${kind}`)
         editBtn.innerHTML = editIconSvg(16)
         child.appendChild(editBtn)
+        const deleteBtn = document.createElement('button')
+        deleteBtn.type = 'button'
+        deleteBtn.className = 'scenario-comment-hover-btn scenario-delete-hover-btn'
+        deleteBtn.setAttribute('data-delete-block-btn', '1')
+        deleteBtn.setAttribute('aria-label', `Delete ${label} ${kind}`)
+        deleteBtn.setAttribute('title', `Delete ${label} · ${kind}`)
+        deleteBtn.innerHTML = deleteIconSvg(16)
+        child.appendChild(deleteBtn)
       }
       if (child.tagName.toLowerCase() === 'table') {
         const rows = child.querySelectorAll('tr')
@@ -473,6 +487,16 @@ export function AiScenarioDocComments({
 
   const handleDocClick = (event: ReactMouseEvent): void => {
     const target = event.target instanceof Element ? event.target : null
+    const deleteBtn = target?.closest?.('[data-delete-block-btn]') ?? null
+    if (deleteBtn instanceof HTMLElement) {
+      const scope = deleteBtn.closest('[data-comment-block]')
+      const md = docRef.current ? markdownRoot(docRef.current) : null
+      const blockIndex = scope && md ? Array.from(md.children).indexOf(scope) : -1
+      if (blockIndex >= 0 && window.confirm('Delete this scenario block?')) {
+        void onDeleteBlock?.(blockIndex)
+      }
+      return
+    }
     const editBtn = target?.closest?.(EDIT_BTN_SELECTOR) ?? null
     if (editBtn instanceof HTMLElement) {
       const scope = editBtn.closest('[data-comment-block]')
@@ -480,8 +504,11 @@ export function AiScenarioDocComments({
       const blockIndex = scope && md ? Array.from(md.children).indexOf(scope) : -1
       if (blockIndex >= 0 && scope instanceof HTMLElement) {
         const text = scope.textContent ?? ''
-        const rootRect = docRef.current?.getBoundingClientRect()
-        const top = scope.getBoundingClientRect().top - (rootRect?.top ?? 0)
+        const doc = docRef.current
+        const rootRect = doc?.getBoundingClientRect()
+        // The document is its own scroll container. Absolute positioning uses
+        // its content coordinates, not the currently visible viewport offset.
+        const top = scope.getBoundingClientRect().top - (rootRect?.top ?? 0) + (doc?.scrollTop ?? 0)
         setBlockEditError(null)
         setEditingBlock({ index: blockIndex, text, original: text, top })
       }
@@ -631,7 +658,6 @@ export function AiScenarioDocComments({
                     setEditingBlock({ ...editingBlock, text: event.target.value })
                   }
                   rows={Math.max(3, editingBlock.text.split('\n').length)}
-                  autoFocus
                 />
                 {blockEditError && <div role="alert">{blockEditError}</div>}
                 <div className="scenario-block-editor-actions">

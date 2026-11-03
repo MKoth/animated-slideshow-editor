@@ -1658,6 +1658,27 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                       await store.loadMarkdownVersions(projectId, conversationId)
                       store.bumpScenarioDocRev(projectId)
                     }}
+                    onDeleteBlock={async (blockIndex) => {
+                      if (!conversationId) return
+                      const blocks = markdown.split(/\n{2,}/)
+                      if (blockIndex < 0 || blockIndex >= blocks.length) return
+                      blocks.splice(blockIndex, 1)
+                      const content = blocks.join('\n\n')
+                      const touchedSteps = [...content.matchAll(/^##\s+Step\s+(\d+)/gim)]
+                        .map((match) => Number.parseInt(match[1] ?? '', 10))
+                        .filter(Number.isFinite)
+                      await store.api.createMarkdownVersion({
+                        projectId,
+                        conversationId,
+                        content,
+                        summary: 'Manual scenario block deletion',
+                        touchedSteps,
+                        baseVersionId: activeMarkdownVersionId ?? null,
+                      })
+                      setDocComments([])
+                      await store.loadMarkdownVersions(projectId, conversationId)
+                      store.bumpScenarioDocRev(projectId)
+                    }}
                     preserveCommentsOnMarkdownChange={
                       preserveCommentVersionId !== null &&
                       activeMarkdownVersionId === preserveCommentVersionId
