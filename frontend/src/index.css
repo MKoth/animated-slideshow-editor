@@ -1608,6 +1608,29 @@ button:disabled {
   gap: 8px;
 }
 
+.script-ai-modal__loading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.script-ai-modal__spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-text);
+  border-radius: 50%;
+  animation: script-ai-spin 0.8s linear infinite;
+}
+
+@keyframes script-ai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .inspector-section__shader-source {
   margin-top: 10px;
   border-top: 1px solid var(--color-border);

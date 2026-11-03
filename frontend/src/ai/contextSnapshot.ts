@@ -208,6 +208,82 @@ export interface SnapshotSources {
   scenarioAcceptedVersion?: { id: string; summary?: string; touchedSteps?: number[] }
 }
 
+/** Minimal request context for Script AI; unlike other assistants it does not need animation data. */
+export interface ScriptAssistantContext {
+  projectName: string
+  projectId: string | null
+  activeSlideName: string | null
+  activeSlideId: string | null
+  activeSlideDuration: number | null
+  slides: ContextSnapshotSlide[]
+  scriptFocus?: ScriptFocus
+  sceneNodes: string[]
+  selection: string[]
+  materials: string[]
+  shaders: string[]
+  clips: string[]
+  assets: string[]
+}
+
+/**
+ * Script AI only serializes context fields consumed by backend context_to_text.
+ * In particular, it omits the generic animation snapshot and its shape geometry,
+ * rig, keyframe, clip-placement and collection detail.
+ */
+export function buildScriptAssistantContext(
+  engine: EnginePublic,
+  sources: Pick<SnapshotSources, 'selection' | 'assetNames' | 'scriptFocus'> = {},
+): ScriptAssistantContext {
+  const project = engine.project
+  let active: Slide | null = null
+  try {
+    active = engine.getActiveSlide()
+  } catch {
+    active = null
+  }
+  const sceneNodes: string[] = []
+  if (active) {
+    const visit = (nodeId: string): void => {
+      if (sceneNodes.length >= 100) return
+      try {
+        const node = engine.getNode(nodeId)
+        sceneNodes.push(
+          node.components?.camera
+            ? `${node.name} [${node.id}] (camera)`
+            : `${node.name} [${node.id}]`,
+        )
+        for (const child of node.children) visit(child.id)
+      } catch {
+        // Unresolvable nodes are omitted from the compact context.
+      }
+    }
+    try {
+      visit(active.scene.root.id)
+    } catch {
+      // A missing scene leaves the node list empty.
+    }
+  }
+  return {
+    projectName: project?.name ?? '',
+    projectId: project?.id ?? null,
+    activeSlideName: active?.name ?? null,
+    activeSlideId: active?.id ?? null,
+    activeSlideDuration: active?.duration ?? null,
+    slides: (project?.slides ?? []).slice(0, 50).map((slide, order) => ({
+      id: slide.id,
+      name: slide.name,
+      order,
+    })),
+    ...(sources.scriptFocus ? { scriptFocus: sources.scriptFocus } : {}),
+    sceneNodes,
+    selection: [...(sources.selection ?? [])].slice(0, 50),
+    materials: engine.materialDefinitions.map((material) => material.name).slice(0, 100),
+    shaders: engine.shaderDefinitions.map((shader) => shader.name).slice(0, 100),
+    clips: engine.clips.map((clip) => clip.name).slice(0, 100),
+    assets: [...(sources.assetNames ?? [])].slice(0, 100),
+  }
+}
+
 /** Animatable surface mirrored from engine/animationProperties.ts (Stage B motion checks). */
 export const SNAPSHOT_ANIMATABLE_PARAMS: readonly string[] = [
   'positionX',

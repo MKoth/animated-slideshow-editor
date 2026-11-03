@@ -247,11 +247,7 @@ export const useScriptAiStore = create<ScriptAiState>()((set, get) => ({
 
   clearSlideConversations: async (projectId, slideId) => {
     const key = scriptSlideKey(projectId, slideId)
-    try {
-      await get().api.deleteSlideConversations(projectId, slideId, 'script')
-    } catch {
-      // Best-effort: the modal refetches on open and self-heals.
-    }
+    await get().api.deleteSlideConversations(projectId, slideId, 'script')
     set((state) => {
       const conversations = state.conversations.filter(
         (conv) => scriptSlideKey(conv.projectId, conv.slideId ?? '') !== key,
@@ -266,7 +262,14 @@ export const useScriptAiStore = create<ScriptAiState>()((set, get) => ({
       delete activeIdBySlide[key]
       const drafts = { ...state.drafts }
       delete drafts[key]
-      return { conversations, messagesById, activeIdBySlide, drafts }
+      return {
+        conversations,
+        messagesById,
+        activeIdBySlide,
+        drafts,
+        lastError: null,
+        streamingContent: '',
+      }
     })
   },
 }))

@@ -1,6 +1,11 @@
 import { act } from 'react'
 import { describe, expect, it } from 'vitest'
-import { buildScriptFocus, formatScriptErrorPrompt, IMPROVE_SCRIPT_PROMPT } from '../ai/scriptFocus'
+import {
+  buildScriptFocus,
+  formatScriptErrorPrompt,
+  formatScriptRepairPrompt,
+  IMPROVE_SCRIPT_PROMPT,
+} from '../ai/scriptFocus'
 import {
   CommandDispatcher,
   CreatePrompterPartCommand,
@@ -74,6 +79,13 @@ describe('script assistant prompts', () => {
     expect(IMPROVE_SCRIPT_PROMPT).toContain('mark()')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('reveal(nodeOnly(table))')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('do not add mask-setup wipes')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('Prompter blocks can overlap')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('farther-ending block then has priority')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain(
+      'make tables as large as the current board layout safely allows',
+    )
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('increase table font sizes too')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('purposeful variety of distinct, coordinated colors')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('choice buttons')
   })
 
@@ -85,5 +97,17 @@ describe('script assistant prompts', () => {
     expect(prompt).toContain('Fix these script errors')
     expect(prompt).toContain('Line 3, Col 6: needs a duration')
     expect(prompt).toContain('Line 4, Col 1: unknown node')
+  })
+
+  it('repair prompt includes the complete failed script and diagnostics', () => {
+    const prompt = formatScriptRepairPrompt(
+      'script "Intro" from 0\nreveal(ghost)',
+      'unknown node ghost',
+    )
+    expect(prompt).toContain('unknown node ghost')
+    expect(prompt).toContain(
+      '<failed-script>\nscript "Intro" from 0\nreveal(ghost)\n</failed-script>',
+    )
+    expect(prompt).toContain('return the complete corrected script')
   })
 })

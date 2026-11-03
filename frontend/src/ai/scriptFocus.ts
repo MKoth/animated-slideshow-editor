@@ -79,12 +79,24 @@ export const IMPROVE_SCRIPT_PROMPT =
   'Improve this script so the visuals fit the narration better: ' +
   'no visual appears before the narrator mentions it; labels appear when their text is pronounced; ' +
   'tables are drawn on a general mention and each cell fills as its text is spoken; ' +
+  'make tables as large as the current board layout safely allows: estimate available space from ' +
+  'the current setting and surrounding content, then enlarge the table and its text together so it ' +
+  'is easy to read without clipping or obscuring important visuals; increase table font sizes too ' +
+  'when they fit; ' +
   'for a table with separately timed cell reveals, use reveal(nodeOnly(table)) for the border: ' +
   'reveal(table) also reveals all descendant cell text, and per-cell future reveal masks hide text ' +
   'until its turn, so do not add mask-setup wipes; use reveal(table) only for a composite reveal; ' +
+  'use a purposeful variety of distinct, coordinated colors across the board (for example, ' +
+  'different colors for headings, categories, highlights, and table groups) instead of relying on ' +
+  'one color throughout; keep contrast and readability high; ' +
   'use mark() to re-emphasize things already on screen instead of recreating them; ' +
   'for long spoken stretches with no visual, add one short phrase that appears at the stretch start ' +
-  'and leaves at its end. ' +
+  'and leaves at its end. Prompter blocks can overlap: when a later block overlaps and its end is ' +
+  "later than the current block's end, the current block effectively ends at the later block's start; " +
+  'the farther-ending block then has priority, until another overlapping block ends even later. ' +
+  'A later block with an earlier end does not take priority. Respect these effective handoffs when ' +
+  'placing visuals against the spoken text; do not treat overlapping block windows as simultaneous ' +
+  'subtitle ownership. ' +
   'If anything is ambiguous, ask me with choice buttons before rewriting.'
 
 /** One-button resubmission of check/run errors for the assistant to fix. */
@@ -97,5 +109,16 @@ export function formatScriptErrorPrompt(
   return (
     'Fix these script errors, keeping everything else the same:\n' +
     lines.map((line) => `- ${line}`).join('\n')
+  )
+}
+
+/** Send the exact rejected script with its diagnostics so the assistant can repair it. */
+export function formatScriptRepairPrompt(source: string, errors: string): string {
+  return (
+    'Repair the failed animation script below. Use the validation errors to fix it, preserve ' +
+    'its intended behavior, and return the complete corrected script in the required script block. ' +
+    'Do not reply with only an explanation or a list of changes.\n\n' +
+    `Validation errors:\n${errors}\n\n` +
+    `Complete failed script:\n<failed-script>\n${source}\n</failed-script>`
   )
 }

@@ -237,6 +237,19 @@ def test_script_history_window_drops_assistant_only_history() -> None:
     assert script_history_window(history, "fix timing") == []
 
 
+def test_script_history_window_keeps_latest_ask_block_for_answer() -> None:
+    question = ChatMessage(
+        role="assistant",
+        content="Please clarify:\n```ask\nid: timing\nquestion: Which timing?\n```",
+    )
+    history = [
+        ChatMessage(role="user", content="old request"),
+        ChatMessage(role="assistant", content="old full script dump"),
+        question,
+    ]
+    assert script_history_window(history, "Q (timing): Keep current") == [question]
+
+
 def test_script_history_window_skips_duplicate_of_current() -> None:
     # Regenerate mode reuses the last user message as current: don't echo it.
     history = [

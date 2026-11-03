@@ -1138,7 +1138,10 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
         useScenarioScriptWorkflowStore.getState().markBoardDone(projectId, position)
         // The deterministic source replaced whatever the slide assistant was
         // improving — drop its conversation history so the next pass starts clean.
-        void useScriptAiStore.getState().clearSlideConversations(projectId, slide.id)
+        void useScriptAiStore
+          .getState()
+          .clearSlideConversations(projectId, slide.id)
+          .catch(() => undefined)
         const fmt = (value: number) => `${value.toFixed(2)}s`
         const extras = [
           ...(planned.plan.timingRedistributed

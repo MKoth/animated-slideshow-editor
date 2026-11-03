@@ -98,7 +98,16 @@ export function buildExportSubtitleCues(
     index += slideCues.length
     offset += slide.duration
   }
-  return cues
+
+  // Prompter parts may overlap. Keep the current cue visible until a later
+  // overlapping cue has a farther end time; that cue then owns the timeline
+  // until another cue extends even farther.
+  return cues.map((cue, cueIndex) => {
+    const takeover = cues
+      .slice(cueIndex + 1)
+      .find((next) => next.start < cue.end && next.end > cue.end)
+    return takeover ? { ...cue, end: takeover.start } : cue
+  })
 }
 
 /** Per-slide cue counts for the dialog preview (project order, zero-duration excluded). */

@@ -135,8 +135,7 @@ describe('ScriptAiModal draft gate', () => {
         .mocked(fetch)
         .mock.calls.some(
           ([url, init]) =>
-            String(url).includes('/api/ai/proposals') &&
-            (init as RequestInit)?.method === 'POST',
+            String(url).includes('/api/ai/proposals') && (init as RequestInit)?.method === 'POST',
         ),
     ).toBe(false)
 
@@ -153,5 +152,8 @@ describe('ScriptAiModal draft gate', () => {
       .mock.calls.find(([url]) => String(url).includes('/api/ai/chat'))
     const chatBody = JSON.parse(String((chatCall?.[1] as RequestInit)?.body))
     expect(chatBody.message).toContain('failed validation')
+    expect(chatBody.message).toContain('Complete failed script:')
+    expect(chatBody.message).toContain('bind ghost = node("Nope")')
+    expect(chatBody.message).toContain('ghost.tween({ x: 1 }, 1)')
   })
 })

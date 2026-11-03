@@ -78,6 +78,28 @@ describe('Spec 473 — Export subtitles seam', () => {
     expect(cues[1]!.end).toBeCloseTo(9)
   })
 
+  it('truncates overlapping cues when a later block extends farther', () => {
+    const slide = engine.createSlide('Overlap')
+    engine.setSlideDuration(slide.id, 12)
+    engine.createPrompterPart(slide.id, { id: 'a', text: 'A', duration: 4 })
+    engine.createPrompterPart(slide.id, { id: 'b', text: 'B', duration: 4 })
+    engine.createPrompterPart(slide.id, { id: 'c', text: 'C', duration: 4 })
+    const [a, b, c] = slide.prompter!.parts
+    a!.startTime = 0
+    a!.endTime = 8
+    b!.startTime = 3
+    b!.endTime = 10
+    c!.startTime = 6
+    c!.endTime = 12
+
+    const cues = buildExportSubtitleCues(engine.project!, [slide.id])
+    expect(cues.map(({ start, end }) => [start, end])).toEqual([
+      [0, 3],
+      [3, 6],
+      [6, 12],
+    ])
+  })
+
   it('muting/deleting audio never removes cues (subtitles follow text)', () => {
     const s1 = engine.createSlide('S1')
     engine.setSlideDuration(s1.id, 2)

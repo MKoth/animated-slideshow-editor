@@ -178,7 +178,7 @@ export function AiProposalDetail({
   proposal: AiProposal
   fingerprint: string
   onDenyFeedback?: (feedback: string) => void
-  onDryRunFix?: (errorText: string) => void
+  onDryRunFix?: (errorText: string, failedScript: string) => void
   fixDisabled?: boolean
 }) {
   const proposalBusy = useAiStore((s) => s.proposalBusy)
@@ -533,7 +533,18 @@ export function AiProposalDetail({
             type="button"
             data-testid={`ai-proposal-fix-${proposal.id}`}
             disabled={proposalBusy || fixDisabled}
-            onClick={() => onDryRunFix(fixableErrors.join('\n'))}
+            onClick={() => {
+              const failedScript = proposal.commands.find(
+                (command) =>
+                  (command.type === 'AiRunAnimationScript' ||
+                    command.type === 'SetSlideAnimationScript') &&
+                  typeof command.source === 'string',
+              )
+              onDryRunFix(
+                fixableErrors.join('\n'),
+                typeof failedScript?.source === 'string' ? failedScript.source : '',
+              )
+            }}
           >
             Send fix to assistant
           </button>

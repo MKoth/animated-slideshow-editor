@@ -239,15 +239,19 @@ def script_history_window(
     history: list[ChatMessage], current_message: str = ""
 ) -> list[ChatMessage]:
     """Stateless script window: latest script rides the context, so keep only the
-    most recent prior user message distinct from the current one.
+    most recent prior user message distinct from the current one, or the latest
+    assistant clarification when the current message is an answer to an ask block.
 
-    Drops all assistant history (old full-script dumps are stale and redundant —
-    the script focus already carries the latest source) and any duplicate of the
-    current message (regenerate mode reuses the last user message as current).
+    Drops old assistant script dumps (the script focus already carries the latest
+    source) and any duplicate of the current message (regenerate mode reuses the
+    last user message as current). A structured ask is the one relevant assistant
+    message needed to interpret a user's answer, so retain it without older history.
     Pure and read-only; empty history reads as empty.
     """
     current = (current_message or "").strip()
     for message in reversed(history):
+        if message.role == "assistant" and "```ask" in (message.content or ""):
+            return [message]
         if message.role != "user":
             continue
         content = message.content or ""

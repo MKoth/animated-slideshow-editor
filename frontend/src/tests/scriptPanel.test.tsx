@@ -402,6 +402,53 @@ describe('Script tab AI assistant', () => {
     expect(chatBody.assistantMode).toBe('script')
     expect(chatBody.message).toContain('narration')
     expect(chatBody.context.scriptFocus.slideName).toBe('Slide 1')
+    expect(chatBody.context.animation).toBeUndefined()
+    expect(chatBody.context.scriptFocus.source).toBe('')
+    expect(chatBody.context).toHaveProperty('sceneNodes')
+  })
+
+  it('shows request errors after streaming has stopped', async () => {
+    const user = userEvent.setup()
+    const { engine } = renderPanel()
+    setupProject(engine)
+    stubScriptAi()
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+    await user.click(screen.getByTestId('script-ai-open'))
+
+    act(() => {
+      useScriptAiStore.setState({
+        status: 'idle',
+        streamingConversationId: null,
+        lastError: { code: 'provider_error', message: 'Provider error — retry.' },
+      })
+    })
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Provider error — retry.')
+  })
+
+  it('clears the current slide’s Script AI history from the modal', async () => {
+    const user = userEvent.setup()
+    const { engine } = renderPanel()
+    setupProject(engine)
+    stubScriptAi()
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+    await user.click(screen.getByTestId('script-ai-open'))
+
+    await user.click(screen.getByTestId('script-ai-clear-history'))
+
+    await waitFor(() => {
+      const deleteCall = vi
+        .mocked(fetch)
+        .mock.calls.find(
+          ([url, init]) =>
+            String(url).includes('/api/ai/conversations?') &&
+            (init as RequestInit)?.method === 'DELETE',
+        )
+      expect(deleteCall).toBeDefined()
+    })
+    expect(screen.getByTestId('script-ai-messages')).toHaveTextContent(
+      'starts with your first message',
+    )
   })
 })
 

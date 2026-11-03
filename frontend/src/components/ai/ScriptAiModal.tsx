@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { buildContextSnapshot } from '../../ai/contextSnapshot'
+import { buildScriptAssistantContext } from '../../ai/contextSnapshot'
 import { AiMarkdown } from '../../ai/markdown'
 import { extractAskBlocks, stripAskBlocks } from '../../ai/askBlock'
 import { extractScriptBlock } from '../../ai/scriptBlock'
 import {
   buildScriptFocus,
   formatScriptErrorPrompt,
+  formatScriptRepairPrompt,
   IMPROVE_SCRIPT_PROMPT,
   type ScriptFocusDiagnostic,
 } from '../../ai/scriptFocus'
@@ -62,20 +63,20 @@ export function ScriptAiModal({
   const fingerprint = useFingerprint(engine)
 
   const [draftErrorByMessage, setDraftErrorByMessage] = useState<Record<string, string>>({})
+  const [isPreparingRequest, setIsPreparingRequest] = useState(false)
+  const [isClearingHistory, setIsClearingHistory] = useState(false)
+  const [clearHistoryError, setClearHistoryError] = useState<string | null>(null)
 
   const activeId = activeIdBySlide[slideKey] ?? null
   const messages = activeId ? (messagesById[activeId] ?? []) : []
   const input = drafts[slideKey] ?? ''
   const isStreaming = status === 'streaming' && streamingConversationId === activeId
+  const isRequestBusy = isStreaming || isPreparingRequest || isClearingHistory
   const unavailable = status === 'unavailable'
 
   const selection = useSelectionStore((s) => s.selectedIds)
   const definitions = useAssetLibraryStore((s) => s.definitions)
   const assetNames = useMemo(() => definitions.map((d) => d.name), [definitions])
-  const audioNames = useMemo(
-    () => definitions.filter((d) => d.category === 'audio').map((d) => d.name),
-    [definitions],
-  )
 
   useEffect(() => {
     void store.loadConversations(projectId, slideId)
@@ -85,18 +86,16 @@ export function ScriptAiModal({
 
   const selectionKey = selection.join(',')
   const assetKey = assetNames.join(',')
-  const audioKey = audioNames.join(',')
 
   const context = useMemo(
     () =>
-      buildContextSnapshot(engine, {
+      buildScriptAssistantContext(engine, {
         selection,
         assetNames,
-        audioNames,
         scriptFocus: buildScriptFocus(engine, slideId, draft, diagnostics) ?? undefined,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [engine, projectId, slideId, draft, diagnostics, selectionKey, assetKey, audioKey],
+    [engine, projectId, slideId, draft, diagnostics, selectionKey, assetKey],
   )
 
   const errorDiagnostics = useMemo(
@@ -105,21 +104,26 @@ export function ScriptAiModal({
   )
 
   const send = async (text: string) => {
-    if (!projectId || !text.trim() || isStreaming || unavailable) return
-    const id =
-      activeId ?? (await store.ensureConversation(projectId, slideId, `Script — ${slideName}`))
-    if (!id) return
-    if (!useScriptAiStore.getState().messagesById[id]) {
-      try {
-        const loaded = await store.api.listMessages(id)
-        useScriptAiStore.setState((state) => ({
-          messagesById: { ...state.messagesById, [id]: loaded },
-        }))
-      } catch {
-        // Empty thread renders fine without the fetch.
+    if (!projectId || !text.trim() || isRequestBusy || unavailable) return
+    setIsPreparingRequest(true)
+    try {
+      const id =
+        activeId ?? (await store.ensureConversation(projectId, slideId, `Script — ${slideName}`))
+      if (!id) return
+      if (!useScriptAiStore.getState().messagesById[id]) {
+        try {
+          const loaded = await store.api.listMessages(id)
+          useScriptAiStore.setState((state) => ({
+            messagesById: { ...state.messagesById, [id]: loaded },
+          }))
+        } catch {
+          // Empty thread renders fine without the fetch.
+        }
       }
+      await store.sendMessage(projectId, slideId, id, text, context)
+    } finally {
+      setIsPreparingRequest(false)
     }
-    void store.sendMessage(projectId, slideId, id, text, context)
   }
 
   const handleSend = () => void send(input)
@@ -132,6 +136,19 @@ export function ScriptAiModal({
   const handleAnswerAsk = (text: string) => {
     if (!text.trim()) return
     void send(text)
+  }
+
+  const handleClearHistory = async () => {
+    if (isRequestBusy) return
+    setIsClearingHistory(true)
+    setClearHistoryError(null)
+    try {
+      await store.clearSlideConversations(projectId, slideId)
+    } catch {
+      setClearHistoryError('Could not clear this slide’s assistant history. Please try again.')
+    } finally {
+      setIsClearingHistory(false)
+    }
   }
 
   const handleDraftScript = (messageId: string) => {
@@ -183,6 +200,14 @@ export function ScriptAiModal({
       })
   }
 
+  const handleFixDraft = (messageId: string) => {
+    const message = messages.find((entry) => entry.id === messageId)
+    const source = message ? extractScriptBlock(message.content)?.source : null
+    const errors = draftErrorByMessage[messageId]
+    if (!source || !errors) return
+    void send(formatScriptRepairPrompt(source, errors))
+  }
+
   return (
     <div
       className="script-ai-overlay"
@@ -207,6 +232,15 @@ export function ScriptAiModal({
           </span>
           <button type="button" data-testid="script-ai-close" onClick={onClose}>
             Close
+          </button>
+          <button
+            type="button"
+            data-testid="script-ai-clear-history"
+            onClick={() => void handleClearHistory()}
+            disabled={isRequestBusy}
+            title="Delete this slide’s Script AI conversations and start fresh"
+          >
+            {isClearingHistory ? 'Clearing…' : 'Clear history'}
           </button>
         </div>
 
@@ -264,10 +298,8 @@ export function ScriptAiModal({
                           proposal={proposal}
                           fingerprint={fingerprint}
                           fixDisabled={isStreaming || unavailable}
-                          onDryRunFix={(errorText) =>
-                            void send(
-                              `The drafted script failed validation:\n${errorText}\nReply with the corrected full script.`,
-                            )
+                          onDryRunFix={(errorText, source) =>
+                            void send(formatScriptRepairPrompt(source, errorText))
                           }
                           onDenyFeedback={(feedback) =>
                             void send(
@@ -297,7 +329,7 @@ export function ScriptAiModal({
                           type="button"
                           data-testid={`script-ai-message-fix-draft-${message.id}`}
                           disabled={isStreaming || unavailable}
-                          onClick={() => void send(draftErrorByMessage[message.id] ?? '')}
+                          onClick={() => handleFixDraft(message.id)}
                         >
                           Send fix to assistant
                         </button>
@@ -317,9 +349,14 @@ export function ScriptAiModal({
               <AiMarkdown content={streamingContent} />
             </div>
           )}
-          {lastError && streamingConversationId === activeId && (
+          {lastError && (streamingConversationId === activeId || status !== 'streaming') && (
             <div className="script-ai-modal__error" role="alert">
               {lastError.message}
+            </div>
+          )}
+          {clearHistoryError && (
+            <div className="script-ai-modal__error" role="alert">
+              {clearHistoryError}
             </div>
           )}
         </div>
@@ -345,18 +382,18 @@ export function ScriptAiModal({
               type="button"
               data-testid="script-ai-send"
               onClick={handleSend}
-              disabled={isStreaming || !input.trim()}
+              disabled={isRequestBusy || !input.trim()}
             >
-              Send
+              {isRequestBusy ? 'Sending…' : 'Send'}
             </button>
             <button
               type="button"
               data-testid="script-ai-improve"
               title="Ask the assistant to re-time visuals to the narration"
               onClick={handleImprove}
-              disabled={isStreaming || unavailable}
+              disabled={isRequestBusy || unavailable}
             >
-              Improve timing
+              {isRequestBusy ? 'Improving timing…' : 'Improve timing'}
             </button>
             {errorDiagnostics.length > 0 && (
               <button
@@ -364,7 +401,7 @@ export function ScriptAiModal({
                 data-testid="script-ai-fix-errors"
                 title="Resubmit the check errors and ask for a fix"
                 onClick={handleFixErrors}
-                disabled={isStreaming || unavailable}
+                disabled={isRequestBusy || unavailable}
               >
                 Fix {errorDiagnostics.length} error{errorDiagnostics.length === 1 ? '' : 's'}
               </button>
@@ -379,6 +416,12 @@ export function ScriptAiModal({
               </button>
             )}
           </div>
+          {isRequestBusy && (
+            <div className="script-ai-modal__loading" role="status" aria-live="polite">
+              <span className="script-ai-modal__spinner" aria-hidden="true" />
+              {isStreaming ? 'Assistant is responding…' : 'Preparing request…'}
+            </div>
+          )}
         </div>
       </div>
     </div>
