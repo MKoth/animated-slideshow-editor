@@ -214,10 +214,29 @@ export function AiScenarioDocComments({
     text: string
     original: string
     top: number
+    minHeight: number
+    font: string
+    lineHeight: string
+    color: string
   } | null>(null)
   const [savingBlock, setSavingBlock] = useState(false)
   const [blockEditError, setBlockEditError] = useState<string | null>(null)
   const streaming = useAiStore((s) => s.status) === 'streaming'
+
+  const saveEditingBlock = async (): Promise<void> => {
+    if (!editingBlock || editingBlock.text === editingBlock.original || !editingBlock.text.trim())
+      return
+    setSavingBlock(true)
+    setBlockEditError(null)
+    try {
+      await onEditBlock?.(editingBlock.index, editingBlock.text)
+      setEditingBlock(null)
+    } catch (error) {
+      setBlockEditError(error instanceof Error ? error.message : 'Could not save this block.')
+    } finally {
+      setSavingBlock(false)
+    }
+  }
 
   // AI-generated versions clear their old thread; manual edits re-anchor
   // surviving quotes and retain notes whose text was removed as orphans.
@@ -503,14 +522,27 @@ export function AiScenarioDocComments({
       const md = docRef.current ? markdownRoot(docRef.current) : null
       const blockIndex = scope && md ? Array.from(md.children).indexOf(scope) : -1
       if (blockIndex >= 0 && scope instanceof HTMLElement) {
-        const text = scope.textContent ?? ''
+        // textContent drops the visual line breaks produced by Markdown hard
+        // breaks (<br>) and can turn adjacent narrator lines into one string.
+        // Start the editor from the displayed text, including those breaks.
+        const text = scope.innerText ?? scope.textContent ?? ''
         const doc = docRef.current
         const rootRect = doc?.getBoundingClientRect()
         // The document is its own scroll container. Absolute positioning uses
         // its content coordinates, not the currently visible viewport offset.
         const top = scope.getBoundingClientRect().top - (rootRect?.top ?? 0) + (doc?.scrollTop ?? 0)
         setBlockEditError(null)
-        setEditingBlock({ index: blockIndex, text, original: text, top })
+        const style = window.getComputedStyle(scope)
+        setEditingBlock({
+          index: blockIndex,
+          text,
+          original: text,
+          top,
+          minHeight: scope.getBoundingClientRect().height,
+          font: style.font,
+          lineHeight: style.lineHeight,
+          color: style.color,
+        })
       }
       return
     }
@@ -654,44 +686,48 @@ export function AiScenarioDocComments({
                   data-testid="ai-scenario-block-editor-input"
                   aria-label="Edit scenario block"
                   value={editingBlock.text}
+                  onBlur={(event) => {
+                    if (
+                      !event.relatedTarget ||
+                      !event.currentTarget.parentElement?.contains(event.relatedTarget)
+                    )
+                      void saveEditingBlock()
+                  }}
                   onChange={(event) =>
                     setEditingBlock({ ...editingBlock, text: event.target.value })
                   }
                   rows={Math.max(3, editingBlock.text.split('\n').length)}
+                  spellCheck={false}
+                  style={{
+                    // The measured block height is the text area's usable target;
+                    // don't subtract the wrapper/buttons from it or the edit view
+                    // becomes noticeably shorter than the content it replaces.
+                    minHeight: Math.max(96, editingBlock.minHeight + 12),
+                    font: editingBlock.font,
+                    lineHeight: editingBlock.lineHeight,
+                    color: editingBlock.color,
+                    whiteSpace: 'pre-wrap',
+                    padding: '10px 12px',
+                    background: 'rgba(0, 0, 0, 0.18)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 6,
+                  }}
                 />
                 {blockEditError && <div role="alert">{blockEditError}</div>}
                 <div className="scenario-block-editor-actions">
+                  <span role="status" aria-live="polite">
+                    {savingBlock ? 'Saving…' : 'Changes save when you leave the editor'}
+                  </span>
                   <button
                     type="button"
-                    data-testid="ai-scenario-block-save"
-                    disabled={
-                      savingBlock ||
-                      !editingBlock.text.trim() ||
-                      editingBlock.text === editingBlock.original
-                    }
-                    onClick={async () => {
-                      setSavingBlock(true)
-                      try {
-                        await onEditBlock?.(editingBlock.index, editingBlock.text)
-                        setEditingBlock(null)
-                      } catch (error) {
-                        setBlockEditError(
-                          error instanceof Error ? error.message : 'Could not save this block.',
-                        )
-                      } finally {
-                        setSavingBlock(false)
-                      }
+                    data-testid="ai-scenario-block-done"
+                    disabled={savingBlock}
+                    onClick={() => {
+                      if (editingBlock.text === editingBlock.original) setEditingBlock(null)
+                      else void saveEditingBlock()
                     }}
                   >
-                    {savingBlock ? 'Saving…' : 'Save'}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="ai-scenario-block-cancel"
-                    disabled={savingBlock}
-                    onClick={() => setEditingBlock(null)}
-                  >
-                    Cancel
+                    Save & close
                   </button>
                 </div>
               </div>

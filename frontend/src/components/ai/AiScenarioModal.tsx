@@ -1369,7 +1369,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
               title={
                 !conversationId
                   ? 'Start a scenario conversation before editing so changes are versioned'
-                  : 'Edit any scenario block directly; saving creates a new history version'
+                  : 'Edit the complete scenario Markdown source; save once to create one history version'
               }
               onClick={() => {
                 setMarkdownDraft(markdown)
@@ -1378,7 +1378,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                 setEditingMarkdown(true)
               }}
             >
-              Edit doc
+              Edit full Markdown
             </button>
           ) : (
             <>
@@ -1700,8 +1700,25 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                         setMarkdownDraft(event.target.value)
                         setConfirmingMarkdownWarnings(false)
                       }}
-                      rows={24}
-                      style={{ width: '100%', fontFamily: 'monospace' }}
+                      rows={Math.max(28, markdownDraft.split('\n').length + 2)}
+                      spellCheck={false}
+                      style={{
+                        display: 'block',
+                        boxSizing: 'border-box',
+                        width: '100%',
+                        minHeight: '70vh',
+                        padding: '16px',
+                        resize: 'vertical',
+                        whiteSpace: 'pre',
+                        overflow: 'auto',
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 8,
+                        background: 'rgba(0, 0, 0, 0.18)',
+                        color: 'inherit',
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                        fontSize: 14,
+                        lineHeight: 1.5,
+                      }}
                     />
                     {markdownDraftWarnings.length > 0 && (
                       <div data-testid="ai-scenario-markdown-edit-warnings" role="status">
