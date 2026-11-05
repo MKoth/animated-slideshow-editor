@@ -1210,10 +1210,6 @@ def get_project_exports(project_id: str, request: Request) -> dict[str, Any]:
     }
 
 
-def _ffconcat_quote(path: Path) -> str:
-    return str(path.resolve()).replace("\\", "\\\\").replace("'", "\\'")
-
-
 @router.post("/export/projects/{project_id}/join")
 def join_project_exports(
     project_id: str, body: ProjectJoinRequest, request: Request
@@ -1232,42 +1228,49 @@ def join_project_exports(
         for path in files
     ):
         raise HTTPException(status_code=409, detail="A generated slide video is missing")
-    concat_file = project_dir / "join-input.txt"
     output = project_dir / "joined.mp4"
     temporary = project_dir / "joined.tmp.mp4"
     try:
-        concat_file.write_text(
-            "".join(f"file '{_ffconcat_quote(path)}'\n" for path in files), encoding="utf-8"
-        )
-        _run_ffmpeg(
+        # Decode and concatenate the streams before encoding a single MP4.
+        # Stream-copying independently muxed MP4s preserves per-file video PTS
+        # and AAC packet padding; the concat demuxer can then produce a joined
+        # file whose audio/video seek indexes disagree at slide boundaries.
+        ffmpeg_args = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+        ]
+        for path in files:
+            ffmpeg_args.extend(["-i", str(path)])
+        stream_pairs = "".join(f"[{i}:v:0][{i}:a:0]" for i in range(len(files)))
+        ffmpeg_args.extend(
             [
-                "ffmpeg",
-                "-y",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                str(concat_file),
-                "-c",
-                "copy",
+                "-filter_complex",
+                f"{stream_pairs}concat=n={len(files)}:v=1:a=1[v][a]",
+                "-map",
+                "[v]",
+                "-map",
+                "[a]",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
                 "-movflags",
                 "+faststart",
                 str(temporary),
-            ],
-            timeout=600,
+            ]
         )
+        _run_ffmpeg(ffmpeg_args, timeout=600)
         if not temporary.is_file() or temporary.stat().st_size == 0:
             raise RuntimeError("FFmpeg produced an empty joined video")
         temporary.replace(output)
     except Exception as exc:
         temporary.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=f"Could not join slide videos: {exc}") from exc
-    finally:
-        concat_file.unlink(missing_ok=True)
     manifest["joinedOutdated"] = False
     manifest["joinedReady"] = True
     write_manifest(project_dir, manifest)

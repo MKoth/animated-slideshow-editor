@@ -1,5 +1,7 @@
 import io
+import json
 import shutil
+import subprocess
 import zipfile
 from typing import Any
 
@@ -667,6 +669,129 @@ def test_single_slide_export_is_persisted_and_marks_join_outdated(
     )
     assert subtitles.status_code == 200
     assert (root / "project-id" / "subtitles.srt").read_text(encoding="utf-8") == "1\ncaption\n"
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not available")
+def test_joined_slide_videos_have_continuous_seek_timeline_and_final_audio(
+    client: TestClient, tmp_path: Any
+) -> None:
+    """Joining independently muxed MP4s must preserve final-slide audio and seekability."""
+    from app.export_storage import project_export_dir, write_manifest
+
+    root = tmp_path / "exports"
+    assert client.put("/api/export/settings", json={"exportRoot": str(root)}).status_code == 200
+    project_dir = project_export_dir(root, "join-regression")
+    slide_metadata: dict[str, dict[str, Any]] = {}
+    for index, duration in enumerate((1.13, 1.61)):
+        slide_id = f"slide-{index}"
+        output = project_dir / f"{slide_id}.mp4"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c=blue:s=160x120:r=30:d={duration}",
+                "-f",
+                "lavfi",
+                "-i",
+                f"sine=frequency={440 + index * 220}:sample_rate=48000:duration={duration}",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                str(output),
+            ],
+            check=True,
+        )
+        slide_metadata[slide_id] = {
+            "file": output.name,
+            "name": slide_id,
+            "duration": duration,
+        }
+    write_manifest(project_dir, {"slides": slide_metadata})
+
+    joined = client.post(
+        "/api/export/projects/join-regression/join",
+        json={"slideIds": ["slide-0", "slide-1"]},
+    )
+    assert joined.status_code == 200, joined.text
+    output = project_dir / "joined.mp4"
+    probe = json.loads(
+        subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,start_time,duration",
+                "-of",
+                "json",
+                str(output),
+            ],
+            text=True,
+        )
+    )
+    streams = {stream["codec_type"]: stream for stream in probe["streams"]}
+    assert float(streams["video"]["start_time"]) == pytest.approx(0, abs=0.001)
+    assert float(streams["audio"]["start_time"]) == pytest.approx(0, abs=0.001)
+
+    # Read PCM near the end of slide two: a missing/timestamp-shifted tail is silence.
+    tail_start = 1.13 + 1.61 - 0.3
+    pcm = subprocess.check_output(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-ss",
+            str(tail_start),
+            "-i",
+            str(output),
+            "-t",
+            "0.2",
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "s16le",
+            "-",
+        ]
+    )
+    samples = [int.from_bytes(pcm[i : i + 2], "little", signed=True) for i in range(0, len(pcm), 2)]
+    assert samples
+    assert sum(sample * sample for sample in samples) / len(samples) > 1_000_000
+
+    # Random seeks across both boundaries must decode a frame, not land in a PTS gap.
+    for seek in (0.9, 1.3, 2.5):
+        frame = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-ss",
+                str(seek),
+                "-i",
+                str(output),
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        assert frame.returncode == 0, frame.stderr.decode(errors="replace")
 
 
 def test_concurrency_blocked_and_cancel_frees_slot(client: TestClient) -> None:
