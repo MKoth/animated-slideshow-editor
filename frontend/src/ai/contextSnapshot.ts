@@ -1,7 +1,8 @@
 import type { AnimationProperty, EnginePublic, SceneNode, Slide } from '../engine'
+import { EXPORT_VIDEO_HEIGHT, EXPORT_VIDEO_WIDTH } from '../engine/export'
 import type { ShapeCategory } from '../engine/shapeCategory'
 import { categoryPathOfShape, qualifiedShapeName } from '../engine/shape'
-import { composeChain } from '../engine/worldTransform'
+import { composeChain, worldTransformOf } from '../engine/worldTransform'
 import { buildBlackboardFocus, type BlackboardFocus } from './blackboardFocus'
 import type { ScriptFocus } from './scriptFocus'
 
@@ -223,6 +224,31 @@ export interface ScriptAssistantContext {
   shaders: string[]
   clips: string[]
   assets: string[]
+  /** Active scene measurements, camera frame, and material→shader associations. */
+  scriptScene: ScriptSceneContext
+}
+
+export interface ScriptSceneContext {
+  frame: { width: number; height: number }
+  camera: {
+    id: string
+    name: string
+    x: number
+    y: number
+    scaleX: number
+    scaleY: number
+    visibleWorldRect: { left: number; top: number; right: number; bottom: number } | null
+  } | null
+  nodes: {
+    id: string
+    name: string
+    kind: string
+    world: { x: number; y: number; rotation: number; scaleX: number; scaleY: number } | null
+    measuredSize: { width: number; height: number } | null
+    material: string | null
+    shader: string | null
+  }[]
+  materials: { name: string; shader: string | null }[]
 }
 
 /**
@@ -232,7 +258,9 @@ export interface ScriptAssistantContext {
  */
 export function buildScriptAssistantContext(
   engine: EnginePublic,
-  sources: Pick<SnapshotSources, 'selection' | 'assetNames' | 'scriptFocus'> = {},
+  sources: Pick<SnapshotSources, 'selection' | 'assetNames' | 'scriptFocus'> & {
+    measureNode?: (nodeId: string) => { width: number; height: number } | null
+  } = {},
 ): ScriptAssistantContext {
   const project = engine.project
   let active: Slide | null = null
@@ -242,11 +270,13 @@ export function buildScriptAssistantContext(
     active = null
   }
   const sceneNodes: string[] = []
+  const measuredSceneNodes: SceneNode[] = []
   if (active) {
     const visit = (nodeId: string): void => {
       if (sceneNodes.length >= 100) return
       try {
         const node = engine.getNode(nodeId)
+        measuredSceneNodes.push(node)
         sceneNodes.push(
           node.components?.camera
             ? `${node.name} [${node.id}] (camera)`
@@ -261,6 +291,68 @@ export function buildScriptAssistantContext(
       visit(active.scene.root.id)
     } catch {
       // A missing scene leaves the node list empty.
+    }
+  }
+  const materialNameById = new Map(
+    engine.materialDefinitions.map((material) => [material.id, material.name]),
+  )
+  const shaderNameById = new Map(engine.shaderDefinitions.map((shader) => [shader.id, shader.name]))
+  const scriptSceneNodes: ScriptSceneContext['nodes'] = measuredSceneNodes.map((node) => {
+    const world = active ? worldTransformOf(active.scene, node.id) : null
+    const materialName = materialNameById.get(node.material.materialDefinitionId) ?? null
+    const definition = engine.materialDefinitions.find(
+      (material) => material.id === node.material.materialDefinitionId,
+    )
+    return {
+      id: node.id,
+      name: node.name,
+      kind: node.components.camera
+        ? 'camera'
+        : node.components.assetInstance
+          ? 'asset instance'
+          : node.components.text
+            ? 'text'
+            : node.components.table
+              ? 'table'
+              : node.components.mesh
+                ? 'mesh'
+                : 'group/other',
+      world: world
+        ? {
+            x: world.x,
+            y: world.y,
+            rotation: world.rotation,
+            scaleX: world.scaleX,
+            scaleY: world.scaleY,
+          }
+        : null,
+      measuredSize: sources.measureNode?.(node.id) ?? null,
+      material: materialName,
+      shader: definition?.shaderId ? (shaderNameById.get(definition.shaderId) ?? null) : null,
+    }
+  })
+  let camera: ScriptSceneContext['camera'] = null
+  if (active) {
+    const cameraNode = active.scene.camera
+    const transform = worldTransformOf(active.scene, cameraNode.id)
+    if (transform) {
+      const validScale = transform.scaleX > 0 && transform.scaleY > 0
+      camera = {
+        id: cameraNode.id,
+        name: cameraNode.name,
+        x: transform.x,
+        y: transform.y,
+        scaleX: transform.scaleX,
+        scaleY: transform.scaleY,
+        visibleWorldRect: validScale
+          ? {
+              left: transform.x,
+              top: transform.y,
+              right: transform.x + EXPORT_VIDEO_WIDTH / transform.scaleX,
+              bottom: transform.y + EXPORT_VIDEO_HEIGHT / transform.scaleY,
+            }
+          : null,
+      }
     }
   }
   return {
@@ -281,6 +373,15 @@ export function buildScriptAssistantContext(
     shaders: engine.shaderDefinitions.map((shader) => shader.name).slice(0, 100),
     clips: engine.clips.map((clip) => clip.name).slice(0, 100),
     assets: [...(sources.assetNames ?? [])].slice(0, 100),
+    scriptScene: {
+      frame: { width: EXPORT_VIDEO_WIDTH, height: EXPORT_VIDEO_HEIGHT },
+      camera,
+      nodes: scriptSceneNodes.slice(0, 100),
+      materials: engine.materialDefinitions.map((material) => ({
+        name: material.name,
+        shader: material.shaderId ? (shaderNameById.get(material.shaderId) ?? null) : null,
+      })),
+    },
   }
 }
 

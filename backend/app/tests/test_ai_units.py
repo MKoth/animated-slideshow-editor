@@ -221,20 +221,28 @@ def test_compose_never_splits_message() -> None:
     assert any(m.content == "abcdefgh" for m in composed)
 
 
-def test_script_history_window_keeps_only_last_prior_user_message() -> None:
+def test_script_history_window_keeps_history_and_compacts_old_scripts() -> None:
     history = [
         ChatMessage(role="user", content="first request"),
-        ChatMessage(role="assistant", content="full old script dump"),
+        ChatMessage(
+            role="assistant",
+            content='Here is the first version:\n```engine-command\nscript "First" from 0\nwait(1)\n```',
+        ),
         ChatMessage(role="user", content="second request"),
-        ChatMessage(role="assistant", content="another old script dump"),
+        ChatMessage(
+            role="assistant",
+            content='Here is the second version:\n```engine-command\nscript "Second" from 0\nwait(1)\nwait(2)\n```',
+        ),
     ]
     window = script_history_window(history, "third request")
-    assert window == [ChatMessage(role="user", content="second request")]
+    assert len(window) == 4
+    assert "Earlier proposed script omitted (2 lines)" in window[1].content
+    assert 'script "Second" from 0' in window[3].content
 
 
-def test_script_history_window_drops_assistant_only_history() -> None:
-    history = [ChatMessage(role="assistant", content="old script dump")]
-    assert script_history_window(history, "fix timing") == []
+def test_script_history_window_keeps_assistant_only_history() -> None:
+    history = [ChatMessage(role="assistant", content="Previous decision: keep the timing")]
+    assert script_history_window(history, "fix timing") == history
 
 
 def test_script_history_window_keeps_latest_ask_block_for_answer() -> None:
@@ -247,7 +255,11 @@ def test_script_history_window_keeps_latest_ask_block_for_answer() -> None:
         ChatMessage(role="assistant", content="old full script dump"),
         question,
     ]
-    assert script_history_window(history, "Q (timing): Keep current") == [question]
+    assert script_history_window(history, "Q (timing): Keep current") == [
+        history[0],
+        history[1],
+        question,
+    ]
 
 
 def test_script_history_window_skips_duplicate_of_current() -> None:
@@ -258,7 +270,28 @@ def test_script_history_window_skips_duplicate_of_current() -> None:
         ChatMessage(role="user", content="fix timing"),
     ]
     window = script_history_window(history, "fix timing")
-    assert window == [ChatMessage(role="user", content="original ask")]
+    assert window == history[:2]
+
+
+def test_script_history_window_preserves_repair_errors_but_compacts_failed_source() -> None:
+    history = [
+        ChatMessage(
+            role="assistant", content='```engine-command\nscript "Old" from 0\nwait(1)\n```'
+        ),
+        ChatMessage(
+            role="user",
+            content=(
+                "Repair this. Validation errors:\n- Line 2: unknown method\n"
+                "Complete failed script:\n<failed-script>\n"
+                'script "Old" from 0\nwait(1)\n</failed-script>'
+            ),
+        ),
+        ChatMessage(role="assistant", content="I fixed the unknown method."),
+    ]
+    window = script_history_window(history, "another request")
+    assert "Line 2: unknown method" in window[1].content
+    assert "Earlier failed script omitted (2 lines)" in window[1].content
+    assert 'script "Old" from 0' not in window[1].content
 
 
 def test_script_history_window_empty_history() -> None:

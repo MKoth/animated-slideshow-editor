@@ -17,6 +17,7 @@ import { useAiStore } from '../../stores/aiStore'
 import { scriptSlideKey, useScriptAiStore } from '../../stores/scriptAiStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
+import { measuredNodeSize } from '../../pixi/renderer/nodeMeasurement'
 import { AiAskGroup } from './AiAskBlock'
 import { AiProposalDetail } from './AiProposalView'
 
@@ -93,6 +94,7 @@ export function ScriptAiModal({
         selection,
         assetNames,
         scriptFocus: buildScriptFocus(engine, slideId, draft, diagnostics) ?? undefined,
+        measureNode: measuredNodeSize,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [engine, projectId, slideId, draft, diagnostics, selectionKey, assetKey],

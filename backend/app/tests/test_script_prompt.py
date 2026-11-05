@@ -48,8 +48,10 @@ def test_script_prompt_knows_slide_scope_and_syntax() -> None:
     assert "mark(" in lowered
     # Repair mode: quoted failed source is the specification.
     assert "failed source quoted in that message is the specification" in lowered
-    # Stateless requests: script focus wins, no full history.
-    assert "stateless requests" in lowered
+    # Conversation history is retained but old script bodies are compacted.
+    assert "conversation history" in lowered
+    assert "line counts" in lowered
+    assert "latest prior assistant script stays intact" in lowered
     assert "script focus wins" in lowered
 
 
@@ -58,7 +60,8 @@ def test_script_prompt_teaches_cursor_setup_and_reveal_pairing() -> None:
     lowered = prompt.lower()
     # Setup/styling calls after marks land at end-of-slide.
     assert "before the first `mark(...)" in prompt
-    assert "`at(0)` placement" in prompt
+    assert "numeric segment start" in prompt
+    assert "never use `at(0)` when `from` is later" in prompt
     # fadeIn/fadeOut/pulse accept effect-verb named timing; other calls must not.
     assert "fadeout(at:" in lowered
     assert "never write other member calls that way" in lowered
@@ -77,6 +80,77 @@ def test_script_prompt_teaches_cursor_setup_and_reveal_pairing() -> None:
     assert "nodeonly(table)" in lowered
     assert "reveal(table)" in lowered and "descendant cell text" in lowered
     assert "do not add mask-setup wipes" in lowered
+    # Opacity gestures are not scene effects and cannot take their visual or wobble options.
+    assert "they are opacity-only gestures" in lowered
+    assert "never ask the user to choose visual or wobble options" in lowered
+
+
+def test_script_prompt_defines_prompter_markers_and_uses_tested_effect_recipes() -> None:
+    prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "script")
+    lowered = prompt.lower()
+    assert "for each prompter block whose start is at or after the script segment start" in lowered
+    assert '`at(<block-start>) mark("part-n")`' in lowered
+    assert "do not define or reference a marker for that earlier block" in lowered
+    assert "preserve the existing `from` value when editing a script" in lowered
+    assert 'before any `marktime("part-n")` reference' in lowered
+    assert "visualscale: 4" in lowered and 'visualanchor: "top-center"' in lowered
+    assert "wobblex: { from: 12, to: 24 }" in lowered
+    assert "wobbley: { from: 8, to: 18 }" in lowered
+    assert "wobblespeed: 7" in lowered
+    assert "visual: emptyhand" in lowered
+
+
+def test_script_prompt_respects_nonzero_segment_lower_bound() -> None:
+    prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "script").lower()
+    assert "the script header's `from` is the lower time bound" in prompt
+    assert "preserve the existing `from` value when editing a script" in prompt
+    assert "whose start is at or after the script segment start" in prompt
+    assert "do not define or reference a marker for that earlier block" in prompt
+    assert "never place an `at` or marker before `from`" in prompt
+    assert "verify the result remains in [from, slide duration]" in prompt
+
+
+def test_script_prompt_shows_literal_carry_positions_and_bounds_waits() -> None:
+    prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "script")
+    lowered = prompt.lower()
+    assert "carry destinations must be literal position records" in lowered
+    assert "to: { x: 340, y: 365 }" in lowered
+    assert "never a node, bounds, or position alias" in lowered
+    assert "every `wait(d)` advances the cursor" in lowered
+    assert "it must end at or before the slide duration" in lowered
+    assert "do not add a final wait just to fill the slide" in lowered
+
+
+def test_script_prompt_teaches_positional_tint_syntax() -> None:
+    prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "script")
+    lowered = prompt.lower()
+    assert '`alias.tint("#f5e6c8")`' in lowered
+    assert "never write `tint(color: ...)`" in lowered
+    assert "takes a positional color string" in lowered
+
+
+def test_script_prompt_requires_varied_text_colors_and_end_cleanup() -> None:
+    prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "script")
+    lowered = prompt.lower()
+    assert "give text labels and table cells visibly different colors" in lowered
+    assert "do not tint every label or cell the same color" in lowered
+    assert "clear temporary content by the slide's final second" in lowered
+    assert "always wipe a table once with `wipe(subtree(table))`" in lowered
+    assert "carry a small number of images out" in lowered
+    assert "if there are many images, fade them out" in lowered
+    assert "wipe a small number of labels" in lowered
+    assert "if there are many labels, fade them out" in lowered
+
+
+def test_script_prompt_uses_live_chalk_material_and_camera_measurements() -> None:
+    prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "script")
+    lowered = prompt.lower()
+    assert "script scene frame" in lowered
+    assert "active camera visible-world area" in lowered
+    assert "renderer-measured node sizes" in lowered
+    assert "material→shader links" in lowered
+    assert "apply it to the blackboard with `board.material(chalk)`" in lowered
+    assert "never silently omit the available chalk shader" in lowered
 
 
 def test_script_prompt_teaches_table_row_heights() -> None:
@@ -114,6 +188,42 @@ def test_script_focus_renders_source_blocks_and_diagnostics() -> None:
     assert 'part-1 [6-12s] "Look at the table"' in text
     assert "check diagnostics:" in text
     assert "needs a duration" in text
+
+
+def test_script_scene_renders_camera_frame_geometry_and_shader_links() -> None:
+    text = context_to_text(
+        {
+            "scriptScene": {
+                "frame": {"width": 1920, "height": 1080},
+                "camera": {
+                    "id": "camera-1",
+                    "name": "Camera",
+                    "x": 100,
+                    "y": 50,
+                    "scaleX": 2,
+                    "scaleY": 2,
+                    "visibleWorldRect": {"left": 100, "top": 50, "right": 1060, "bottom": 590},
+                },
+                "nodes": [
+                    {
+                        "id": "board-1",
+                        "name": "Blackboard",
+                        "kind": "asset instance",
+                        "world": {"x": 580, "y": 320, "scaleX": 1, "scaleY": 1},
+                        "measuredSize": {"width": 900, "height": 500},
+                        "material": "Chalk",
+                        "shader": "Chalk",
+                    }
+                ],
+                "materials": [{"name": "Chalk", "shader": "Chalk"}],
+            }
+        }
+    )
+    assert "1920×1080 world units" in text
+    assert "visible world area x=100..1060, y=50..590" in text
+    assert "Blackboard [board-1] (asset instance)" in text
+    assert "renderer-measured size 900×500" in text
+    assert "material Chalk (shader Chalk)" in text
 
 
 def test_script_conversations_scope_to_slide(client: TestClient) -> None:

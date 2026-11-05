@@ -9,6 +9,7 @@ never drops the context block.
 # ruff: noqa: BLE001
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -203,6 +204,79 @@ def _script_focus_to_text(focus: object) -> str:
     return "\n".join(lines)
 
 
+def _script_scene_to_text(scene: object) -> str:
+    """Compact live scene geometry, camera frame, and material/shader links."""
+    if not isinstance(scene, dict):
+        return ""
+    frame = scene.get("frame")
+    lines: list[str] = []
+    if isinstance(frame, dict):
+        width, height = _as_float(frame.get("width")), _as_float(frame.get("height"))
+        if width is not None and height is not None:
+            lines.append(f"script scene frame: {width:g}×{height:g} world units")
+    camera = scene.get("camera")
+    if isinstance(camera, dict):
+        camera_name = str(camera.get("name", "camera"))
+        camera_id = str(camera.get("id", ""))
+        scale_x, scale_y = _as_float(camera.get("scaleX")), _as_float(camera.get("scaleY"))
+        x, y = _as_float(camera.get("x")), _as_float(camera.get("y"))
+        camera_line = f"active camera: {camera_name}"
+        if camera_id:
+            camera_line += f" [{camera_id}]"
+        if x is not None and y is not None:
+            camera_line += f" top-left ({x:g}, {y:g})"
+        if scale_x is not None and scale_y is not None:
+            camera_line += f" zoom ({scale_x:g}, {scale_y:g})"
+        rect = camera.get("visibleWorldRect")
+        if isinstance(rect, dict):
+            edges = [_as_float(rect.get(key)) for key in ("left", "top", "right", "bottom")]
+            if all(edge is not None for edge in edges):
+                left, top, right, bottom = edges
+                camera_line += f"; visible world area x={left:g}..{right:g}, y={top:g}..{bottom:g}"
+        lines.append(camera_line)
+    nodes = scene.get("nodes")
+    rendered_nodes: list[str] = []
+    if isinstance(nodes, list):
+        for node in nodes[:100]:
+            if not isinstance(node, dict):
+                continue
+            name = str(node.get("name", "?"))
+            node_id = str(node.get("id", "?"))
+            details = [f"{name} [{node_id}] ({node.get('kind', 'node')})"]
+            world = node.get("world")
+            if isinstance(world, dict):
+                values = [_as_float(world.get(key)) for key in ("x", "y", "scaleX", "scaleY")]
+                if all(value is not None for value in values):
+                    wx, wy, sx, sy = values
+                    details.append(f"world pos ({wx:g}, {wy:g}), scale ({sx:g}, {sy:g})")
+            size = node.get("measuredSize")
+            if isinstance(size, dict):
+                width, height = _as_float(size.get("width")), _as_float(size.get("height"))
+                if width is not None and height is not None:
+                    details.append(f"renderer-measured size {width:g}×{height:g}")
+            else:
+                details.append("size not yet renderer-measured")
+            material = node.get("material")
+            shader = node.get("shader")
+            if isinstance(material, str) and material:
+                details.append(f"material {material}" + (f" (shader {shader})" if shader else ""))
+            rendered_nodes.append("; ".join(details))
+    if rendered_nodes:
+        lines.append("scene nodes with geometry/materials: " + " | ".join(rendered_nodes))
+    materials = scene.get("materials")
+    if isinstance(materials, list):
+        links = [
+            f"{entry.get('name', '?')} → shader {entry['shader']}"
+            if isinstance(entry, dict) and entry.get("shader")
+            else str(entry.get("name", "?"))
+            for entry in materials[:100]
+            if isinstance(entry, dict)
+        ]
+        if links:
+            lines.append("material definitions and shader links: " + "; ".join(links))
+    return "\n".join(lines)
+
+
 def compose_messages(
     system_prompt: str,
     context_text: str,
@@ -238,29 +312,85 @@ def compose_messages(
 def script_history_window(
     history: list[ChatMessage], current_message: str = ""
 ) -> list[ChatMessage]:
-    """Stateless script window: latest script rides the context, so keep only the
-    most recent prior user message distinct from the current one, or the latest
-    assistant clarification when the current message is an answer to an ask block.
+    """Keep script-chat continuity while compacting obsolete source dumps.
 
-    Drops old assistant script dumps (the script focus already carries the latest
-    source) and any duplicate of the current message (regenerate mode reuses the
-    last user message as current). A structured ask is the one relevant assistant
-    message needed to interpret a user's answer, so retain it without older history.
-    Pure and read-only; empty history reads as empty.
+    The editor's current source rides in context, and the newest prior assistant
+    script remains intact. Earlier proposed/failed scripts are replaced by line
+    counts, while surrounding conversation and validation-error text survive.
+    Regenerate mode may repeat the last user message as current, so omit that
+    duplicate. Pure and read-only.
     """
     current = (current_message or "").strip()
-    for message in reversed(history):
-        if message.role == "assistant" and "```ask" in (message.content or ""):
-            return [message]
-        if message.role != "user":
-            continue
-        content = message.content or ""
-        if not content.strip():
-            continue
-        if current and content.strip() == current:
-            continue
-        return [message]
-    return []
+    kept = list(history)
+    if kept and kept[-1].role == "user" and current and kept[-1].content.strip() == current:
+        kept.pop()
+
+    latest_script_message = next(
+        (
+            index
+            for index in range(len(kept) - 1, -1, -1)
+            if kept[index].role == "assistant" and _has_script_block(kept[index].content)
+        ),
+        -1,
+    )
+    return [
+        message
+        if index == latest_script_message
+        else ChatMessage(
+            role=message.role,
+            content=_compact_historical_scripts(message.content),
+        )
+        for index, message in enumerate(kept)
+    ]
+
+
+_SCRIPT_FENCE_RE = re.compile(r"```(\w[\w-]*)\s*\n([\s\S]*?)```", re.IGNORECASE)
+_FAILED_SCRIPT_RE = re.compile(r"<failed-script>\s*([\s\S]*?)\s*</failed-script>", re.IGNORECASE)
+
+
+def _script_line_count(source: str) -> int:
+    lines = source.strip().splitlines()
+    if lines and lines[0].strip().lower().startswith("slide:"):
+        lines = lines[1:]
+    return len(lines)
+
+
+def _is_animation_script(source: str) -> bool:
+    return (
+        re.search(
+            r'^\s*(?:slide\s*:\s*[^\n]+\n\s*)?script\s+"[^\"]+"\s+from\s+[\d.]+',
+            source,
+            re.MULTILINE,
+        )
+        is not None
+    )
+
+
+def _has_script_block(content: str) -> bool:
+    return any(
+        (match.group(1) or "").lower() in {"engine-command", "engine-commands"}
+        and _is_animation_script(match.group(2) or "")
+        for match in _SCRIPT_FENCE_RE.finditer(content or "")
+    )
+
+
+def _compact_historical_scripts(content: str) -> str:
+    def compact_failed(match: re.Match[str]) -> str:
+        source = match.group(1) or ""
+        return f"<failed-script>[Earlier failed script omitted ({_script_line_count(source)} lines).]</failed-script>"
+
+    content = _FAILED_SCRIPT_RE.sub(compact_failed, content or "")
+
+    def compact_fence(match: re.Match[str]) -> str:
+        language, source = match.group(1) or "", match.group(2) or ""
+        if language.lower() not in {
+            "engine-command",
+            "engine-commands",
+        } or not _is_animation_script(source):
+            return match.group(0)
+        return f"[Earlier proposed script omitted ({_script_line_count(source)} lines).]"
+
+    return _SCRIPT_FENCE_RE.sub(compact_fence, content)
 
 
 def context_to_text(context: object) -> str:
@@ -299,6 +429,9 @@ def context_to_text(context: object) -> str:
         script_focus_text = _script_focus_to_text(context.get("scriptFocus"))
         if script_focus_text:
             parts.append(script_focus_text)
+        script_scene_text = _script_scene_to_text(context.get("scriptScene"))
+        if script_scene_text:
+            parts.append(script_scene_text)
         slides = context.get("slides")
         if isinstance(slides, list) and slides:
             # Slide ids ride alongside names so polish can target the active

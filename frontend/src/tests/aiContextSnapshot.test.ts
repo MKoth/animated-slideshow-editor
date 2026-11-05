@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { buildContextSnapshot, filterConversations } from '../ai/contextSnapshot'
+import {
+  buildContextSnapshot,
+  buildScriptAssistantContext,
+  filterConversations,
+} from '../ai/contextSnapshot'
 import type { EnginePublic } from '../engine'
+import { createEngineInternal } from '../engine/internal'
 
 function mockEngine(): EnginePublic {
   const root = { id: 'root', name: 'Root', children: [{ id: 'n-1', name: 'Cat', children: [] }] }
@@ -77,6 +82,48 @@ describe('Context snapshot', () => {
     } as unknown as EnginePublic
     expect(() => buildContextSnapshot(engine, {})).not.toThrow()
     warn.mockRestore()
+  })
+})
+
+describe('Script AI scene context', () => {
+  it('includes measured board geometry, camera view, and material shader association', () => {
+    const engine = createEngineInternal()
+    engine.createProject({ name: 'Board lesson' })
+    const slide = engine.createSlide('Board')
+    const shader = engine.registerShaderDefinition('chalk-shader-id', 'Chalk Shader')
+    const material = engine.registerMaterialDefinition(
+      'chalk-material-id',
+      'Chalk Material',
+      [],
+      shader.id,
+    )
+    const board = engine.createNode(slide.scene.id, slide.scene.root.id, 'Blackboard', {
+      components: {
+        assetInstance: { kind: 'assetInstance', assetDefinitionId: 'board-asset-id' },
+      },
+      transform: { x: 200, y: 100, rotation: 0, scaleX: 1, scaleY: 1 },
+    })
+    board.material = { materialDefinitionId: material.id, overrides: {} }
+
+    const context = buildScriptAssistantContext(engine, {
+      measureNode: (nodeId) => (nodeId === board.id ? { width: 1000, height: 600 } : null),
+    })
+
+    expect(context.scriptScene.frame).toEqual({ width: 1920, height: 1080 })
+    expect(context.scriptScene.camera?.visibleWorldRect).toEqual({
+      left: 0,
+      top: 0,
+      right: 1920,
+      bottom: 1080,
+    })
+    expect(context.scriptScene.nodes).toContainEqual(
+      expect.objectContaining({
+        name: 'Blackboard',
+        measuredSize: { width: 1000, height: 600 },
+        material: 'Chalk Material',
+        shader: 'Chalk Shader',
+      }),
+    )
   })
 })
 
