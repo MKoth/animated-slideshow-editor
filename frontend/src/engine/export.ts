@@ -27,7 +27,8 @@ export const EXPORT_AFORMAT_FILTER = 'aformat=sample_fmts=fltp:channel_layouts=s
 export const EXPORT_CONCAT_METHOD = 'concat demuxer' as const
 export const EXPORT_VERSION = 1 as const
 
-// Fixed v1 output (Spec 473): 30 fps, 1920x1080 letterbox fit.
+// Default v1 output: 30 fps, Full HD landscape; the global camera-frame setting
+// can select another standard size/aspect ratio.
 export const EXPORT_VIDEO_FPS = 30 as const
 export const EXPORT_VIDEO_WIDTH = 1920 as const
 export const EXPORT_VIDEO_HEIGHT = 1080 as const
@@ -579,9 +580,12 @@ function determinismKeyOf(payload: unknown): string {
   return `fnv1a64-${hash.toString(16).padStart(16, '0')}`
 }
 
-/** Fixed v1 export settings (Spec 473): 30 fps, 1920x1080. */
-export function getFixedExportSettings(): ExportSettings {
-  return { fps: EXPORT_VIDEO_FPS, width: EXPORT_VIDEO_WIDTH, height: EXPORT_VIDEO_HEIGHT }
+/** Default export settings (30 fps, with the globally selected pixel dimensions). */
+export function getFixedExportSettings(
+  width: number = EXPORT_VIDEO_WIDTH,
+  height: number = EXPORT_VIDEO_HEIGHT,
+): ExportSettings {
+  return { fps: EXPORT_VIDEO_FPS, width, height }
 }
 
 /** Selectable slides for export: project order, zero-duration excluded. */

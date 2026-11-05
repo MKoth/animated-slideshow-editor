@@ -578,6 +578,97 @@ def test_status_progression_and_artifact_zip(client: TestClient) -> None:
         assert len(zf.read("My-Lesson.mp4")) > 0
 
 
+def test_export_root_setting_is_saved_and_project_path_is_created(
+    client: TestClient, tmp_path: Any
+) -> None:
+    target = tmp_path / "my exports"
+    updated = client.put("/api/export/settings", json={"exportRoot": str(target)})
+    assert updated.status_code == 200
+    assert updated.json()["exportRoot"] == str(target)
+    assert target.is_dir()
+    loaded = client.get("/api/export/settings")
+    assert loaded.status_code == 200
+    assert loaded.json()["exportRoot"] == str(target)
+
+    project = client.get("/api/export/projects/project-123")
+    assert project.status_code == 200
+    assert project.json()["directory"] == str(target / "project-123")
+    assert project.json()["joinedOutdated"] is True
+
+
+def test_export_root_setting_rejects_relative_path(client: TestClient) -> None:
+    response = client.put("/api/export/settings", json={"exportRoot": "relative/path"})
+    assert response.status_code == 422
+
+
+def test_frame_encoding_timeout_scales_with_segment_duration(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(args: list[str], timeout: int = 120) -> None:
+        captured["args"] = args
+        captured["timeout"] = timeout
+
+    monkeypatch.setattr(export_module, "_run_ffmpeg", fake_run)
+    export_module._encode_video_from_frames(
+        tmp_path, 8117, 30, tmp_path / "video.mp4", width=1080, height=1920
+    )
+    assert any("scale=1080:1920:" in str(arg) for arg in captured["args"])
+    assert any("pad=1080:1920:" in str(arg) for arg in captured["args"])
+    assert captured["timeout"] > 120
+
+
+def test_single_slide_export_is_persisted_and_marks_join_outdated(
+    client: TestClient, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_jobs_for_test()
+    root = tmp_path / "exports"
+    assert client.put("/api/export/settings", json={"exportRoot": str(root)}).status_code == 200
+    desc = _make_descriptor(durations=[1.0], project_name="Lesson")
+    desc.update({"projectId": "project-id", "exportSlide": True})
+    created = client.post("/api/export/jobs", json=desc)
+    assert created.status_code == 201, created.text
+    job_id = created.json()["jobId"]
+    for index in range(30):
+        uploaded = client.post(
+            f"/api/export/jobs/{job_id}/frames",
+            json={
+                "slideId": "slide-0",
+                "frameIndex": index,
+                "timestamp": index / 30,
+                "data": PNG_1X1_B64,
+            },
+        )
+        assert uploaded.status_code == 200
+    complete = client.post(f"/api/export/jobs/{job_id}/complete")
+    assert complete.json()["status"] == "done"
+    output = root / "project-id" / "slide-slide-0.mp4"
+    assert output.is_file()
+    assert not list((root / "project-id").glob(".work-*"))
+    project = client.get("/api/export/projects/project-id").json()
+    assert project["slides"]["slide-0"]["file"] == output.name
+    assert project["joinedOutdated"] is True
+
+    def fake_ffmpeg(args: list[str], timeout: int = 120) -> None:
+        del timeout
+        from pathlib import Path
+
+        Path(args[-1]).write_bytes(b"joined")
+
+    monkeypatch.setattr(export_module, "_run_ffmpeg", fake_ffmpeg)
+    joined = client.post("/api/export/projects/project-id/join", json={"slideIds": ["slide-0"]})
+    assert joined.status_code == 200, joined.text
+    assert (root / "project-id" / "joined.mp4").read_bytes() == b"joined"
+    assert client.get("/api/export/projects/project-id").json()["joinedOutdated"] is False
+
+    subtitles = client.post(
+        "/api/export/projects/project-id/subtitles", json={"srt": "1\ncaption\n"}
+    )
+    assert subtitles.status_code == 200
+    assert (root / "project-id" / "subtitles.srt").read_text(encoding="utf-8") == "1\ncaption\n"
+
+
 def test_concurrency_blocked_and_cancel_frees_slot(client: TestClient) -> None:
     _clear_jobs_for_test()
     r1 = client.post("/api/export/jobs", json=_make_descriptor(durations=[1.0]))

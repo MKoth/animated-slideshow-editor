@@ -1,5 +1,6 @@
 import type { AnimationProperty, EnginePublic, SceneNode, Slide } from '../engine'
-import { EXPORT_VIDEO_HEIGHT, EXPORT_VIDEO_WIDTH } from '../engine/export'
+import { cameraFrameDimensions } from '../engine/cameraFrameSize'
+import { useUiStore } from '../stores/uiStore'
 import type { ShapeCategory } from '../engine/shapeCategory'
 import { categoryPathOfShape, qualifiedShapeName } from '../engine/shape'
 import { composeChain, worldTransformOf } from '../engine/worldTransform'
@@ -263,6 +264,9 @@ export function buildScriptAssistantContext(
   } = {},
 ): ScriptAssistantContext {
   const project = engine.project
+  const { width: frameWidth, height: frameHeight } = cameraFrameDimensions(
+    useUiStore.getState().cameraFrameSize,
+  )
   let active: Slide | null = null
   try {
     active = engine.getActiveSlide()
@@ -348,8 +352,8 @@ export function buildScriptAssistantContext(
           ? {
               left: transform.x,
               top: transform.y,
-              right: transform.x + EXPORT_VIDEO_WIDTH / transform.scaleX,
-              bottom: transform.y + EXPORT_VIDEO_HEIGHT / transform.scaleY,
+              right: transform.x + frameWidth / transform.scaleX,
+              bottom: transform.y + frameHeight / transform.scaleY,
             }
           : null,
       }
@@ -374,7 +378,7 @@ export function buildScriptAssistantContext(
     clips: engine.clips.map((clip) => clip.name).slice(0, 100),
     assets: [...(sources.assetNames ?? [])].slice(0, 100),
     scriptScene: {
-      frame: { width: EXPORT_VIDEO_WIDTH, height: EXPORT_VIDEO_HEIGHT },
+      frame: { width: frameWidth, height: frameHeight },
       camera,
       nodes: scriptSceneNodes.slice(0, 100),
       materials: engine.materialDefinitions.map((material) => ({

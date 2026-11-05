@@ -7,6 +7,7 @@ import {
   CreateNodeCommand,
   CreateProjectCommand,
   CreateSlideCommand,
+  SetSlideAnimationScriptCommand,
   createCommandSystem,
 } from '../../engine/commands'
 import type { AnimationProperty } from '../../engine'
@@ -16,6 +17,9 @@ import { pixiRegistry } from './pixiFake'
 import { FakeTimeSource } from '../fakeTimeSource'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useUiStore } from '../../stores/uiStore'
+import { DEFAULT_CAMERA_FRAME_SIZE } from '../../engine/cameraFrameSize'
+import { resizeObserverFor } from '../setup'
+import { runAnimationScript } from '../../engine/animationScriptRun'
 
 vi.mock('pixi.js', async () => {
   const { createPixiFake } = await import('./pixiFake')
@@ -26,6 +30,7 @@ beforeEach(() => {
   pixiRegistry.reset()
   useUiStore.getState().setAnimationMode(false)
   useUiStore.getState().setCameraAnimationMode(false)
+  useUiStore.getState().setCameraFrameSize(DEFAULT_CAMERA_FRAME_SIZE)
   useSelectionStore.setState({ selectedIds: [] })
 })
 
@@ -33,13 +38,21 @@ interface Harness {
   system: ReturnType<typeof createCommandSystem>
   app: (typeof pixiRegistry.applications)[number]
   canvas: HTMLCanvasElement
+  host: HTMLElement
   cameraId: string
   renderer: Renderer
 }
 
-async function mount(timeSource?: FakeTimeSource): Promise<Harness> {
+async function mount(
+  timeSource?: FakeTimeSource,
+  hostSize?: { width: number; height: number },
+): Promise<Harness> {
   const system = createCommandSystem()
   const host = document.createElement('div')
+  if (hostSize) {
+    Object.defineProperty(host, 'clientWidth', { configurable: true, value: hostSize.width })
+    Object.defineProperty(host, 'clientHeight', { configurable: true, value: hostSize.height })
+  }
   const renderer = new Renderer(
     host,
     system.engine,
@@ -57,7 +70,7 @@ async function mount(timeSource?: FakeTimeSource): Promise<Harness> {
   if (!app || !canvas || !camera) {
     throw new Error('Failed to mount the renderer with a camera')
   }
-  return { system, app, canvas, cameraId: camera.id, renderer }
+  return { system, app, canvas, host, cameraId: camera.id, renderer }
 }
 
 function wheelAt(canvas: HTMLCanvasElement, x: number, y: number, deltaY: number): void {
@@ -118,6 +131,88 @@ function storedTransformOf(system: Harness['system'], cameraId: string) {
 }
 
 describe('evaluated viewport', () => {
+  it('applies the selected pixel aspect ratio to a setCamera script when run', async () => {
+    useUiStore.getState().setCameraFrameSize('1080x1920')
+    useUiStore.getState().setCameraAnimationMode(true)
+    const { app, host, renderer, system } = await mount(undefined, { width: 1400, height: 900 })
+    const slide = system.engine.project!.slides[0]!
+    const source = ['script "Camera framing" from 0', 'setCamera(-236, 0, 0.583)'].join('\n')
+    system.dispatcher.dispatch(new SetSlideAnimationScriptCommand({ slideId: slide.id, source }))
+    const result = runAnimationScript(
+      system.engine,
+      (command) => system.dispatcher.dispatch(command),
+      slide.id,
+      source,
+    )
+    expect(result.ran).toBe(true)
+    app.ticker.tick()
+
+    expect(app.screen.width / app.screen.height).toBeCloseTo(9 / 16)
+    expect(app.screen.width / worldOf(app).scale.x).toBeCloseTo(1080 / 0.583)
+    expect(app.screen.height / worldOf(app).scale.y).toBeCloseTo(1920 / 0.583)
+    expect(host.querySelector('.canvas-dev-overlay')?.textContent).toContain('Zoom 0.58')
+    expect(system.engine.getKeyframes(slide.scene.camera.id, 'scaleX')[0]?.value).toBe(0.583)
+    const initialRenderedZoom = worldOf(app).scale.x
+
+    const zoomedInSource = ['script "Camera framing" from 0', 'setCamera(-236, 10, 1.166)'].join(
+      '\n',
+    )
+    system.dispatcher.dispatch(
+      new SetSlideAnimationScriptCommand({ slideId: slide.id, source: zoomedInSource }),
+    )
+    const zoomedIn = runAnimationScript(
+      system.engine,
+      (command) => system.dispatcher.dispatch(command),
+      slide.id,
+      zoomedInSource,
+    )
+    expect(zoomedIn.ran).toBe(true)
+    app.ticker.tick()
+    expect(system.engine.getKeyframes(slide.scene.camera.id, 'scaleX')[0]?.value).toBe(1.166)
+    expect(worldOf(app).scale.x).toBeCloseTo(initialRenderedZoom * 2)
+    expect(host.querySelector('.canvas-dev-overlay')?.textContent).toContain('Zoom 1.17')
+    renderer.dispose()
+  })
+
+  it('keeps the same authored camera world window when the browser canvas is resized', async () => {
+    useUiStore.getState().setCameraAnimationMode(true)
+    const { app, host, renderer, system, cameraId } = await mount(undefined, {
+      width: 1800,
+      height: 900,
+    })
+    for (const [property, value] of [
+      ['scaleX', 2],
+      ['scaleY', 2],
+    ] as const) {
+      dispatchKeyframe(system, cameraId, property, 0, value)
+    }
+    app.ticker.tick()
+    const originalWorldWidth = app.screen.width / worldOf(app).scale.x
+    const originalWorldHeight = app.screen.height / worldOf(app).scale.y
+
+    Object.defineProperty(host, 'clientWidth', { configurable: true, value: 1400 })
+    Object.defineProperty(host, 'clientHeight', { configurable: true, value: 900 })
+    resizeObserverFor(host)?.trigger()
+    app.ticker.tick()
+
+    expect(app.screen.width / app.screen.height).toBeCloseTo(16 / 9)
+    expect(app.screen.width / worldOf(app).scale.x).toBeCloseTo(originalWorldWidth)
+    expect(app.screen.height / worldOf(app).scale.y).toBeCloseTo(originalWorldHeight)
+    renderer.dispose()
+  })
+
+  it('only letterboxes the editor viewport while camera animation mode is enabled', async () => {
+    const { app, renderer } = await mount(undefined, { width: 1800, height: 900 })
+    expect(app.screen).toMatchObject({ width: 1800, height: 900 })
+
+    useUiStore.getState().setCameraAnimationMode(true)
+    expect(app.screen).toMatchObject({ width: 1600, height: 900 })
+
+    useUiStore.getState().setCameraAnimationMode(false)
+    expect(app.screen).toMatchObject({ width: 1800, height: 900 })
+    renderer.dispose()
+  })
+
   it('captures export frames at native 1080p independent of editor viewport size', async () => {
     const { system, app, renderer, cameraId } = await mount()
     dispatchKeyframe(system, cameraId, 'positionX', 0, 24)
@@ -131,10 +226,10 @@ describe('evaluated viewport', () => {
       expect(app.canvas.height).toBe(1080)
       // The world-space camera window stays the same: the camera zoom scales
       // with the larger output viewport instead of revealing more of the scene.
-      expect(worldOf(app).position.x).toBeCloseTo(-115.2)
-      expect(worldOf(app).position.y).toBeCloseTo(-57.6)
-      expect(worldOf(app).scale.x).toBeCloseTo(4.8)
-      expect(worldOf(app).scale.y).toBeCloseTo(3.6)
+      expect(worldOf(app).position.x).toBeCloseTo(-48)
+      expect(worldOf(app).position.y).toBeCloseTo(-32)
+      expect(worldOf(app).scale.x).toBeCloseTo(2)
+      expect(worldOf(app).scale.y).toBeCloseTo(2)
       return 'data:image/png;base64,exported'
     })
 
@@ -162,10 +257,10 @@ describe('evaluated viewport', () => {
 
     const capture = vi.spyOn(renderer, 'captureFrame').mockImplementation((viewportOnly) => {
       expect(viewportOnly).toBe(true)
-      expect(worldOf(app).position.x).toBe(-480)
-      expect(worldOf(app).position.y).toBe(-180)
-      expect(worldOf(app).scale.x).toBeCloseTo(4.8)
-      expect(worldOf(app).scale.y).toBeCloseTo(3.6)
+      expect(worldOf(app).position.x).toBe(-200)
+      expect(worldOf(app).position.y).toBe(-100)
+      expect(worldOf(app).scale.x).toBeCloseTo(2)
+      expect(worldOf(app).scale.y).toBeCloseTo(2)
       return 'data:image/png;base64,exported'
     })
     expect(renderer.captureExportFrame()).toBe('data:image/png;base64,exported')
@@ -189,10 +284,10 @@ describe('evaluated viewport', () => {
 
     const capture = vi.spyOn(renderer, 'captureFrame').mockImplementation((viewportOnly) => {
       expect(viewportOnly).toBe(true)
-      expect(worldOf(app).position.x).toBe(-480)
-      expect(worldOf(app).position.y).toBe(-180)
-      expect(worldOf(app).scale.x).toBeCloseTo(4.8)
-      expect(worldOf(app).scale.y).toBeCloseTo(3.6)
+      expect(worldOf(app).position.x).toBe(-200)
+      expect(worldOf(app).position.y).toBe(-100)
+      expect(worldOf(app).scale.x).toBeCloseTo(2)
+      expect(worldOf(app).scale.y).toBeCloseTo(2)
       return 'data:image/png;base64,exported'
     })
     expect(renderer.captureExportFrame()).toBe('data:image/png;base64,exported')

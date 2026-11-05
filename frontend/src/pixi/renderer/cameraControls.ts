@@ -14,6 +14,7 @@ export interface CameraControlsContext {
   readonly getCameraTransform: () => ViewportTransform | null
   readonly setCameraPreview: (transform: ViewportTransform | null) => void
   readonly setViewportTransform?: (transform: ViewportTransform) => void
+  readonly toAuthoredCameraTransform?: (transform: ViewportTransform) => ViewportTransform
   readonly getCameraAnimationMode?: () => boolean
   readonly getTime: () => number
   readonly dispatch: DispatchCommand
@@ -31,6 +32,7 @@ export class CameraControls {
   readonly #getCameraTransform: () => ViewportTransform | null
   readonly #setCameraPreview: (transform: ViewportTransform | null) => void
   readonly #setViewportTransform?: (transform: ViewportTransform) => void
+  readonly #toAuthoredCameraTransform?: (transform: ViewportTransform) => ViewportTransform
   readonly #getCameraAnimationMode?: () => boolean
   readonly #getTime: () => number
   readonly #dispatch: DispatchCommand
@@ -51,6 +53,7 @@ export class CameraControls {
     this.#getCameraTransform = context.getCameraTransform
     this.#setCameraPreview = context.setCameraPreview
     this.#setViewportTransform = context.setViewportTransform
+    this.#toAuthoredCameraTransform = context.toAuthoredCameraTransform
     this.#getCameraAnimationMode = context.getCameraAnimationMode
     this.#getTime = context.getTime
     this.#dispatch = context.dispatch
@@ -150,7 +153,14 @@ export class CameraControls {
     this.#setCameraPreview(null)
     dispatchKeyframeCommands(
       dispatch,
-      autoKeyCommands(engine, cameraEdits(nodeId, gesture.time, gesture.camera)),
+      autoKeyCommands(
+        engine,
+        cameraEdits(
+          nodeId,
+          gesture.time,
+          this.#toAuthoredCameraTransform?.(gesture.camera) ?? gesture.camera,
+        ),
+      ),
     )
   }
 

@@ -23,6 +23,7 @@ import { resolveExportAudioBytes } from '../../export/exportAudio'
 import { slidesMissingCameraKeyframes } from '../../export/exportCamera'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useUiStore } from '../../stores/uiStore'
+import { cameraFrameDimensions } from '../../engine/cameraFrameSize'
 
 export type ExportFrameCapture = (slideId: string, timestamp: number) => Promise<string | null>
 
@@ -40,7 +41,7 @@ const ACTIVE_STATUSES = new Set(['queued', 'rendering', 'encoding'])
 /**
  * Default frame capture following the pixi/renderer/thumbnailRecorder.ts canvas
  * pattern: seeks the live preview to the exact export timestamp and reads the
- * rendered stage. Output is letterboxed to 1920x1080 with black bars at encode
+ * rendered stage. Output uses the globally selected camera-frame dimensions.
  * time (never stretched). Returns null when no canvas is available; callers
  * fail the export loudly instead of uploading placeholder pixels.
  */
@@ -61,6 +62,8 @@ export function ExportVideoDialog({
   captureFrame,
 }: ExportVideoDialogProps) {
   const project = engine.project
+  const cameraFrameSize = useUiStore((state) => state.cameraFrameSize)
+  const frameDimensions = cameraFrameDimensions(cameraFrameSize)
   const selectable = useMemo(
     () => (project ? project.slides.filter((slide) => slide.duration > 0) : []),
     [project],
@@ -70,12 +73,22 @@ export function ExportVideoDialog({
   const [selected, setSelected] = useState<ReadonlySet<string>>(
     () => new Set(selectable.map((slide) => slide.id)),
   )
-  const [subtitlesOn, setSubtitlesOn] = useState(true)
+  const [subtitlesOn] = useState(true)
   const [phase, setPhase] = useState<Phase>('pick')
   const [blocked, setBlocked] = useState<string | null>(null)
   const [progress, setProgress] = useState({ received: 0, expected: 0, status: '' })
   const [error, setError] = useState<string | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
+  const [exportRoot, setExportRoot] = useState('')
+  const [projectExports, setProjectExports] = useState<{
+    directory: string
+    slides: Record<string, { file: string; name: string; duration: number }>
+    joinedReady: boolean
+    joinedOutdated: boolean
+    subtitlesReady: boolean
+    subtitlesOutdated: boolean
+  } | null>(null)
+  const [action, setAction] = useState('')
   const cancelRequested = useRef(false)
 
   // Single-concurrency probe: if another export is running, block starting a new one.
@@ -96,6 +109,26 @@ export function ExportVideoDialog({
       cancelled = true
     }
   }, [exportApi])
+
+  const refreshProjectExports = async () => {
+    if (!project) return
+    const [settings, exports] = await Promise.all([
+      exportApi.getExportSettings(),
+      exportApi.getProjectExports(project.id),
+    ])
+    setExportRoot(settings.exportRoot)
+    setProjectExports(exports)
+  }
+
+  useEffect(() => {
+    // The effect starts asynchronous synchronization; the setters run after requests settle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refreshProjectExports().catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : 'Could not load export folder')
+    })
+    // project id determines the persistent export directory
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exportApi, project?.id])
 
   const orderedSelected = useMemo(() => {
     if (!project) return []
@@ -179,7 +212,7 @@ export function ExportVideoDialog({
     cancelRequested.current = false
     setProgress({ received: 0, expected: totals.frames, status: 'queued' })
     try {
-      const settings = getFixedExportSettings()
+      const settings = getFixedExportSettings(frameDimensions.width, frameDimensions.height)
       const selectedIds = orderedSelected.map((slide) => slide.id)
       const descriptor = buildExportJobDescriptorForSlides(project, selectedIds, settings)
       const cues = subtitlesOn ? buildExportSubtitleCues(project, selectedIds) : []
@@ -299,6 +332,165 @@ export function ExportVideoDialog({
     setProgress({ received: 0, expected: 0, status: '' })
   }
 
+  const generateSlideVideo = async (slideId: string): Promise<void> => {
+    if (!project) return
+    const slide = selectable.find((item) => item.id === slideId)
+    if (!slide) return
+    const descriptor = buildExportJobDescriptorForSlides(
+      project,
+      [slide.id],
+      getFixedExportSettings(frameDimensions.width, frameDimensions.height),
+    )
+    const created = await exportApi.createJob(descriptor, {
+      projectName: project.name,
+      projectId: project.id,
+      exportSlide: true,
+    })
+    setJobId(created.jobId)
+    const snapshot = savePreviewSnapshot(engine)
+    usePlaybackController.getState().pause()
+    const previousCameraMode = useUiStore.getState().cameraAnimationMode
+    useUiStore.getState().setCameraAnimationMode(true)
+    try {
+      const assets = new Set<string>()
+      for (const clip of descriptor.slides[0]!.audio.clips)
+        if (!clip.muted) assets.add(clip.assetId)
+      for (const assetId of assets) {
+        const audio = await resolveExportAudioBytes(engine, assetId)
+        if (audio) {
+          try {
+            await exportApi.uploadAudio(created.jobId, {
+              assetId,
+              data: audio.data,
+              mimeType: audio.mimeType,
+            })
+          } catch {
+            /* Unavailable audio is handled as silence by the exporter. */
+          }
+        }
+      }
+      const timestamps = descriptor.slides[0]!.frameTimestamps
+      for (let index = 0; index < timestamps.length; index += 1) {
+        if (cancelRequested.current) throw new Error('Export cancelled')
+        const timestamp = timestamps[index]!
+        const data = await (
+          captureFrame ??
+          ((_id, time) => captureExportFrameAt(engine, slide.id, time, slide.duration))
+        )(slide.id, timestamp)
+        if (!data)
+          throw new Error(
+            `Could not capture frame ${index + 1}/${timestamps.length} for ${slide.name}`,
+          )
+        const status = await exportApi.uploadFrame(created.jobId, {
+          slideId: slide.id,
+          frameIndex: index,
+          timestamp,
+          data,
+        })
+        setProgress({ received: index + 1, expected: timestamps.length, status: status.status })
+      }
+      const completed = await exportApi.completeJob(created.jobId)
+      if (completed.status !== 'done')
+        throw new Error(completed.error ?? `Export failed: ${completed.status}`)
+    } catch (err) {
+      // A frame-capture/upload failure must release the backend's single job
+      // slot and remove this slide's temporary frame directory.
+      await exportApi.cancelJob(created.jobId).catch(() => undefined)
+      throw err
+    } finally {
+      useUiStore.getState().setCameraAnimationMode(previousCameraMode)
+      restorePreviewSnapshot(engine, snapshot)
+    }
+  }
+
+  const handleGenerateSlides = async (slideIds: readonly string[]) => {
+    if (!project || phase === 'working') return
+    const missingCameraSlides = slideIds.filter((id) => cameraMissingIds.has(id))
+    if (missingCameraSlides.length) {
+      const names = selectable
+        .filter((slide) => missingCameraSlides.includes(slide.id))
+        .map((slide) => slide.name)
+      setError(`Camera animation required for: ${names.join(', ')}.`)
+      setPhase('error')
+      return
+    }
+    const overwritten = slideIds.filter((id) => projectExports?.slides[id])
+    if (
+      overwritten.length &&
+      !globalThis.confirm(
+        `${overwritten.length} video(s) already exist. Regenerate and replace them?`,
+      )
+    )
+      return
+    setError(null)
+    setPhase('working')
+    cancelRequested.current = false
+    setProgress({
+      received: 0,
+      expected: slideIds.reduce(
+        (total, id) =>
+          total +
+          Math.round((selectable.find((s) => s.id === id)?.duration ?? 0) * EXPORT_VIDEO_FPS),
+        0,
+      ),
+      status: 'queued',
+    })
+    try {
+      for (const id of slideIds) {
+        const slide = selectable.find((item) => item.id === id)
+        if (!slide) continue
+        setAction(`Generating ${slide.name}`)
+        await generateSlideVideo(id)
+        await refreshProjectExports()
+      }
+      setAction('Slide videos ready')
+      setPhase('done')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Slide export failed')
+      setPhase('error')
+      await refreshProjectExports().catch(() => undefined)
+    }
+  }
+
+  const handleJoinSlides = async () => {
+    if (!project) return
+    setPhase('working')
+    setError(null)
+    setAction('Joining slide videos')
+    try {
+      await exportApi.joinProjectExports(
+        project.id,
+        selectable.map((slide) => slide.id),
+      )
+      await refreshProjectExports()
+      setAction('Joined video is up to date')
+      setPhase('done')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Join failed')
+      setPhase('error')
+    }
+  }
+
+  const handleGenerateSrt = async () => {
+    if (!project) return
+    setPhase('working')
+    setError(null)
+    setAction('Generating SRT subtitles')
+    try {
+      const cues = buildExportSubtitleCues(
+        project,
+        selectable.map((slide) => slide.id),
+      )
+      await exportApi.saveProjectSubtitles(project.id, buildSrtDocument(cues))
+      await refreshProjectExports()
+      setAction('SRT subtitles saved')
+      setPhase('done')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Subtitle generation failed')
+      setPhase('error')
+    }
+  }
+
   return (
     <div
       role="dialog"
@@ -339,7 +531,7 @@ export function ExportVideoDialog({
           View rendered camera path before export
         </button>
         <p style={{ margin: '0 0 12px', fontSize: 11, color: '#999' }}>
-          Fixed 30 fps · 1920×1080 letterbox · MP4 + SRT/VTT in one ZIP
+          Fixed 30 fps · {frameDimensions.width}×{frameDimensions.height} px · one MP4 per slide
         </p>
 
         <div
@@ -372,7 +564,16 @@ export function ExportVideoDialog({
               const frames = Math.round(slide.duration * EXPORT_VIDEO_FPS)
               const cues = cueCounts.get(slide.id) ?? 0
               return (
-                <li key={slide.id} style={{ marginBottom: 4 }}>
+                <li
+                  key={slide.id}
+                  style={{
+                    marginBottom: 4,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                  }}
+                >
                   <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12 }}>
                     <input
                       type="checkbox"
@@ -386,8 +587,18 @@ export function ExportVideoDialog({
                       {cameraMissingIds.has(slide.id) && (
                         <span style={{ color: '#ffb74d' }}> · no camera keyframes</span>
                       )}
+                      {projectExports?.slides[slide.id] && (
+                        <span style={{ color: '#9ccc65' }}> · generated</span>
+                      )}
                     </span>
                   </label>
+                  <button
+                    data-testid={`export-slide-${slide.id}`}
+                    disabled={phase === 'working' || cameraMissingIds.has(slide.id)}
+                    onClick={() => void handleGenerateSlides([slide.id])}
+                  >
+                    {projectExports?.slides[slide.id] ? 'Regenerate' : 'Generate'}
+                  </button>
                 </li>
               )
             })}
@@ -400,6 +611,59 @@ export function ExportVideoDialog({
           </p>
         )}
 
+        <div
+          data-testid="export-project-files"
+          style={{ margin: '10px 0', padding: 9, background: '#222', fontSize: 11 }}
+        >
+          <div>
+            Saved in: <code>{projectExports?.directory ?? exportRoot}</code>
+          </div>
+          <div>
+            Joined video:{' '}
+            {projectExports?.joinedReady
+              ? projectExports.joinedOutdated
+                ? 'outdated — join again'
+                : 'up to date'
+              : 'not generated'}
+          </div>
+          <div>
+            Subtitles:{' '}
+            {projectExports?.subtitlesReady
+              ? projectExports.subtitlesOutdated
+                ? 'outdated — generate again'
+                : 'SRT generated'
+              : 'not generated'}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+          <button
+            data-testid="export-generate-all"
+            disabled={phase === 'working' || selectable.length === 0}
+            onClick={() => void handleGenerateSlides(selectable.map((slide) => slide.id))}
+          >
+            Generate all slides
+          </button>
+          <button
+            data-testid="export-join"
+            disabled={
+              phase === 'working' ||
+              !selectable.length ||
+              selectable.some((slide) => !projectExports?.slides[slide.id])
+            }
+            onClick={() => void handleJoinSlides()}
+          >
+            Join slides
+          </button>
+          <button
+            data-testid="export-srt"
+            disabled={phase === 'working'}
+            onClick={() => void handleGenerateSrt()}
+          >
+            Generate SRT
+          </button>
+        </div>
+
         {cameraMissing.length > 0 && (
           <p data-testid="export-camera-note" style={{ fontSize: 11, color: '#ffb74d' }}>
             No camera keyframes on {cameraMissing.length} selected slide
@@ -410,25 +674,13 @@ export function ExportVideoDialog({
           </p>
         )}
 
-        <label
-          style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, marginTop: 8 }}
-        >
-          <input
-            type="checkbox"
-            data-testid="export-subtitles-toggle"
-            checked={subtitlesOn}
-            onChange={(e) => setSubtitlesOn(e.target.checked)}
-          />
-          Include subtitles (SRT + VTT from prompter)
-        </label>
-
         <p data-testid="export-totals" style={{ fontSize: 12, color: '#ccc' }}>
           {totals.cues} cues · {totals.duration.toFixed(1)}s · {totals.frames} frames
         </p>
 
         {phase === 'working' && (
           <p data-testid="export-progress" style={{ fontSize: 12 }}>
-            Frames {progress.received}/{progress.expected} · {progress.status}
+            {action || 'Frames'} · {progress.received}/{progress.expected} · {progress.status}
           </p>
         )}
         {error && (
@@ -436,6 +688,18 @@ export function ExportVideoDialog({
             {error}
           </p>
         )}
+
+        <details style={{ marginTop: 12, fontSize: 11, color: '#aaa' }}>
+          <summary>Legacy full-project ZIP export</summary>
+          <p>Exports the entire selected timeline as one ZIP. Prefer per-slide generation above.</p>
+          <button
+            data-testid="export-start"
+            onClick={handleExport}
+            disabled={!canExport || blocked !== null}
+          >
+            Export full project ZIP
+          </button>
+        </details>
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
           {phase === 'working' ? (
@@ -452,18 +716,11 @@ export function ExportVideoDialog({
               <button data-testid="export-close" onClick={onClose}>
                 Close
               </button>
-              <button
-                data-testid="export-start"
-                onClick={handleExport}
-                disabled={!canExport || blocked !== null}
-              >
-                Export
-              </button>
             </>
           )}
         </div>
         {phase === 'done' && (
-          <p style={{ fontSize: 11, color: '#9ccc65' }}>Export finished — ZIP downloaded.</p>
+          <p style={{ fontSize: 11, color: '#9ccc65' }}>{action || 'Export finished'}</p>
         )}
       </div>
     </div>

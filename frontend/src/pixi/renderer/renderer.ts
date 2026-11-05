@@ -56,7 +56,11 @@ import { extractCanvasCapture, extractViewportCapture } from './thumbnailRecorde
 import type { CanvasCapture } from './thumbnailRecorder'
 import { ShaderProgramCache } from './programCache'
 import { FullscreenPass, resolveFullscreenShaderState } from './fullscreenPass'
-import { EXPORT_VIDEO_HEIGHT, EXPORT_VIDEO_WIDTH } from '../../engine/export'
+import {
+  cameraFrameDimensions,
+  cameraViewportForAspect,
+  cameraViewportScaleFactor,
+} from '../../engine/cameraFrameSize'
 
 const DEFAULT_CANVAS_BACKGROUND = 0xffffff
 
@@ -115,13 +119,16 @@ export class Renderer {
   readonly #viewportScratch: ViewportTransform = { x: 0, y: 0, scaleX: 1, scaleY: 1 }
   #cameraPreview: ViewportTransform | null = null
   #capturingExportFrame = false
-  #exportViewportScale: { readonly x: number; readonly y: number } | null = null
   readonly #cameraFrameScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #viewportNavigations = new Map<string, ViewportTransform>()
   #unsubscribe: Unsubscribe | null = null
   #unsubscribeTime: Unsubscribe | null = null
   #unsubscribeVisibility: (() => void) | null = null
   #resizeObserver: ResizeObserver | null = null
+  #unsubscribeCameraFrameSize: (() => void) | null = null
+  #editorScaleFactor = 1
+  #fallbackHostWidth = 0
+  #fallbackHostHeight = 0
   #started = false
   #disposed = false
   readonly #resolveAssetUrl: ResolveAssetUrl
@@ -165,7 +172,6 @@ export class Renderer {
       const app = new this.#pixi.Application()
       await app.init({
         background: '#ffffff',
-        resizeTo: this.#host,
         autoDensity: true,
         antialias: true,
       })
@@ -174,13 +180,44 @@ export class Renderer {
         return
       }
       this.#app = app
+      this.#fallbackHostWidth = app.screen.width
+      this.#fallbackHostHeight = app.screen.height
       this.#host.appendChild(app.canvas)
 
-      const resizeObserver = new ResizeObserver(() => {
-        app.renderer.resize(this.#host.clientWidth, this.#host.clientHeight)
-      })
+      const resizeCanvasForCameraMode = () => {
+        const size = cameraFrameDimensions(useUiStore.getState().cameraFrameSize)
+        const hostWidth = this.#host.clientWidth || this.#fallbackHostWidth
+        const hostHeight = this.#host.clientHeight || this.#fallbackHostHeight
+        const cameraMode = useUiStore.getState().cameraAnimationMode
+        const viewport = cameraMode
+          ? cameraViewportForAspect(hostWidth, hostHeight, size.width, size.height)
+          : { width: hostWidth, height: hostHeight, offsetX: 0, offsetY: 0 }
+        if (viewport.width <= 0 || viewport.height <= 0) return
+        app.renderer.resize(viewport.width, viewport.height)
+        this.#editorScaleFactor =
+          cameraMode && this.#host.clientWidth > 0 && this.#host.clientHeight > 0
+            ? cameraViewportScaleFactor(viewport.width, size.width)
+            : 1
+        Object.assign(app.canvas.style, {
+          position: 'absolute',
+          left: `${viewport.offsetX}px`,
+          top: `${viewport.offsetY}px`,
+          width: `${viewport.width}px`,
+          height: `${viewport.height}px`,
+        })
+      }
+      resizeCanvasForCameraMode()
+      const resizeObserver = new ResizeObserver(resizeCanvasForCameraMode)
       resizeObserver.observe(this.#host)
       this.#resizeObserver = resizeObserver
+      this.#unsubscribeCameraFrameSize = useUiStore.subscribe((state, previous) => {
+        if (
+          state.cameraFrameSize !== previous.cameraFrameSize ||
+          state.cameraAnimationMode !== previous.cameraAnimationMode
+        ) {
+          resizeCanvasForCameraMode()
+        }
+      })
 
       const world = new this.#pixi.Container()
       world.label = 'world'
@@ -400,6 +437,14 @@ export class Renderer {
         },
         setViewportTransform: (transform) => {
           this.#setViewportNavigation(transform)
+        },
+        toAuthoredCameraTransform: (transform) => {
+          const factor = this.#editorCameraScaleFactor()
+          return {
+            ...transform,
+            scaleX: transform.scaleX / factor,
+            scaleY: transform.scaleY / factor,
+          }
         },
         getCameraAnimationMode: () => useUiStore.getState().cameraAnimationMode,
         getTime: () => {
@@ -646,6 +691,8 @@ export class Renderer {
     this.#thumbnails.detach()
     this.#resizeObserver?.disconnect()
     this.#resizeObserver = null
+    this.#unsubscribeCameraFrameSize?.()
+    this.#unsubscribeCameraFrameSize = null
     this.#sceneRenderer = null
     this.#transformSource = null
     this.#controls?.detach()
@@ -754,11 +801,14 @@ export class Renderer {
     }
     const devOverlay = this.#devOverlay
     if (devOverlay) {
+      const cameraMode = useUiStore.getState().cameraAnimationMode
+      const shownZoom =
+        cameraMode && !this.#capturingExportFrame ? zoomX / this.#editorCameraScaleFactor() : zoomX
       devOverlay.update({
         fps: app.ticker.FPS,
         cameraX: x,
         cameraY: y,
-        zoom: zoomX,
+        zoom: shownZoom,
         nodeCount: sceneRenderer.renderedNodeCount,
       })
     }
@@ -825,14 +875,16 @@ export class Renderer {
       out.y = preview.y
       out.scaleX = preview.scaleX
       out.scaleY = preview.scaleY
-    }
-    if (this.#capturingExportFrame && this.#exportViewportScale) {
-      // Preserve the same camera-visible world window as the editor viewport
-      // while rendering it into the larger export pixel dimensions.
-      out.scaleX *= this.#exportViewportScale.x
-      out.scaleY *= this.#exportViewportScale.y
+    } else if (!this.#capturingExportFrame && useUiStore.getState().cameraAnimationMode) {
+      const factor = this.#editorCameraScaleFactor()
+      out.scaleX *= factor
+      out.scaleY *= factor
     }
     return out
+  }
+
+  #editorCameraScaleFactor(): number {
+    return this.#editorScaleFactor
   }
 
   #setViewportNavigation(transform: ViewportTransform): void {
@@ -843,8 +895,8 @@ export class Renderer {
     this.#viewportNavigations.set(slideId, {
       x: transform.x,
       y: transform.y,
-      scaleX: transform.scaleX,
-      scaleY: transform.scaleY,
+      scaleX: transform.scaleX / this.#editorCameraScaleFactor(),
+      scaleY: transform.scaleY / this.#editorCameraScaleFactor(),
     })
   }
 
@@ -1121,11 +1173,12 @@ export class Renderer {
       return
     }
     frame.setVisible(true)
+    const frameSize = cameraFrameDimensions(useUiStore.getState().cameraFrameSize)
     frame.show({
       minX: ax,
       minY: ay,
-      maxX: ax + viewWidth / asx,
-      maxY: ay + viewHeight / asy,
+      maxX: ax + frameSize.width / asx,
+      maxY: ay + frameSize.height / asy,
     })
   }
 
@@ -1173,9 +1226,13 @@ export class Renderer {
   }
 
   /** Capture a frame using authored camera keyframes, ignoring gesture previews. */
-  captureExportFrame(width = EXPORT_VIDEO_WIDTH, height = EXPORT_VIDEO_HEIGHT): string | null {
+  captureExportFrame(width?: number, height?: number): string | null {
     const app = this.#app
     if (!app || this.#disposed) return null
+
+    const frameSize = cameraFrameDimensions(useUiStore.getState().cameraFrameSize)
+    width ??= frameSize.width
+    height ??= frameSize.height
 
     const preview = this.#cameraPreview
     const wasCapturingExportFrame = this.#capturingExportFrame
@@ -1184,15 +1241,10 @@ export class Renderer {
       width: app.canvas.style.width,
       height: app.canvas.style.height,
     }
-    const previousExportViewportScale = this.#exportViewportScale
     // Export must always use evaluated camera keyframes, regardless of the
     // editor's free-navigation mode or an unfinished pan/zoom gesture.
     this.#capturingExportFrame = true
     this.#cameraPreview = null
-    this.#exportViewportScale = {
-      x: width / previousSize.width,
-      y: height / previousSize.height,
-    }
     try {
       // Render the stage at the delivery resolution rather than extracting the
       // editor-sized backbuffer and asking FFmpeg to upscale it later.
@@ -1204,7 +1256,6 @@ export class Renderer {
       this.#applyTick()
       return this.captureFrame(true)
     } finally {
-      this.#exportViewportScale = previousExportViewportScale
       app.renderer.resize(previousSize.width, previousSize.height)
       app.canvas.style.width = previousCanvasStyle.width
       app.canvas.style.height = previousCanvasStyle.height

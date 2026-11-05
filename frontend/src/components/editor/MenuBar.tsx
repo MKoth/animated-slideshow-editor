@@ -25,6 +25,7 @@ import { KeyboardShortcutsModal } from './KeyboardShortcutsModal'
 import { ExportVideoDialog } from '../export/ExportVideoDialog'
 import { ApiClient } from '../../api/apiClient'
 import { ExportApi } from '../../api/exportApi'
+import { ExportSettingsDialog } from '../settings/ExportSettingsDialog'
 
 const IMPORT_ASSETS_ITEM = 'Import Assets'
 const SNAP_TO_GRID_ITEM = 'Snap to Grid'
@@ -36,6 +37,7 @@ const SAVE_ITEM = 'Save'
 const EXPORT_VIDEO_ITEM = 'Export video…'
 
 const TTS_SETTINGS_ITEM = 'TTS Settings'
+const EXPORT_SETTINGS_ITEM = 'Video Export Settings'
 const DEBUG_PANEL_ITEM = 'Debug Panel'
 const KEYBOARD_SHORTCUTS_ITEM = 'Keyboard Shortcuts'
 const MENUS = [
@@ -70,7 +72,9 @@ const MENUS = [
   },
   {
     label: 'Settings',
-    items: import.meta.env.DEV ? [TTS_SETTINGS_ITEM, DEBUG_PANEL_ITEM] : [TTS_SETTINGS_ITEM],
+    items: import.meta.env.DEV
+      ? [TTS_SETTINGS_ITEM, EXPORT_SETTINGS_ITEM, DEBUG_PANEL_ITEM]
+      : [TTS_SETTINGS_ITEM, EXPORT_SETTINGS_ITEM],
   },
   {
     label: 'Help',
@@ -156,6 +160,7 @@ export function MenuBar() {
   const { engine, dispatch, persistence } = useEngine()
   const [, setTick] = useState(0)
   const [showTtsSettings, setShowTtsSettings] = useState(false)
+  const [showExportSettings, setShowExportSettings] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showExport, setShowExport] = useState(false)
   useEngineEvent(() => setTick((tick) => tick + 1))
@@ -202,6 +207,8 @@ export function MenuBar() {
       requestNewProject()
     } else if (item === TTS_SETTINGS_ITEM) {
       setShowTtsSettings(true)
+    } else if (item === EXPORT_SETTINGS_ITEM) {
+      setShowExportSettings(true)
     } else if (item === DEBUG_PANEL_ITEM) {
       useUiStore.getState().toggleDebugPanelVisible()
     } else if (item === KEYBOARD_SHORTCUTS_ITEM) {
@@ -246,6 +253,7 @@ export function MenuBar() {
         </nav>
       </header>
       {showTtsSettings && <TtsGlobalSettingsModal onClose={() => setShowTtsSettings(false)} />}
+      {showExportSettings && <ExportSettingsDialog onClose={() => setShowExportSettings(false)} />}
       {showShortcuts && <KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />}
       {showExport && (
         <ExportVideoDialog

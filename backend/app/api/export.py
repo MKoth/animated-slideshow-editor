@@ -12,10 +12,19 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel, Field
+
+from app.export_storage import (
+    DEFAULT_EXPORT_ROOT,
+    load_export_root,
+    project_export_dir,
+    read_manifest,
+    save_export_root,
+    write_manifest,
+)
 
 router = APIRouter()
 
@@ -133,6 +142,8 @@ class ExportJobRequest(BaseModel):
     determinismKey: str
     ffmpegGlobalArgs: list[str]
     projectName: str | None = None
+    projectId: str | None = None
+    exportSlide: bool = False
     subtitles: ExportSubtitlesPayload | None = None
 
     model_config = {"populate_by_name": True, "extra": "allow"}
@@ -200,6 +211,18 @@ class ExportCompleteResponse(BaseModel):
     error: str | None = None
 
 
+class ExportRootRequest(BaseModel):
+    exportRoot: str
+
+
+class ProjectJoinRequest(BaseModel):
+    slideIds: list[str]
+
+
+class ProjectSubtitlesRequest(BaseModel):
+    srt: str
+
+
 class ExportAudioUploadRequest(BaseModel):
     assetId: str
     data: str = Field(description="base64 data URL or raw base64 WAV/MP3/OGG bytes")
@@ -247,6 +270,13 @@ def _validate_descriptor(job: ExportJobRequest) -> None:
         raise HTTPException(status_code=422, detail="version must be 1")
     if job.settings.fps <= 0:
         raise HTTPException(status_code=422, detail="settings.fps must be positive")
+    width = job.settings.width or 1920
+    height = job.settings.height or 1080
+    if width <= 0 or height <= 0 or width % 2 or height % 2:
+        raise HTTPException(
+            status_code=422,
+            detail="settings.width and settings.height must be positive even pixels",
+        )
     if not job.slides:
         raise HTTPException(status_code=422, detail="slides must be non-empty")
     for slide in job.slides:
@@ -559,12 +589,17 @@ def _run_ffmpeg(args: list[str], timeout: int = 120) -> None:
 
 
 def _encode_video_from_frames(
-    frames_dir: Path, frame_count: int, fps: float, out_path: Path
+    frames_dir: Path,
+    frame_count: int,
+    fps: float,
+    out_path: Path,
+    width: int = 1920,
+    height: int = 1080,
 ) -> None:
-    """Encode 1920x1080 letterboxed H.264 from a %06d.png image sequence.
+    """Encode letterboxed H.264 at the selected output size from a PNG sequence.
 
-    High-quality text settings (same 1920x1080 resolution): CRF 18 instead of
-    the libx264 default 23, preset slow, and lanczos upscale. yuv420p is kept
+    High-quality text settings: CRF 18 instead of the libx264 default 23,
+    preset slow, and lanczos resize. yuv420p is kept
     for MP4 compatibility — it halves chroma resolution, which is why sharp
     text edges need the extra luma quality.
     """
@@ -584,8 +619,8 @@ def _encode_video_from_frames(
             str(frame_count),
             "-vf",
             (
-                "scale=1920:1080:flags=lanczos:force_original_aspect_ratio=decrease,"
-                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,"
+                f"scale={width}:{height}:flags=lanczos:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
                 "format=yuv420p"
             ),
             "-c:v",
@@ -599,7 +634,10 @@ def _encode_video_from_frames(
             "-movflags",
             "+faststart",
             str(out_path),
-        ]
+        ],
+        # x264's slow preset can take several real-time seconds per video
+        # second. Scale the timeout with this independently encoded segment.
+        timeout=max(600, int((frame_count / fps) * 4)),
     )
 
 
@@ -891,6 +929,10 @@ def _encode_job_mp4(record: dict[str, Any]) -> bytes | None:
     slides: list[dict[str, Any]] = record.get("slides", [])
     settings = record.get("settings", {})
     fps = float(settings.get("fps", 30) or 30)
+    width = int(settings.get("width", 1920) or 1920)
+    height = int(settings.get("height", 1080) or 1080)
+    if width <= 0 or height <= 0 or width % 2 or height % 2:
+        raise RuntimeError("export width and height must be positive even pixel dimensions")
     expected = int(record.get("expectedFrameCount", 0))
     frame_files = sorted(frames_dir.glob("*.png"))
     if not frame_files:
@@ -901,7 +943,7 @@ def _encode_job_mp4(record: dict[str, Any]) -> bytes | None:
         )
     work_dir = Path(str(record["jobDir"]))
     video_path = work_dir / "video.mp4"
-    _encode_video_from_frames(frames_dir, len(frame_files), fps, video_path)
+    _encode_video_from_frames(frames_dir, len(frame_files), fps, video_path, width, height)
 
     audio_files: dict[str, str] = record.get("audioFiles", {})
     use_rubberband = _ffmpeg_has_filter("rubberband")
@@ -996,8 +1038,40 @@ def _run_encoding(record: dict[str, Any]) -> None:
         if not vtt:
             vtt = "WEBVTT\n"
         basename = record.get("basename", "export")
-        record["artifact"] = _build_artifact_zip(basename, mp4, srt, vtt)
-        record["artifactReady"] = True
+        if record.get("exportSlide") and record.get("projectId"):
+            root = Path(str(record["exportRoot"]))
+            project_dir = project_export_dir(root, str(record["projectId"]))
+            slide = record["slides"][0]
+            slide_id = str(slide["slideId"])
+            safe_slide_id = re.sub(r"[^A-Za-z0-9._-]+", "_", slide_id).strip("._") or "slide"
+            output = project_dir / f"slide-{safe_slide_id}.mp4"
+            temporary = output.with_suffix(".mp4.tmp")
+            try:
+                temporary.write_bytes(mp4)
+                temporary.replace(output)
+            except OSError:
+                temporary.unlink(missing_ok=True)
+                raise
+            manifest = read_manifest(project_dir)
+            slides = manifest.setdefault("slides", {})
+            slides[slide_id] = {
+                "file": output.name,
+                "name": slide.get("slideName") or slide_id,
+                "duration": float(slide.get("duration", 0)),
+            }
+            manifest["joinedOutdated"] = True
+            manifest["joinedReady"] = (project_dir / "joined.mp4").is_file()
+            manifest["subtitlesReady"] = (project_dir / "subtitles.srt").is_file()
+            manifest["subtitlesOutdated"] = manifest["subtitlesReady"]
+            write_manifest(project_dir, manifest)
+        if record.get("exportSlide"):
+            # The durable slide MP4 is the artifact; don't duplicate it in an
+            # in-memory ZIP just to immediately discard the download.
+            record["artifact"] = None
+            record["artifactReady"] = True
+        else:
+            record["artifact"] = _build_artifact_zip(basename, mp4, srt, vtt)
+            record["artifactReady"] = True
         record["status"] = "done"
         record["error"] = None
     except Exception as exc:  # noqa: BLE001
@@ -1010,8 +1084,12 @@ def _run_encoding(record: dict[str, Any]) -> None:
 
 
 @router.post("/export/jobs", response_model=ExportJobResponse, status_code=201)
-def create_export_job(job: ExportJobRequest) -> ExportJobResponse:
+def create_export_job(job: ExportJobRequest, request: Request) -> ExportJobResponse:
     _validate_descriptor(job)
+    if job.exportSlide and len(job.slides) != 1:
+        raise HTTPException(
+            status_code=422, detail="A persistent slide export must contain exactly one slide"
+        )
     if _has_active_job():
         raise HTTPException(status_code=409, detail="export already in progress")
     job_id = str(uuid.uuid4())
@@ -1021,7 +1099,13 @@ def create_export_job(job: ExportJobRequest) -> ExportJobResponse:
     subtitles = {"srt": "", "vtt": ""}
     if job.subtitles is not None:
         subtitles = {"srt": job.subtitles.srt or "", "vtt": job.subtitles.vtt or ""}
-    job_dir = Path(tempfile.mkdtemp(prefix=f"export_{job_id}_"))
+    export_root = load_export_root(request.app.state.settings.data_dir)
+    if job.exportSlide and job.projectId:
+        project_dir = project_export_dir(export_root, job.projectId)
+        job_dir = project_dir / f".work-{job_id}"
+        job_dir.mkdir(parents=True, exist_ok=False)
+    else:
+        job_dir = Path(tempfile.mkdtemp(prefix=f"export_{job_id}_"))
     (job_dir / "frames").mkdir(parents=True, exist_ok=True)
     (job_dir / "audio").mkdir(parents=True, exist_ok=True)
     record: dict[str, Any] = {
@@ -1043,6 +1127,9 @@ def create_export_job(job: ExportJobRequest) -> ExportJobResponse:
         "audioLoudnorm": job.global_.audio.get("loudnorm"),
         "basename": basename,
         "projectName": job.projectName,
+        "projectId": job.projectId,
+        "exportSlide": job.exportSlide,
+        "exportRoot": str(export_root),
         "subtitles": subtitles,
         "receivedFrames": 0,
         "artifactReady": False,
@@ -1090,6 +1177,122 @@ def _status_response(record: dict[str, Any]) -> ExportJobStatusResponse:
         artifactReady=bool(record.get("artifactReady", False)),
         error=record.get("error"),
     )
+
+
+@router.get("/export/settings")
+def get_export_settings(request: Request) -> dict[str, str]:
+    root = load_export_root(request.app.state.settings.data_dir)
+    return {"exportRoot": str(root), "defaultExportRoot": str(DEFAULT_EXPORT_ROOT)}
+
+
+@router.put("/export/settings")
+def put_export_settings(body: ExportRootRequest, request: Request) -> dict[str, str]:
+    try:
+        root = save_export_root(request.app.state.settings.data_dir, body.exportRoot)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Cannot use export directory: {exc}") from exc
+    return {"exportRoot": str(root), "defaultExportRoot": str(DEFAULT_EXPORT_ROOT)}
+
+
+@router.get("/export/projects/{project_id}")
+def get_project_exports(project_id: str, request: Request) -> dict[str, Any]:
+    root = load_export_root(request.app.state.settings.data_dir)
+    project_dir = project_export_dir(root, project_id)
+    manifest = read_manifest(project_dir)
+    return {
+        "projectId": project_id,
+        "directory": str(project_dir),
+        "slides": manifest.get("slides", {}),
+        "joinedReady": (project_dir / "joined.mp4").is_file(),
+        "joinedOutdated": bool(manifest.get("joinedOutdated", True)),
+        "subtitlesReady": (project_dir / "subtitles.srt").is_file(),
+        "subtitlesOutdated": bool(manifest.get("subtitlesOutdated", True)),
+    }
+
+
+def _ffconcat_quote(path: Path) -> str:
+    return str(path.resolve()).replace("\\", "\\\\").replace("'", "\\'")
+
+
+@router.post("/export/projects/{project_id}/join")
+def join_project_exports(
+    project_id: str, body: ProjectJoinRequest, request: Request
+) -> dict[str, Any]:
+    root = load_export_root(request.app.state.settings.data_dir)
+    project_dir = project_export_dir(root, project_id)
+    manifest = read_manifest(project_dir)
+    slide_entries = manifest.get("slides", {})
+    if not body.slideIds or any(slide_id not in slide_entries for slide_id in body.slideIds):
+        raise HTTPException(
+            status_code=422, detail="Every slide must have a generated video before joining"
+        )
+    files = [project_dir / str(slide_entries[slide_id]["file"]) for slide_id in body.slideIds]
+    if any(
+        not path.is_file() or not path.resolve().is_relative_to(project_dir.resolve())
+        for path in files
+    ):
+        raise HTTPException(status_code=409, detail="A generated slide video is missing")
+    concat_file = project_dir / "join-input.txt"
+    output = project_dir / "joined.mp4"
+    temporary = project_dir / "joined.tmp.mp4"
+    try:
+        concat_file.write_text(
+            "".join(f"file '{_ffconcat_quote(path)}'\n" for path in files), encoding="utf-8"
+        )
+        _run_ffmpeg(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_file),
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+                str(temporary),
+            ],
+            timeout=600,
+        )
+        if not temporary.is_file() or temporary.stat().st_size == 0:
+            raise RuntimeError("FFmpeg produced an empty joined video")
+        temporary.replace(output)
+    except Exception as exc:
+        temporary.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Could not join slide videos: {exc}") from exc
+    finally:
+        concat_file.unlink(missing_ok=True)
+    manifest["joinedOutdated"] = False
+    manifest["joinedReady"] = True
+    write_manifest(project_dir, manifest)
+    return {"projectId": project_id, "file": str(output), "joinedOutdated": False}
+
+
+@router.post("/export/projects/{project_id}/subtitles")
+def save_project_subtitles(
+    project_id: str, body: ProjectSubtitlesRequest, request: Request
+) -> dict[str, Any]:
+    root = load_export_root(request.app.state.settings.data_dir)
+    project_dir = project_export_dir(root, project_id)
+    output = project_dir / "subtitles.srt"
+    temporary = project_dir / "subtitles.srt.tmp"
+    try:
+        temporary.write_text(body.srt, encoding="utf-8")
+        temporary.replace(output)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+    manifest = read_manifest(project_dir)
+    manifest["subtitlesReady"] = True
+    manifest["subtitlesOutdated"] = False
+    write_manifest(project_dir, manifest)
+    return {"projectId": project_id, "file": str(output)}
 
 
 @router.get("/export/jobs/{job_id}", response_model=ExportJobStatusResponse)

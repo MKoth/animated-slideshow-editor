@@ -1,6 +1,11 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import {
+  CAMERA_FRAME_SIZES,
+  DEFAULT_CAMERA_FRAME_SIZE,
+  type CameraFrameSizeId,
+} from '../engine/cameraFrameSize'
+import {
   DEFAULT_INSPECTOR_WIDTH,
   DEFAULT_LEFT_SIDEBAR_WIDTH,
   MAX_INSPECTOR_WIDTH,
@@ -25,6 +30,7 @@ interface UiState {
   debugPanelVisible: boolean
   animationMode: boolean
   cameraAnimationMode: boolean
+  cameraFrameSize: CameraFrameSizeId
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
   setLeftSidebarWidth: (width: number) => void
@@ -40,6 +46,7 @@ interface UiState {
   toggleAnimationMode: () => void
   setCameraAnimationMode: (enabled: boolean) => void
   toggleCameraAnimationMode: () => void
+  setCameraFrameSize: (size: CameraFrameSizeId) => void
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -77,6 +84,7 @@ export const useUiStore = create<UiState>()(
       debugPanelVisible: false,
       animationMode: false,
       cameraAnimationMode: false,
+      cameraFrameSize: DEFAULT_CAMERA_FRAME_SIZE,
       setTheme: (theme) => set({ theme }),
       toggleTheme: () => set((state) => ({ theme: state.theme === 'light' ? 'dark' : 'light' })),
       setLeftSidebarWidth: (width) =>
@@ -99,6 +107,12 @@ export const useUiStore = create<UiState>()(
         set((state) => withMode(state, 'cameraAnimationMode', enabled)),
       toggleCameraAnimationMode: () =>
         set((state) => withMode(state, 'cameraAnimationMode', !state.cameraAnimationMode)),
+      setCameraFrameSize: (size) =>
+        set({
+          cameraFrameSize: CAMERA_FRAME_SIZES.some((preset) => preset.id === size)
+            ? size
+            : DEFAULT_CAMERA_FRAME_SIZE,
+        }),
     }),
     { name: 'editor-ui-prefs' },
   ),

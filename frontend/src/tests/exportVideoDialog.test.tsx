@@ -8,6 +8,7 @@ import { ApiClient, ApiError } from '../api/apiClient'
 import { ExportApi } from '../api/exportApi'
 import { AddKeyframeCommand, CommandDispatcher, UndoStack } from '../engine/commands'
 import { useUiStore } from '../stores/uiStore'
+import { DEFAULT_CAMERA_FRAME_SIZE } from '../engine/cameraFrameSize'
 
 function animateCamera(internal: Engine, slideId: string): void {
   const slide = internal.getSlide(slideId)
@@ -39,6 +40,24 @@ function makeApi(overrides: Partial<ExportApi> = [] as unknown as Partial<Export
   const api = new ExportApi(new ApiClient())
   // Default stubs: no running jobs, instant done job.
   api.listJobs = vi.fn().mockResolvedValue([])
+  api.getExportSettings = vi.fn().mockResolvedValue({
+    exportRoot: '/tmp/video-exports',
+    defaultExportRoot: '/tmp/video-exports',
+  })
+  api.getProjectExports = vi.fn().mockResolvedValue({
+    projectId: 'project',
+    directory: '/tmp/video-exports/project',
+    slides: {},
+    joinedReady: false,
+    joinedOutdated: true,
+    subtitlesReady: false,
+  })
+  api.joinProjectExports = vi
+    .fn()
+    .mockResolvedValue({ file: '/tmp/video-exports/project/joined.mp4' })
+  api.saveProjectSubtitles = vi
+    .fn()
+    .mockResolvedValue({ file: '/tmp/video-exports/project/subtitles.srt' })
   api.createJob = vi.fn().mockResolvedValue({
     jobId: 'job-1',
     status: 'queued',
@@ -120,6 +139,7 @@ function makeApi(overrides: Partial<ExportApi> = [] as unknown as Partial<Export
 beforeEach(() => {
   vi.restoreAllMocks()
   useUiStore.getState().setCameraAnimationMode(false)
+  useUiStore.getState().setCameraFrameSize(DEFAULT_CAMERA_FRAME_SIZE)
   // jsdom URL.createObjectURL is undefined — stub for download.
   ;(URL as unknown as { createObjectURL: unknown }).createObjectURL = vi
     .fn()
@@ -128,6 +148,34 @@ beforeEach(() => {
 })
 
 describe('ExportVideoDialog', () => {
+  it('exports one slide to the project-local store instead of downloading the whole project', async () => {
+    const { internal, readonly } = makeEngineWithSlides()
+    animateCamera(internal, internal.project!.slides[0]!.id)
+    const api = makeApi()
+    const slideId = internal.project!.slides[0]!.id
+    useUiStore.getState().setCameraFrameSize('1080x1920')
+    render(
+      <ExportVideoDialog
+        engine={readonly}
+        exportApi={api}
+        onClose={() => {}}
+        captureFrame={async () => 'data:image/png;base64,ZmFrZQ=='}
+      />,
+    )
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId(`export-slide-${slideId}`))
+    await waitFor(() => expect(api.completeJob).toHaveBeenCalled())
+    expect(api.createJob).toHaveBeenCalledWith(
+      expect.objectContaining({ slides: [expect.objectContaining({ slideId })] }),
+      expect.objectContaining({ projectId: internal.project!.id, exportSlide: true }),
+    )
+    expect(api.createJob).toHaveBeenCalledWith(
+      expect.objectContaining({ settings: expect.objectContaining({ width: 1080, height: 1920 }) }),
+      expect.any(Object),
+    )
+    expect(api.downloadArtifact).not.toHaveBeenCalled()
+  })
+
   it('offers a camera-path preview before export and returns to the editor in camera mode', async () => {
     const { readonly } = makeEngineWithSlides()
     const api = makeApi()
@@ -155,8 +203,8 @@ describe('ExportVideoDialog', () => {
     const dialog = await screen.findByTestId('export-video-dialog')
     expect(dialog).toBeInTheDocument()
     const boxes = screen.getAllByRole('checkbox')
-    // 2 slides + subtitles toggle
-    expect(boxes).toHaveLength(3)
+    // One checkbox per slide; SRT is a separate action.
+    expect(boxes).toHaveLength(2)
     const slideBoxes = boxes.slice(0, 2)
     for (const box of slideBoxes) expect(box).toBeChecked()
     // 2 + 1 cues, 5s, 150 frames (2*30 + 3*30)

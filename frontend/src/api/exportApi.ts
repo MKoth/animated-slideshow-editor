@@ -41,6 +41,8 @@ export interface ExportJobStatus {
 export interface ExportCreateOptions {
   readonly projectName?: string
   readonly subtitles?: { readonly srt: string; readonly vtt: string }
+  readonly projectId?: string
+  readonly exportSlide?: boolean
 }
 
 export interface ExportFrameUpload {
@@ -65,6 +67,8 @@ export class ExportApi {
       ...descriptor,
       ...(options?.projectName !== undefined ? { projectName: options.projectName } : {}),
       ...(options?.subtitles !== undefined ? { subtitles: options.subtitles } : {}),
+      ...(options?.projectId !== undefined ? { projectId: options.projectId } : {}),
+      ...(options?.exportSlide !== undefined ? { exportSlide: options.exportSlide } : {}),
     }
     return this.client.post<ExportJobCreated>('/api/export/jobs', JSON.stringify(payload))
   }
@@ -133,5 +137,42 @@ export class ExportApi {
       )
     }
     return response.blob()
+  }
+
+  async getExportSettings(): Promise<{ exportRoot: string; defaultExportRoot: string }> {
+    return this.client.get('/api/export/settings')
+  }
+
+  async updateExportSettings(exportRoot: string): Promise<{ exportRoot: string }> {
+    return this.client.put('/api/export/settings', JSON.stringify({ exportRoot }))
+  }
+
+  async getProjectExports(projectId: string): Promise<{
+    projectId: string
+    directory: string
+    slides: Record<string, { file: string; name: string; duration: number }>
+    joinedReady: boolean
+    joinedOutdated: boolean
+    subtitlesReady: boolean
+    subtitlesOutdated: boolean
+  }> {
+    return this.client.get(`/api/export/projects/${encodeURIComponent(projectId)}`)
+  }
+
+  async joinProjectExports(
+    projectId: string,
+    slideIds: readonly string[],
+  ): Promise<{ file: string }> {
+    return this.client.post(
+      `/api/export/projects/${encodeURIComponent(projectId)}/join`,
+      JSON.stringify({ slideIds }),
+    )
+  }
+
+  async saveProjectSubtitles(projectId: string, srt: string): Promise<{ file: string }> {
+    return this.client.post(
+      `/api/export/projects/${encodeURIComponent(projectId)}/subtitles`,
+      JSON.stringify({ srt }),
+    )
   }
 }

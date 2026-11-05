@@ -12,6 +12,7 @@ __pycache__/
 *.pyc
 backend/.env
 backend/var/
+backend/exports/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

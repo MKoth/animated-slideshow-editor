@@ -1,6 +1,8 @@
 import type { EnginePublic } from '../engine/engine'
 import { getActiveRenderer } from '../pixi/renderer/activeRenderer'
 import { usePlaybackController } from '../stores/playbackStore'
+import { cameraFrameDimensions } from '../engine/cameraFrameSize'
+import { useUiStore } from '../stores/uiStore'
 
 function nextPaint(): Promise<void> {
   return new Promise((resolve) => {
@@ -30,7 +32,8 @@ export async function captureExportFrameAt(
     }
     usePlaybackController.getState().setCurrentTime(slideId, timestamp, duration)
     await nextPaint()
-    const data = getActiveRenderer()?.captureExportFrame() ?? null
+    const frameSize = cameraFrameDimensions(useUiStore.getState().cameraFrameSize)
+    const data = getActiveRenderer()?.captureExportFrame(frameSize.width, frameSize.height) ?? null
     if (data) return data
     const canvas = document.querySelector('canvas') as HTMLCanvasElement | null
     return canvas?.toDataURL?.('image/png') ?? null

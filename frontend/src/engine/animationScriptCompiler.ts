@@ -5539,6 +5539,9 @@ class Compiler {
   /**
    * `setCamera(x, y, zoom)` writes the output camera's starting transform as
    * script-owned time-zero keyframes, keeping it editable and replaceable.
+   * The renderer interprets zoom against the globally selected pixel frame,
+   * then scales the editor viewport to that logical frame so resize does not
+   * change the visible world window.
    */
   #lowerSetCamera(statement: SetCameraNode, cursor: number): number {
     const x = this.#evaluateNumber(statement.x, 'a camera x position')
