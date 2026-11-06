@@ -19,6 +19,7 @@ export interface ScenarioTtsBatchTarget {
   readonly text: string
   readonly plannedDuration: number
   readonly startTime: number
+  readonly ttsLanguage?: 'en' | 'es'
 }
 
 export interface ScenarioTtsBatchSnapshot {
@@ -30,6 +31,7 @@ export interface ScenarioTtsBatchSnapshot {
         readonly text: string
         readonly duration: number
         readonly startTime: number
+        readonly ttsLanguage?: 'en' | 'es'
       }[]
     } | null
   }[]
@@ -55,6 +57,7 @@ export function collectScenarioTtsTargets(
         text: part.text,
         plannedDuration: part.duration,
         startTime: part.startTime,
+        ...(part.ttsLanguage ? { ttsLanguage: part.ttsLanguage } : {}),
       })
     }
   }
@@ -279,12 +282,9 @@ export async function runScenarioTtsBatch(
     // English by default; blocks carved out as foreign words (planner
     // `<strong class="foreign">` highlights, foreign = Spanish for now)
     // are synthesized in the foreign language instead of auto-detect.
-    const language = resolveTtsLanguage(
-      target.text,
-      options.foreignWords,
-      defaultLanguage,
-      foreignLanguage,
-    )
+    const language =
+      target.ttsLanguage ??
+      resolveTtsLanguage(target.text, options.foreignWords, defaultLanguage, foreignLanguage)
     // Spanish blocks clone the configured Spanish reference (Base); English
     // blocks always use the default voice.
     const useForeignVoice =

@@ -13,6 +13,7 @@ import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
 import { DEFAULT_TIMELINE_HEIGHT } from '../stores/uiPrefs'
 import { useTimelineViewStore } from '../stores/timelineViewStore'
+import { useAiStore } from '../stores/aiStore'
 
 function renderPanel(): {
   engine: Engine
@@ -101,6 +102,64 @@ describe('TimelinePanel empty states', () => {
         'No objects in the scene. Drag assets into the scene to begin animating.',
       ),
     ).toBeInTheDocument()
+  })
+})
+
+describe('TimelinePanel Improve blocks action', () => {
+  it('sends the preset prompt with the active Slide context and slide-bound conversation', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const projectId = engine.project!.id
+    const conversationId = 'audio-for-slide'
+    useAiStore.setState({
+      assistantMode: 'audio',
+      conversations: [
+        {
+          id: conversationId,
+          projectId,
+          title: 'Slide audio',
+          mode: 'audio',
+          modified: new Date().toISOString(),
+        },
+      ],
+      audioConversationSlideById: { [conversationId]: slide.id },
+      activeByProject: { [`${projectId}:audio:slide:${slide.id}`]: conversationId },
+    })
+    const sendMessage = vi.spyOn(useAiStore.getState(), 'sendMessage').mockResolvedValue()
+
+    fireEvent.click(await screen.findByTestId('timeline-tab-audio'))
+    fireEvent.click(await screen.findByTestId('prompter-ai-improve'))
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    const [sentProjectId, sentConversationId, text, context, mode] = sendMessage.mock.calls[0]
+    expect(sentProjectId).toBe(projectId)
+    expect(sentConversationId).toBe(conversationId)
+    expect(text).toContain('Improve the current slide')
+    expect(text).toContain('double quotes (not parentheses)')
+    expect((context as { activeSlideId?: string | null }).activeSlideId).toBe(slide.id)
+    expect(mode).toBe('audio')
+  })
+
+  it('shows block/audio counts and asks before replacing existing audio', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    engine.createPrompterPart(slide.id, {
+      id: 'part-with-audio',
+      text: 'Hello.',
+      duration: 1,
+    })
+    engine.setPrompterPartAudio(slide.id, 'part-with-audio', 'clip-existing', 'asset-existing')
+
+    fireEvent.click(await screen.findByTestId('timeline-tab-audio'))
+    expect(await screen.findByTestId('prompter-audio-count')).toHaveTextContent(
+      'Blocks: 1 · Audio: 1/1',
+    )
+    fireEvent.click(screen.getByTestId('prompter-generate-all-tts'))
+    expect(await screen.findByTestId('prompter-tts-replace-dialog')).toHaveTextContent(
+      '1 of 1 blocks already have audio',
+    )
+    fireEvent.click(screen.getByText('Cancel'))
+    expect(screen.queryByTestId('prompter-tts-replace-dialog')).not.toBeInTheDocument()
   })
 })
 

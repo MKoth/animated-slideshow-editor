@@ -18,9 +18,18 @@ import { usePopularAudioStore } from '../../stores/popularAudioStore'
 import { CreateAudioClipCommand } from '../../engine/commands'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { useAiStore } from '../../stores/aiStore'
+import { buildContextSnapshot } from '../../ai/contextSnapshot'
+import { runScenarioTtsBatch } from '../../ai/scenarioTtsBatch'
+import { TtsApi } from '../../engine/ttsProvider'
+import { apiClient } from '../../api'
+import { TtsSettingsApi } from '../../api/ttsSettingsApi'
+import { useAudioResizePreferenceStore } from '../../stores/audioResizePreferenceStore'
+import { useTtsForeignVoiceStore } from '../../stores/ttsForeignVoiceStore'
+import { hasPrompterPartAudio } from '../../engine/prompter'
 
 export function TimelinePanel({ height }: { height: number }) {
-  const { engine, dispatch } = useEngine()
+  const { engine, dispatch, undoStack } = useEngine()
   const [, setTick] = useState(0)
   useEngineEvent((event) => {
     setTick((tick) => tick + 1)
@@ -60,6 +69,11 @@ export function TimelinePanel({ height }: { height: number }) {
   const authoringModeByHost = useTimelineViewStore((state) => state.authoringModeByHost)
   const [activeTab, setActiveTab] = useState<'animation' | 'audio'>('animation')
   const [showPopularAudio, setShowPopularAudio] = useState(false)
+  const [confirmTtsReplace, setConfirmTtsReplace] = useState(false)
+  const [ttsBatchProgress, setTtsBatchProgress] = useState<{ done: number; total: number } | null>(
+    null,
+  )
+  const [ttsBatchError, setTtsBatchError] = useState<string | null>(null)
   const currentTime = usePlaybackController((state) => state.currentTimes[slide?.id ?? ''] ?? 0)
   const viewportWidth = useViewportWidth(scrollerRef, [
     slide?.id ?? null,
@@ -168,6 +182,116 @@ export function TimelinePanel({ height }: { height: number }) {
   const toolbarDuration =
     isClipEdit && clipEditDefinition ? clipEditDefinition.duration : (slide?.duration ?? 0)
   const toolbarSlideId = slide?.id ?? ''
+  const prompterParts = slide?.prompter?.parts ?? []
+  const generatedAudioCount = prompterParts.filter(
+    (part) =>
+      hasPrompterPartAudio(part) ||
+      (part.segments?.some((segment) => Boolean(segment.audioClipId || segment.audioAssetId)) ??
+        false),
+  ).length
+
+  const openPrompterAssistant = () => {
+    if (!project || !slide) return
+    const ai = useAiStore.getState()
+    ai.setAssistantMode('audio')
+    ai.setDraft(project.id, '', 'audio', slide.id)
+    ai.setPanelOpen(true)
+  }
+
+  const improvePrompterBlocks = async () => {
+    if (!project || !slide) return
+    const ai = useAiStore.getState()
+    ai.setAssistantMode('audio')
+    ai.setPanelOpen(true)
+    let conversationId = ai.activeIdFor(project.id, 'audio', slide.id)
+    if (!conversationId) {
+      const created = await ai.createConversation(project.id, 'audio', slide.id)
+      conversationId = created?.id ?? null
+    }
+    if (!conversationId) return
+    void ai.sendMessage(
+      project.id,
+      conversationId,
+      'Improve the current slide\'s prompter blocks for natural educational TTS. Consider the whole slide and neighboring blocks. Preserve spoken words and order; only adjust punctuation and block boundaries. Keep separate completed ideas in separate blocks: do not merge distinct sentences just because they are adjacent. Split a block when it contains more than one complete sentence or idea; merge only fragments that form one sentence or one continuous idea. Do not translate. In mixed English/Spanish text, keep the English teaching sentence and original Spanish wording, wrapping each Spanish word, phrase, or sentence in double quotes (not parentheses). Set language on every block: "es" for Spanish-only blocks and mixed English/Spanish blocks (Spanish is the TTS default for mixed speech); "en" for English blocks. Return a ```prompter-edit JSON fence with {"slideId":"...","sourcePartIds":[...],"blocks":[{"sourcePartIds":[...],"text":"...","language":"en|es"}]}. Repeat sourcePartIds for splits, group adjacent ids for merges, and include every source id in order. Outside the JSON, briefly recommend Cartesia emotion, speed, and volume. Do not claim changes were applied.',
+      buildContextSnapshot(engine, { includePrompterContext: true }),
+      'audio',
+    )
+  }
+
+  const generateSlideTts = async () => {
+    if (!slide || !undoStack || prompterParts.length === 0) return
+    setTtsBatchError(null)
+    setTtsBatchProgress({ done: 0, total: prompterParts.length })
+    setConfirmTtsReplace(false)
+    try {
+      let modelId: string | undefined
+      let provider: string | undefined
+      let voice: string | undefined
+      try {
+        const models = await new TtsSettingsApi(apiClient).getModels()
+        modelId =
+          (models.defaultModel as string) || (models.default_model_id as string) || undefined
+        provider =
+          (models.defaultProvider as string) || (models.default_provider as string) || undefined
+        const rawVoice =
+          (models as unknown as { voice?: string | null; tts_voice?: string | null }).voice ??
+          (models as unknown as { tts_voice?: string | null }).tts_voice ??
+          (models as unknown as { defaults?: { voice?: string | null } }).defaults?.voice
+        if (typeof rawVoice === 'string' && rawVoice.trim()) voice = rawVoice.trim()
+      } catch {
+        // The TTS API falls back to configured defaults when settings are unavailable.
+      }
+      const preference = useAudioResizePreferenceStore.getState().getPreference('voice')
+      const foreignVoice = useTtsForeignVoiceStore.getState()
+      const result = await runScenarioTtsBatch(
+        { dispatcher: { dispatch }, undoStack },
+        {
+          slides: [
+            {
+              id: slide.id,
+              prompter: {
+                parts: prompterParts.map((part) => ({
+                  id: part.id,
+                  text: part.text,
+                  duration: part.duration,
+                  startTime: part.startTime,
+                  ...(part.ttsLanguage ? { ttsLanguage: part.ttsLanguage } : {}),
+                })),
+              },
+            },
+          ],
+          settings: project?.settings,
+        },
+        new TtsApi(apiClient),
+        {
+          ...(modelId ? { modelId } : {}),
+          ...(provider ? { provider } : {}),
+          ...(voice ? { voice } : {}),
+          mode: preference === 'trim' ? 'trim' : 'stretch',
+          ...(foreignVoice.referenceAssetId
+            ? {
+                foreignReferenceAssetId: foreignVoice.referenceAssetId,
+                ...(foreignVoice.referenceTranscript.trim()
+                  ? { foreignRefText: foreignVoice.referenceTranscript.trim() }
+                  : {}),
+              }
+            : {}),
+          onProgress: (done, total) => setTtsBatchProgress({ done, total }),
+        },
+      )
+      if (!result.ok) setTtsBatchError(result.error)
+    } catch (error) {
+      setTtsBatchError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setTtsBatchProgress(null)
+    }
+  }
+
+  const requestSlideTts = () => {
+    setTtsBatchError(null)
+    if (generatedAudioCount > 0) setConfirmTtsReplace(true)
+    else void generateSlideTts()
+  }
 
   return (
     <div
@@ -239,13 +363,53 @@ export function TimelinePanel({ height }: { height: number }) {
             </button>
           </div>
           {activeTab === 'audio' && (
-            <button
-              className="popular-audio-open-button"
-              data-testid="open-popular-audio"
-              onClick={() => setShowPopularAudio(true)}
-            >
-              Popular recordings
-            </button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span data-testid="prompter-audio-count" aria-live="polite">
+                Blocks: {prompterParts.length} · Audio: {generatedAudioCount}/{prompterParts.length}
+              </span>
+              <button
+                type="button"
+                data-testid="prompter-generate-all-tts"
+                disabled={prompterParts.length === 0 || ttsBatchProgress !== null}
+                title="Generate TTS sequentially for every prompter block on this slide"
+                onClick={requestSlideTts}
+              >
+                {ttsBatchProgress
+                  ? `Generating TTS ${ttsBatchProgress.done}/${ttsBatchProgress.total}…`
+                  : 'Generate TTS for all blocks'}
+              </button>
+              <button
+                className="popular-audio-open-button"
+                data-testid="prompter-ai-improve"
+                title="Send a preset TTS improvement request for the current slide's prompter blocks"
+                onClick={() => void improvePrompterBlocks()}
+              >
+                Improve blocks
+              </button>
+              <button
+                data-testid="prompter-ai-open"
+                title="Open a chat to ask about this slide’s prompter text"
+                onClick={openPrompterAssistant}
+                style={{
+                  padding: '5px 12px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                  background: 'var(--color-bg)',
+                  color: 'var(--color-text)',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                }}
+              >
+                Prompter AI
+              </button>
+              <button
+                className="popular-audio-open-button"
+                data-testid="open-popular-audio"
+                onClick={() => setShowPopularAudio(true)}
+              >
+                Popular recordings
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -299,6 +463,45 @@ export function TimelinePanel({ height }: { height: number }) {
             else setShowPopularAudio(false)
           }}
         />
+      )}
+      {confirmTtsReplace && slide && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="prompter-tts-replace-title"
+          data-testid="prompter-tts-replace-dialog"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1000,
+            display: 'grid',
+            placeItems: 'center',
+            background: 'rgba(0, 0, 0, 0.45)',
+          }}
+        >
+          <section style={{ padding: 20, background: 'var(--color-bg-panel)', borderRadius: 8 }}>
+            <h2 id="prompter-tts-replace-title">Replace existing block audio?</h2>
+            <p>
+              {generatedAudioCount} of {prompterParts.length} blocks already have audio. Generating
+              TTS for all blocks will delete and replace their existing audio.
+            </p>
+            <button type="button" onClick={() => setConfirmTtsReplace(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              data-testid="prompter-tts-replace-confirm"
+              onClick={() => void generateSlideTts()}
+            >
+              Delete previous audio and generate all
+            </button>
+          </section>
+        </div>
+      )}
+      {ttsBatchError && (
+        <div role="alert" data-testid="prompter-tts-batch-error">
+          {ttsBatchError}
+        </div>
       )}
     </div>
   )
