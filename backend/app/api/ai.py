@@ -2809,16 +2809,6 @@ def reject_ai_board(request: Request, board_id: str) -> dict[str, object]:
 
 # -- edit proposals ------------------------------------------------------
 
-PROPOSAL_DRAFT_JSON_SCHEMA: dict[str, object] = {
-    "type": "object",
-    "properties": {
-        "title": {"type": "string"},
-        "commands": {"type": "array", "items": {"type": "object"}},
-    },
-    "required": ["commands"],
-    "additionalProperties": False,
-}
-
 PROPOSAL_COMMAND_TYPES: tuple[str, ...] = (
     "CreateSlide",
     "CreatePrompterPart",
@@ -2833,6 +2823,54 @@ PROPOSAL_COMMAND_TYPES: tuple[str, ...] = (
     "AiCommitTts",
     "AiImportSlides",
 )
+
+_SHIFT_PROMPTER_REQUIRED_FIELDS = [
+    "type",
+    "slideId",
+    "partId",
+    "duration",
+    "shiftDownstream",
+]
+
+PROPOSAL_DRAFT_JSON_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "commands": {
+            "type": "array",
+            "items": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": {"const": "UpdatePrompterPartWithShift"},
+                            "slideId": {"type": "string"},
+                            "partId": {"type": "string"},
+                            "duration": {"type": "number"},
+                            "shiftDownstream": {"type": "boolean"},
+                        },
+                        "required": _SHIFT_PROMPTER_REQUIRED_FIELDS,
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "enum": [
+                                    command_type
+                                    for command_type in PROPOSAL_COMMAND_TYPES
+                                    if command_type != "UpdatePrompterPartWithShift"
+                                ]
+                            }
+                        },
+                        "required": ["type"],
+                    },
+                ]
+            },
+        },
+    },
+    "required": ["commands"],
+    "additionalProperties": False,
+}
 
 
 def _proposal_asset_instructions(effective_mode: str) -> str:
@@ -3038,6 +3076,10 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
         "a short title plus a JSON array of canonical engine commands that "
         "implement exactly what the message describes and nothing more. "
         f"Use only these command types: {', '.join(PROPOSAL_COMMAND_TYPES)}. "
+        "For UpdatePrompterPartWithShift always emit all fields: type, slideId, partId, duration, "
+        "shiftDownstream (an explicit true or false). Use it only when setting a known duration; "
+        "for a text-only edit use UpdatePrompterPart with slideId, partId, and text. Never emit "
+        "a command containing only its type. "
         + (
             " For a reviewed timeline-only Animation Script, use AiRunAnimationScript so the "
             "proposal both stores the source and runs its compiled timeline output with "

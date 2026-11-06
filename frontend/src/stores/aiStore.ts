@@ -46,8 +46,11 @@ export function normalizeAiMode(mode: unknown): AiAssistantMode {
   return 'scenario'
 }
 
-export function aiActiveKey(projectId: string, mode: AiAssistantMode): string {
-  return `${projectId}:${normalizeAiMode(mode)}`
+export function aiActiveKey(projectId: string, mode: AiAssistantMode, slideId?: string): string {
+  const normalized = normalizeAiMode(mode)
+  return normalized === 'audio' && slideId
+    ? `${projectId}:${normalized}:slide:${slideId}`
+    : `${projectId}:${normalized}`
 }
 
 export function conversationModeOf(conv: Pick<AiConversationSummary, 'mode'>): AiAssistantMode {
@@ -58,8 +61,9 @@ function readActiveId(
   activeByProject: Record<string, string>,
   projectId: string,
   mode: AiAssistantMode,
+  slideId?: string,
 ): string | null {
-  const key = aiActiveKey(projectId, mode)
+  const key = aiActiveKey(projectId, mode, slideId)
   if (activeByProject[key]) return activeByProject[key] ?? null
   // Legacy persisted keys (pre scenario/audio/blackboard split) hold the
   // scenario conversation under the old lesson key or the bare project key.
@@ -76,6 +80,7 @@ interface AiState {
   messagesById: Record<string, AiMessage[]>
   activeByProject: Record<string, string>
   drafts: Record<string, string>
+  audioConversationSlideById: Record<string, string>
   search: string
   panelOpen: boolean
   assistantMode: AiAssistantMode
@@ -132,15 +137,21 @@ interface AiState {
   setAssistantMode: (mode: AiAssistantMode) => void
   setSettingsOpen: (open: boolean) => void
   setSearch: (search: string) => void
-  setDraft: (projectId: string, draft: string, mode?: AiAssistantMode) => void
-  setActive: (projectId: string, conversationId: string, mode?: AiAssistantMode) => void
-  clearActive: (projectId: string, mode?: AiAssistantMode) => void
-  activeIdFor: (projectId: string, mode?: AiAssistantMode) => string | null
+  setDraft: (projectId: string, draft: string, mode?: AiAssistantMode, slideId?: string) => void
+  setActive: (
+    projectId: string,
+    conversationId: string,
+    mode?: AiAssistantMode,
+    slideId?: string,
+  ) => void
+  clearActive: (projectId: string, mode?: AiAssistantMode, slideId?: string) => void
+  activeIdFor: (projectId: string, mode?: AiAssistantMode, slideId?: string) => string | null
 
   loadConversations: (projectId: string, mode?: AiAssistantMode) => Promise<void>
   createConversation: (
     projectId: string,
     mode?: AiAssistantMode,
+    slideId?: string,
   ) => Promise<AiConversationSummary | null>
   renameConversation: (id: string, title: string) => Promise<void>
   deleteConversation: (projectId: string, id: string) => Promise<void>
@@ -361,6 +372,7 @@ export const useAiStore = create<AiState>()(
       messagesById: {},
       activeByProject: {},
       drafts: {},
+      audioConversationSlideById: {},
       search: '',
       panelOpen: false,
       assistantMode: 'scenario',
@@ -404,21 +416,27 @@ export const useAiStore = create<AiState>()(
       setAssistantMode: (mode) => set({ assistantMode: normalizeAiMode(mode) }),
       setSettingsOpen: (open) => set({ settingsOpen: open }),
       setSearch: (search) => set({ search }),
-      setDraft: (projectId, draft, mode) => {
+      setDraft: (projectId, draft, mode, slideId) => {
         const wanted = normalizeAiMode(mode ?? get().assistantMode)
-        const key = aiActiveKey(projectId, wanted)
+        const key = aiActiveKey(projectId, wanted, slideId)
         set((state) => ({ drafts: { ...state.drafts, [key]: draft } }))
       },
-      setActive: (projectId, conversationId, mode) => {
+      setActive: (projectId, conversationId, mode, slideId) => {
         const wanted = normalizeAiMode(mode ?? get().assistantMode)
-        const key = aiActiveKey(projectId, wanted)
+        if (
+          wanted === 'audio' &&
+          slideId &&
+          get().audioConversationSlideById[conversationId] !== slideId
+        )
+          return
+        const key = aiActiveKey(projectId, wanted, slideId)
         set((state) => ({
           activeByProject: { ...state.activeByProject, [key]: conversationId },
         }))
       },
-      clearActive: (projectId, mode) => {
+      clearActive: (projectId, mode, slideId) => {
         const wanted = normalizeAiMode(mode ?? get().assistantMode)
-        const key = aiActiveKey(projectId, wanted)
+        const key = aiActiveKey(projectId, wanted, slideId)
         set((state) => {
           if (!(key in state.activeByProject)) return state
           const activeByProject = { ...state.activeByProject }
@@ -426,11 +444,12 @@ export const useAiStore = create<AiState>()(
           return { activeByProject }
         })
       },
-      activeIdFor: (projectId, mode) =>
+      activeIdFor: (projectId, mode, slideId) =>
         readActiveId(
           get().activeByProject,
           projectId,
           normalizeAiMode(mode ?? get().assistantMode),
+          slideId,
         ),
 
       loadConversations: async (projectId, mode) => {
@@ -493,8 +512,9 @@ export const useAiStore = create<AiState>()(
         }
       },
 
-      createConversation: async (projectId, mode) => {
+      createConversation: async (projectId, mode, slideId) => {
         const wanted = normalizeAiMode(mode ?? get().assistantMode)
+        if (wanted === 'audio' && !slideId) return null
         try {
           const created = await get().api.createConversation(projectId, undefined, wanted)
           const summary: AiConversationSummary = {
@@ -509,8 +529,16 @@ export const useAiStore = create<AiState>()(
             messagesById: { ...state.messagesById, [summary.id]: [] },
             activeByProject: {
               ...state.activeByProject,
-              [aiActiveKey(projectId, wanted)]: summary.id,
+              [aiActiveKey(projectId, wanted, slideId)]: summary.id,
             },
+            ...(wanted === 'audio' && slideId
+              ? {
+                  audioConversationSlideById: {
+                    ...state.audioConversationSlideById,
+                    [summary.id]: slideId,
+                  },
+                }
+              : {}),
             status: 'idle' as const,
           }))
           return summary
@@ -641,7 +669,11 @@ export const useAiStore = create<AiState>()(
           },
         }))
         // Clear the draft for this project + mode once sent.
-        set((state) => ({ drafts: { ...state.drafts, [aiActiveKey(projectId, wanted)]: '' } }))
+        const slideId =
+          wanted === 'audio' ? get().audioConversationSlideById[conversationId] : undefined
+        set((state) => ({
+          drafts: { ...state.drafts, [aiActiveKey(projectId, wanted, slideId)]: '' },
+        }))
         let collected = ''
         let requestStatus: NonNullable<AiMessage['requestStatus']> = 'processing'
         try {
@@ -1686,6 +1718,7 @@ export const useAiStore = create<AiState>()(
       partialize: (state) => ({
         activeByProject: state.activeByProject,
         drafts: state.drafts,
+        audioConversationSlideById: state.audioConversationSlideById,
         panelOpen: state.panelOpen,
         assistantMode: state.assistantMode,
         activeScenarioId: state.activeScenarioId,

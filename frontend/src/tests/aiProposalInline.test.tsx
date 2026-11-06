@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AiPanel } from '../components/ai/AiPanel'
@@ -145,6 +145,12 @@ function installFetch(projectId: string, draftFailure = false, mode = 'lesson') 
         { status: 201 },
       )
     }
+    if (method === 'POST' && path === '/api/ai/chat') {
+      return new Response(
+        'event: start\ndata: {"messageId":"m-fix"}\n\nevent: done\ndata: {"messageId":"m-fix","content":"Corrected command JSON"}\n\n',
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      )
+    }
     if (path.includes('/api/ai/proposals')) {
       return new Response(JSON.stringify(proposals), { status: 200 })
     }
@@ -262,6 +268,38 @@ describe('AiPanel inline proposals', () => {
     expect(
       within(screen.getByTestId('ai-proposal-modal')).getByTestId('ai-proposal-prop-new'),
     ).toHaveTextContent('CreateSlide')
+  })
+
+  it('compiles manually drafted commands locally and only sends errors to AI on request', async () => {
+    renderInline()
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('ai-message-propose-m-1'))
+    const modal = await screen.findByTestId('ai-proposal-modal')
+    const invalidCommands = [{ type: 'UpdatePrompterPartWithShift', slideId: 'slide-1' }]
+    fireEvent.change(within(modal).getByTestId('ai-proposal-modal-create-commands'), {
+      target: { value: JSON.stringify(invalidCommands) },
+    })
+    await user.click(within(modal).getByTestId('ai-proposal-modal-create-submit'))
+
+    const compileErrors = await within(modal).findByTestId('ai-proposal-modal-compile-errors')
+    expect(compileErrors).toHaveTextContent("missing required field 'partId'")
+    expect(compileErrors).toHaveTextContent("missing required field 'duration'")
+    expect(compileErrors).toHaveTextContent("missing required field 'shiftDownstream'")
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === '/api/ai/proposals')).toBe(
+      false,
+    )
+    expect(
+      vi.mocked(fetch).mock.calls.some(([url]) => String(url) === '/api/ai/proposals/draft'),
+    ).toBe(false)
+
+    await user.click(within(modal).getByTestId('ai-proposal-modal-send-errors'))
+    await waitFor(() => {
+      const chatCall = vi.mocked(fetch).mock.calls.find(([url]) => String(url) === '/api/ai/chat')
+      expect(chatCall).toBeDefined()
+      expect(String((chatCall?.[1] as RequestInit).body)).toContain(
+        "missing required field 'partId'",
+      )
+    })
   })
 
   it('lists unattached proposals collapsed and reviews them in the modal', async () => {

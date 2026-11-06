@@ -59,6 +59,21 @@ describe('Context snapshot', () => {
     expect(JSON.stringify(engine.project)).toBe(before)
   })
 
+  it('includes current prompter blocks in audio context, not as draft text', () => {
+    const engine = createEngineInternal()
+    engine.createProject({ name: 'Audio lesson' })
+    const slide = engine.createSlide('Mixed language')
+    engine.createPrompterPart(slide.id, { id: 'part-es', text: 'Hola, world!', duration: 1.2 })
+
+    const snapshot = buildContextSnapshot(engine, { includePrompterContext: true })
+    expect(snapshot.audioPrompterFocus).toEqual({
+      slideId: slide.id,
+      slideName: 'Mixed language',
+      parts: [{ id: 'part-es', text: 'Hola, world!' }],
+    })
+    expect(snapshot).not.toHaveProperty('draft')
+  })
+
   it('assembles well under 50 ms for typical projects', () => {
     const engine = mockEngine()
     const started = performance.now()

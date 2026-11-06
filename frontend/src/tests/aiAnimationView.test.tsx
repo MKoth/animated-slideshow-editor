@@ -648,8 +648,8 @@ describe('AiPanel animation mode', () => {
     expect(screen.queryByTestId('ai-animation-section')).not.toBeInTheDocument()
 
     await user.click(screen.getByTestId('ai-mode-audio'))
-    expect(screen.getByTestId('ai-narration-section')).toBeInTheDocument()
-    expect(screen.getByTestId('ai-calibration-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-narration-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-calibration-section')).not.toBeInTheDocument()
     expect(screen.queryByTestId('ai-scenario-open-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('ai-reconciliation-open-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('ai-board-section')).not.toBeInTheDocument()

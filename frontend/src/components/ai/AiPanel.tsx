@@ -21,12 +21,12 @@ import { AiProposalDetail } from './AiProposalView'
 import { AiAnimationView } from './AiAnimationView'
 import { AiBoardView } from './AiBoardView'
 import { AiAskGroup } from './AiAskBlock'
-import { AiCalibrationView } from './AiCalibrationView'
 import { AiNarrationView } from './AiNarrationView'
 import { AiReconciliationView } from './AiReconciliationView'
 import { AiScenarioView } from './AiScenarioView'
 import { AiScenarioEditBrief } from './AiScenarioEditBrief'
 import type { ScenarioMarkdownVersion } from '../../api/aiApi'
+import { PrompterEditExplanation, PrompterEditProposal } from './PrompterEditProposal'
 
 const EMPTY_MARKDOWN_VERSIONS: ScenarioMarkdownVersion[] = []
 
@@ -70,6 +70,7 @@ export function AiPanel() {
   const { engine } = useEngine()
   const projectId = engine.project?.id ?? ''
   const projectName = engine.project?.name ?? 'No project'
+  const activeSlideId = engine.getActiveSlide()?.id
 
   const conversations = useAiStore((s) => s.conversations)
   const messagesById = useAiStore((s) => s.messagesById)
@@ -82,12 +83,15 @@ export function AiPanel() {
   const assistantMode = useAiStore((s) => s.assistantMode)
 
   const activeId = useAiStore((s) =>
-    projectId ? (s.activeIdFor(projectId, s.assistantMode) ?? null) : null,
+    projectId ? (s.activeIdFor(projectId, s.assistantMode, activeSlideId) ?? null) : null,
   )
   const draft = useAiStore((s) => {
     if (!projectId) return ''
     const mode = normalizeAiMode(s.assistantMode)
-    const key = `${projectId}:${mode}`
+    const key =
+      mode === 'audio' && activeSlideId
+        ? `${projectId}:audio:slide:${activeSlideId}`
+        : `${projectId}:${mode}`
     if (s.drafts[key] !== undefined) return s.drafts[key] ?? ''
     if (mode === 'scenario' && s.drafts[projectId] !== undefined) {
       return s.drafts[projectId] ?? ''
@@ -123,23 +127,34 @@ export function AiPanel() {
     const m = normalizeAiMode(assistantMode)
     if (!activeId) {
       const fallback = conversations.find(
-        (conv) => conv.projectId === projectId && conversationModeOf(conv) === m,
+        (conv) =>
+          conv.projectId === projectId &&
+          conversationModeOf(conv) === m &&
+          (m !== 'audio' || store.audioConversationSlideById[conv.id] === activeSlideId),
       )
-      if (fallback) void store.setActive(projectId, fallback.id, m)
+      if (fallback) void store.setActive(projectId, fallback.id, m, activeSlideId)
       return
     }
     // A stale cross-mode mapping (e.g. animation key pointing at a collection
     // conversation) must never render — revalidate on every tab switch. An id
     // missing from the list is left alone: the loader owns that case.
     const current = conversations.find((conv) => conv.id === activeId)
-    if (current === undefined || conversationModeOf(current) === m) return
-    const fallback = conversations.find(
-      (conv) => conv.projectId === projectId && conversationModeOf(conv) === m,
+    if (
+      current === undefined ||
+      (conversationModeOf(current) === m &&
+        (m !== 'audio' || store.audioConversationSlideById[current.id] === activeSlideId))
     )
-    if (fallback) void store.setActive(projectId, fallback.id, m)
-    else void store.clearActive(projectId, m)
+      return
+    const fallback = conversations.find(
+      (conv) =>
+        conv.projectId === projectId &&
+        conversationModeOf(conv) === m &&
+        (m !== 'audio' || store.audioConversationSlideById[conv.id] === activeSlideId),
+    )
+    if (fallback) void store.setActive(projectId, fallback.id, m, activeSlideId)
+    else void store.clearActive(projectId, m, activeSlideId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, assistantMode, conversations, activeId])
+  }, [projectId, assistantMode, conversations, activeId, activeSlideId])
 
   useEffect(() => {
     if (activeId) void store.loadMessages(activeId)
@@ -195,6 +210,7 @@ export function AiPanel() {
         // or timeline context — the lesson, markdown, and version lines only.
         // The backend drops these keys again as defense in depth.
         blackboardOnly: normalizeAiMode(assistantMode) === 'scenario',
+        includePrompterContext: normalizeAiMode(assistantMode) === 'audio',
         ...(scenarioMarkdown ? { scenarioMarkdown } : {}),
         ...(activeMarkdownVersion
           ? {
@@ -236,10 +252,21 @@ export function AiPanel() {
 
   const visibleConversations = useMemo(() => {
     const inMode = conversations.filter(
-      (conv) => conversationModeOf(conv) === normalizeAiMode(assistantMode),
+      (conv) =>
+        conversationModeOf(conv) === normalizeAiMode(assistantMode) &&
+        (normalizeAiMode(assistantMode) !== 'audio' ||
+          store.audioConversationSlideById[conv.id] === undefined ||
+          store.audioConversationSlideById[conv.id] === activeSlideId),
     )
     return filterConversations(inMode, messagesById, search)
-  }, [conversations, messagesById, search, assistantMode])
+  }, [
+    conversations,
+    messagesById,
+    search,
+    assistantMode,
+    activeSlideId,
+    store.audioConversationSlideById,
+  ])
 
   const messages = useMemo(
     () => (activeId ? (messagesById[activeId] ?? []) : []),
@@ -267,6 +294,11 @@ export function AiPanel() {
       : base
   }, [messages, usage])
   const isStreaming = status === 'streaming' && streamingConversationId === activeId
+  const lastMessageFailed = Boolean(
+    lastError ||
+    messages[messages.length - 1]?.errorCode ||
+    messages[messages.length - 1]?.requestStatus === 'failed',
+  )
   const unavailable = status === 'unavailable' || backendStatus === 'unavailable'
   const mode = normalizeAiMode(assistantMode)
   // Scenario/audio/blackboard render the
@@ -282,7 +314,7 @@ export function AiPanel() {
     if (!conversationId) {
       setCreatingFirstConversation(true)
       try {
-        const created = await store.createConversation(projectId, mode)
+        const created = await store.createConversation(projectId, mode, activeSlideId)
         conversationId = created?.id ?? null
       } finally {
         setCreatingFirstConversation(false)
@@ -596,12 +628,30 @@ export function AiPanel() {
     )
   }
 
-  // Fix-and-resubmit for dry-run / server validation failures on an already
-  // drafted proposal (e.g. AiRunAnimationScript source with pseudo-syntax).
-  // Sends the validator error plus the failed source back — the assistant
-  // cannot see proposals, only chat history, so a bare proposal id is an
-  // unresolvable pointer. The fix arrives as a new message; the broken
-  // proposal stays for the record.
+  const sendProposalCompileErrors = (errorText: string, commandsJson: string) => {
+    if (!projectId || !activeId || isStreaming || unavailable) return
+    void store.sendMessage(
+      projectId,
+      activeId,
+      `A proposal failed local compilation. Fix the command JSON using the current project context and prior conversation. Do not invent slide or part IDs; if a required value cannot be determined, ask me. Preserve the intended edit and reply with a corrected JSON command array only.\n\nCompiler errors:\n${errorText}\n\nOriginal command JSON:\n${commandsJson}`,
+      context,
+      normalizeAiMode(assistantMode),
+    )
+  }
+
+  const handleLocalCompileFix = (messageId: string, errorText: string, commandsJson: string) => {
+    if (!projectId || !activeId || isStreaming || unavailable) return
+    void store.sendMessage(
+      projectId,
+      activeId,
+      `The proposal I was drafting from message ${messageId} failed local compilation. Fix these commands using the current project context and prior conversation. Do not invent slide or part IDs; if a required value cannot be determined, ask me. Preserve the intended edit and reply with a corrected JSON command array only.\n\nCompiler errors:\n${errorText}\n\nOriginal command JSON:\n${commandsJson}`,
+      context,
+      normalizeAiMode(assistantMode),
+    )
+    setProposalModal(null)
+  }
+
+  // Sends local compile errors back only after the user explicitly requests a fix.
   const handleFixProposal = (proposalId: string, errorText: string) => {
     if (!projectId || !activeId || isStreaming || unavailable) return
     const err = errorText.trim() || 'unknown validation error'
@@ -609,6 +659,10 @@ export function AiPanel() {
     const scriptCommand = proposal?.commands.find(
       (c) => c.type === 'AiRunAnimationScript' || c.type === 'SetSlideAnimationScript',
     )
+    if (!scriptCommand && proposal) {
+      sendProposalCompileErrors(err, JSON.stringify(proposal.commands, null, 2))
+      return
+    }
     const rawSource =
       scriptCommand && typeof scriptCommand.source === 'string' ? scriptCommand.source : ''
     const slideId =
@@ -718,22 +772,7 @@ export function AiPanel() {
               disabled
               assistantMode={mode === 'shape' || mode === 'collection' ? mode : 'animation'}
             />
-          ) : mode === 'audio' ? (
-            <>
-              <AiNarrationView
-                projectId={projectId}
-                reconciliationId={activeReconciliationId}
-                conversationId={activeId}
-                disabled
-              />
-              <AiCalibrationView
-                projectId={projectId}
-                narrationId={activeNarrationId}
-                conversationId={activeId}
-                disabled
-              />
-            </>
-          ) : mode === 'blackboard' ? (
+          ) : mode === 'audio' ? null : mode === 'blackboard' ? (
             <BlackboardUnitedViews
               projectId={projectId}
               reconciliationId={activeReconciliationId}
@@ -775,7 +814,11 @@ export function AiPanel() {
               disabled={!projectId}
               onClick={() => {
                 if (projectId)
-                  void store.createConversation(projectId, normalizeAiMode(assistantMode))
+                  void store.createConversation(
+                    projectId,
+                    normalizeAiMode(assistantMode),
+                    activeSlideId,
+                  )
               }}
             >
               New {normalizeAiMode(assistantMode)} conversation
@@ -810,13 +853,28 @@ export function AiPanel() {
                   ) : (
                     <button
                       data-testid={`ai-switch-${conv.id}`}
+                      disabled={
+                        mode === 'audio' && store.audioConversationSlideById[conv.id] === undefined
+                      }
+                      title={
+                        mode === 'audio' && store.audioConversationSlideById[conv.id] === undefined
+                          ? 'Legacy conversation is preserved but is not bound to a Slide'
+                          : undefined
+                      }
                       onClick={() =>
                         projectId &&
-                        store.setActive(projectId, conv.id, normalizeAiMode(assistantMode))
+                        store.setActive(
+                          projectId,
+                          conv.id,
+                          normalizeAiMode(assistantMode),
+                          activeSlideId,
+                        )
                       }
                       style={{ fontWeight: conv.id === activeId ? 'bold' : 'normal' }}
                     >
-                      {conv.title}
+                      {mode === 'audio' && store.audioConversationSlideById[conv.id] === undefined
+                        ? `${conv.title} · legacy, not Slide-scoped`
+                        : conv.title}
                     </button>
                   )}
                   <button
@@ -948,6 +1006,23 @@ export function AiPanel() {
                             </div>
                           )}
                         </div>
+                      ) : mode === 'audio' && message.content.includes('```prompter-edit') ? (
+                        <>
+                          <PrompterEditExplanation content={message.content} />
+                          <PrompterEditProposal
+                            content={message.content}
+                            onFix={(errors) => {
+                              if (!projectId || !activeId || isStreaming || unavailable) return
+                              void store.sendMessage(
+                                projectId,
+                                activeId,
+                                `The proposed prompter edit failed local dry-run validation. Fix the proposal using the current prompter context and prior conversation. Do not invent part IDs. If a required value cannot be determined, ask me. Return a corrected prompter-edit JSON fence only.\n\nErrors:\n${errors.join('\n')}\n\nPrevious proposal:\n${message.content}`,
+                                context,
+                                normalizeAiMode(assistantMode),
+                              )
+                            }}
+                          />
+                        </>
                       ) : (
                         <AiMarkdown content={shownContent} />
                       )
@@ -1072,7 +1147,7 @@ export function AiPanel() {
                         )}
                       </div>
                     ))}
-                  {message.role === 'assistant' && !message.errorCode && (
+                  {message.role === 'assistant' && !message.errorCode && mode !== 'audio' && (
                     <>
                       {shapeStep ? (
                         <button
@@ -1200,7 +1275,12 @@ export function AiPanel() {
               value={draft}
               onChange={(e) =>
                 projectId &&
-                store.setDraft(projectId, e.target.value, normalizeAiMode(assistantMode))
+                store.setDraft(
+                  projectId,
+                  e.target.value,
+                  normalizeAiMode(assistantMode),
+                  activeSlideId,
+                )
               }
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -1211,7 +1291,7 @@ export function AiPanel() {
             />
             <button
               data-testid="ai-send"
-              onClick={handleSend}
+              onClick={() => void handleSend()}
               disabled={isStreaming || creatingFirstConversation || !draft.trim()}
             >
               {creatingFirstConversation ? 'Starting…' : 'Send'}
@@ -1221,13 +1301,15 @@ export function AiPanel() {
                 Starting a scenario conversation…
               </AiProcessingStatus>
             )}
-            <button
-              data-testid="ai-regenerate"
-              onClick={handleRegenerate}
-              disabled={isStreaming || messages.length === 0}
-            >
-              Regenerate
-            </button>
+            {lastMessageFailed && (
+              <button
+                data-testid="ai-regenerate"
+                onClick={handleRegenerate}
+                disabled={isStreaming || messages.length === 0}
+              >
+                Regenerate
+              </button>
+            )}
             {mode === 'scenario' && (
               <>
                 <button
@@ -1272,9 +1354,6 @@ export function AiPanel() {
                 </button>
               </>
             )}
-            <button data-testid="ai-settings-open" onClick={() => store.setSettingsOpen(true)}>
-              AI Settings
-            </button>
           </div>
 
           {usesAssetChrome ? (
@@ -1285,23 +1364,7 @@ export function AiPanel() {
               disabled={unavailable}
               assistantMode={mode === 'shape' || mode === 'collection' ? mode : 'animation'}
             />
-          ) : mode === 'audio' ? (
-            <>
-              <AiNarrationView
-                projectId={projectId}
-                reconciliationId={activeReconciliationId}
-                conversationId={activeId}
-                disabled={unavailable}
-              />
-
-              <AiCalibrationView
-                projectId={projectId}
-                narrationId={activeNarrationId}
-                conversationId={activeId}
-                disabled={unavailable}
-              />
-            </>
-          ) : mode === 'blackboard' ? (
+          ) : mode === 'audio' ? null : mode === 'blackboard' ? (
             <BlackboardUnitedViews
               projectId={projectId}
               reconciliationId={activeReconciliationId}
@@ -1337,6 +1400,7 @@ export function AiPanel() {
               modal={proposalModal}
               onClose={() => setProposalModal(null)}
               onCreated={(proposalId) => setProposalModal({ mode: 'review', proposalId })}
+              onValidationFix={handleLocalCompileFix}
               fixDisabled={isStreaming || unavailable}
               onDryRunFix={(proposalId, errorText) => handleFixProposal(proposalId, errorText)}
             />

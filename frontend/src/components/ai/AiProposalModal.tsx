@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { AiCommandJson } from '../../ai/proposals'
+import { dryRunValidate, type AiCommandJson } from '../../ai/proposals'
 import { useEngine } from '../../app/useEngine'
 import { useAiStore } from '../../stores/aiStore'
 import { useFingerprint } from '../../ai/proposalFingerprint'
@@ -17,6 +17,7 @@ interface AiProposalModalProps {
   onClose: () => void
   onCreated?: (proposalId: string) => void
   onDryRunFix?: (proposalId: string, errorText: string) => void
+  onValidationFix?: (messageId: string, errorText: string, commandsJson: string) => void
   fixDisabled?: boolean
 }
 
@@ -33,6 +34,7 @@ export function AiProposalModal({
   onClose,
   onCreated,
   onDryRunFix,
+  onValidationFix,
   fixDisabled,
 }: AiProposalModalProps) {
   const { engine } = useEngine()
@@ -118,6 +120,7 @@ export function AiProposalModal({
             messageId={modal.messageId}
             fingerprint={fingerprint}
             onCreated={onCreated}
+            onValidationFix={onValidationFix}
           />
         )}
       </div>
@@ -131,19 +134,23 @@ function AiProposalCreateForm({
   messageId,
   fingerprint,
   onCreated,
+  onValidationFix,
 }: {
   projectId: string
   conversationId: string | null
   messageId: string
   fingerprint: string
   onCreated?: (proposalId: string) => void
+  onValidationFix?: (messageId: string, errorText: string, commandsJson: string) => void
 }) {
   const proposalBusy = useAiStore((s) => s.proposalBusy)
   const proposalError = useAiStore((s) => s.proposalError)
   const store = useAiStore.getState()
+  const { engine } = useEngine()
   const [titleDraft, setTitleDraft] = useState('')
   const [commandsDraft, setCommandsDraft] = useState('[]')
   const [createError, setCreateError] = useState<string | null>(null)
+  const [compileErrors, setCompileErrors] = useState<string[]>([])
 
   const handleCreate = () => {
     setCreateError(null)
@@ -162,6 +169,12 @@ function AiProposalCreateForm({
       setCreateError('Commands must be a non-empty JSON array.')
       return
     }
+    const compile = dryRunValidate(engine, parsed as AiCommandJson[])
+    if (!compile.ok) {
+      setCompileErrors(compile.errors.map((entry) => entry.message))
+      return
+    }
+    setCompileErrors([])
     void store
       .createProposal({
         projectId,
@@ -191,7 +204,11 @@ function AiProposalCreateForm({
         aria-label="Proposal commands JSON"
         placeholder='[{"type":"CreateSlide","name":"Middle 1"}]'
         value={commandsDraft}
-        onChange={(e) => setCommandsDraft(e.target.value)}
+        onChange={(e) => {
+          setCommandsDraft(e.target.value)
+          setCompileErrors([])
+          setCreateError(null)
+        }}
       />
       <button
         data-testid="ai-proposal-modal-create-submit"
@@ -201,6 +218,29 @@ function AiProposalCreateForm({
         Propose edit
       </button>
       {createError && <span data-testid="ai-proposal-modal-error">{createError}</span>}
+      {compileErrors.length > 0 && (
+        <div data-testid="ai-proposal-modal-compile-errors" role="alert">
+          <strong>Local compile failed — no proposal was sent or created.</strong>
+          {compileErrors.map((message, index) => (
+            <div
+              key={`${index}-${message}`}
+              data-testid={`ai-proposal-modal-compile-error-${index}`}
+            >
+              {message}
+            </div>
+          ))}
+          {onValidationFix && (
+            <button
+              type="button"
+              data-testid="ai-proposal-modal-send-errors"
+              disabled={proposalBusy}
+              onClick={() => onValidationFix(messageId, compileErrors.join('\n'), commandsDraft)}
+            >
+              Send errors to assistant
+            </button>
+          )}
+        </div>
+      )}
       {proposalError && (
         <div data-testid="ai-proposal-modal-error-server">{proposalError.message}</div>
       )}

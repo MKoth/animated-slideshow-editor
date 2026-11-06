@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -92,6 +92,60 @@ VALID_COMMANDS = [
     {"type": "AiCreateBoardText", "slideId": "slide-1", "text": "Ser es"},
     {"type": "AiImportSlides", "slideIds": ["s1", "s2"]},
 ]
+
+
+def test_structured_schema_requires_update_prompter_with_shift_fields() -> None:
+    from app.api.ai import PROPOSAL_DRAFT_JSON_SCHEMA
+
+    schema = cast(dict[str, Any], PROPOSAL_DRAFT_JSON_SCHEMA)
+    commands = schema["properties"]["commands"]
+    items = commands["items"]
+    variants = items["anyOf"]
+    shift_variant = next(
+        variant
+        for variant in variants
+        if variant["properties"]["type"].get("const") == "UpdatePrompterPartWithShift"
+    )
+    assert set(shift_variant["required"]) >= {
+        "type",
+        "slideId",
+        "partId",
+        "duration",
+        "shiftDownstream",
+    }
+
+
+def test_proposal_draft_prompt_explains_shift_command_fields(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.api.ai as ai_api
+
+    _make_project(client, "p-prop-shift-prompt")
+    conv_id = _make_conversation(client, "p-prop-shift-prompt")
+    message_id = _assistant_message_id(client, conv_id)
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+    captured: dict[str, Any] = {}
+
+    def capture_generation(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {"title": "Valid", "commands": [{"type": "CreateSlide", "name": "Slide"}]}
+
+    monkeypatch.setattr(ai_api, "_generate_proposal_structured", capture_generation)
+    response = client.post(
+        "/api/ai/proposals/draft",
+        json={
+            "projectId": "p-prop-shift-prompt",
+            "conversationId": conv_id,
+            "messageId": message_id,
+            "context": {},
+        },
+    )
+    assert response.status_code == 201, response.text
+    prompt = "\n".join(message["content"] for message in captured["messages"])
+    assert "slideId, partId, duration, shiftDownstream" in prompt
+    assert "Never emit a command containing only its type" in prompt
 
 
 def test_create_valid_proposal_without_touching_project(client: TestClient) -> None:

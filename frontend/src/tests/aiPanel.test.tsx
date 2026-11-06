@@ -37,6 +37,7 @@ beforeEach(() => {
     drafts: {},
     search: '',
     panelOpen: true,
+    assistantMode: 'scenario',
     settingsOpen: false,
     status: 'idle',
     streamingConversationId: null,
@@ -60,7 +61,7 @@ function mockFetchConversations(conversations: unknown[], messages: unknown = []
 }
 
 describe('AiPanel foundation', () => {
-  it('renders conversation list, search, input, and settings entry', async () => {
+  it('renders conversation list, search, input without inline settings or regenerate controls', async () => {
     mockFetchConversations([
       { id: 'c-1', projectId: 'p-1', title: 'Intro ideas', modified: new Date().toISOString() },
     ])
@@ -70,7 +71,24 @@ describe('AiPanel foundation', () => {
     expect(screen.getByTestId('ai-panel')).toBeInTheDocument()
     expect(screen.getByTestId('ai-search')).toBeInTheDocument()
     expect(screen.getByTestId('ai-input')).toBeInTheDocument()
-    expect(screen.getByTestId('ai-settings-open')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-settings-open')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-regenerate')).not.toBeInTheDocument()
+  })
+
+  it('shows regenerate only after a failed assistant request', async () => {
+    mockFetchConversations([])
+    useAiStore.setState({ lastError: { code: 'provider_error', message: 'Request failed' } })
+    renderPanel()
+    expect(await screen.findByTestId('ai-regenerate')).toBeInTheDocument()
+  })
+
+  it('keeps the audio chat focused on messages without fill-prompter or calibration blocks', async () => {
+    mockFetchConversations([])
+    useAiStore.setState({ assistantMode: 'audio' })
+    renderPanel()
+    expect(await screen.findByTestId('ai-input')).toBeInTheDocument()
+    expect(screen.queryByTestId('ai-narration-section')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-calibration-section')).not.toBeInTheDocument()
   })
 
   it('shows degraded unavailable state and disables chat when backend is down', () => {

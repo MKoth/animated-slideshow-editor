@@ -143,6 +143,16 @@ def test_shape_and_collection_defaults_differ_from_animation() -> None:
     assert DEFAULT_SCENARIO_SYSTEM_PROMPT != DEFAULT_ANIMATION_SYSTEM_PROMPT
     assert DEFAULT_AUDIO_SYSTEM_PROMPT != DEFAULT_BLACKBOARD_SYSTEM_PROMPT
     assert DEFAULT_SCENARIO_SYSTEM_PROMPT != DEFAULT_AUDIO_SYSTEM_PROMPT
+    assert "without requiring an accepted scenario or HTML preview" in DEFAULT_AUDIO_SYSTEM_PROMPT
+    assert "numbered proposed block list" in DEFAULT_AUDIO_SYSTEM_PROMPT
+    assert (
+        "wrap each Spanish word, phrase, or sentence in double quotation marks"
+        in DEFAULT_AUDIO_SYSTEM_PROMPT
+    )
+    assert "do not merge distinct sentences" in DEFAULT_AUDIO_SYSTEM_PROMPT
+    assert (
+        "use `es` for Spanish-only and mixed English/Spanish blocks" in DEFAULT_AUDIO_SYSTEM_PROMPT
+    )
 
 
 def test_scenario_audio_blackboard_prompts_scope_to_their_stages() -> None:

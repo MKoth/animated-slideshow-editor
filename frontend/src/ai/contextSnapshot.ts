@@ -143,6 +143,12 @@ export interface ContextSnapshot {
    * source, prompt block ids/windows/text, and latest check diagnostics.
    */
   scriptFocus?: ScriptFocus
+  /** Current audio prompter text, supplied as hidden context for audio chat. */
+  audioPrompterFocus?: {
+    slideId: string
+    slideName: string
+    parts: { id: string; text: string; language?: string; prosody?: unknown }[]
+  }
   sceneNodes: string[]
   selection: string[]
   materials: string[]
@@ -204,6 +210,7 @@ export interface SnapshotSources {
    * blackboard-only lesson.
    */
   blackboardOnly?: boolean
+  includePrompterContext?: boolean
   /** Active draft version line (issue #462): summary + touched steps + id. */
   scenarioActiveVersion?: { id: string; summary?: string; touchedSteps?: number[] }
   /** Accepted downstream snapshot (issue #466): stable read for later assistants. */
@@ -519,6 +526,20 @@ export function buildContextSnapshot(
             return {}
           }
         })()),
+    ...(sources.includePrompterContext && !blackboardOnly && active?.prompter
+      ? {
+          audioPrompterFocus: {
+            slideId: active.id,
+            slideName: active.name,
+            parts: active.prompter.parts.slice(0, 100).map((part) => ({
+              id: part.id,
+              text: part.text.slice(0, 1000),
+              ...(part.ttsLanguage ? { language: part.ttsLanguage } : {}),
+              ...(part.ttsProsody ? { prosody: { ...part.ttsProsody } } : {}),
+            })),
+          },
+        }
+      : {}),
     ...(sources.scenarioMarkdown
       ? { scenarioMarkdown: sources.scenarioMarkdown.slice(0, 8000) }
       : {}),
