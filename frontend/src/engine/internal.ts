@@ -455,7 +455,14 @@ export class Engine {
 
   createPrompterPart(
     slideId: string,
-    input: { id: string; text: string; duration: number; insertIndex?: number },
+    input: {
+      id: string
+      text: string
+      duration: number
+      insertIndex?: number
+      ttsLanguage?: 'en' | 'es'
+      ttsProsody?: import('./cartesiaControls').CartesiaDelivery
+    },
   ): void {
     const slide = this.getSlide(slideId)
     if (!slide.prompter) {
@@ -486,6 +493,8 @@ export class Engine {
       startTime: insertionTime,
       endTime: insertionTime + input.duration,
       duration: input.duration,
+      ...(input.ttsLanguage ? { ttsLanguage: input.ttsLanguage } : {}),
+      ...(input.ttsProsody ? { ttsProsody: { ...input.ttsProsody } } : {}),
     }
     slide.prompter.parts.splice(insertIndex, 0, newPart)
     // Preserve gaps: shift downstream parts (not reflow) so existing gaps stay
@@ -1005,7 +1014,13 @@ export class Engine {
   updatePrompterPart(
     slideId: string,
     partId: string,
-    patch: { text?: string; duration?: number; shiftDownstream?: boolean },
+    patch: {
+      text?: string
+      duration?: number
+      shiftDownstream?: boolean
+      ttsLanguage?: 'en' | 'es' | null
+      ttsProsody?: import('./cartesiaControls').CartesiaDelivery | null
+    },
   ): {
     slideId: string
     partId: string
@@ -1014,6 +1029,8 @@ export class Engine {
     oldStartTime: number
     oldEndTime: number
     oldStatus?: string
+    oldTtsLanguage?: 'en' | 'es'
+    oldTtsProsody?: import('./cartesiaControls').CartesiaDelivery
     shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[]
     shiftedClips: { id: string; oldTimelineStart: number }[]
   } {
@@ -1027,6 +1044,8 @@ export class Engine {
     const oldStartTime = part.startTime
     const oldEndTime = part.endTime
     const oldStatus = part.status
+    const oldTtsLanguage = part.ttsLanguage
+    const oldTtsProsody = part.ttsProsody ? { ...part.ttsProsody } : undefined
     const shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[] = []
     const shiftedClips: { id: string; oldTimelineStart: number }[] = []
     let textTriggeredReflow = false
@@ -1075,6 +1094,14 @@ export class Engine {
           part.status = undefined
         }
       }
+    }
+    if (patch.ttsLanguage !== undefined) {
+      if (patch.ttsLanguage === null) delete part.ttsLanguage
+      else part.ttsLanguage = patch.ttsLanguage
+    }
+    if (patch.ttsProsody !== undefined) {
+      if (patch.ttsProsody === null) delete part.ttsProsody
+      else part.ttsProsody = { ...patch.ttsProsody }
     }
     if (patch.duration !== undefined && patch.duration !== part.duration) {
       const delta = patch.duration - part.duration
@@ -1138,6 +1165,8 @@ export class Engine {
       oldStartTime,
       oldEndTime,
       oldStatus,
+      oldTtsLanguage,
+      oldTtsProsody,
       shiftedParts,
       shiftedClips,
     }

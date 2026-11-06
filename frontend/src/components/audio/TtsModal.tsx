@@ -5,7 +5,7 @@ import { TtsApi, type TTSProvider } from '../../engine/ttsProvider'
 import { apiClient, voicePromptsApi as defaultVoicePromptsApi } from '../../api'
 import type { VoicePromptOut } from '../../api/voicePromptsApi'
 import { VoicePromptsApi } from '../../api/voicePromptsApi'
-import { CommitTtsCommand } from '../../engine/commands'
+import { CommitTtsCommand, UpdatePrompterPartCommand } from '../../engine/commands'
 import {
   getPrompterMismatchThreshold,
   shouldShowMismatchDialog,
@@ -108,7 +108,7 @@ export function TtsModal({
   const [promptsError, setPromptsError] = useState<string | null>(null)
 
   const [selectedPromptId, setSelectedPromptId] = useState<string>('')
-  const [language, setLanguage] = useState('')
+  const [language, setLanguage] = useState(part?.ttsLanguage ?? '')
   // Cartesia `locale` (e.g. en-GB): what language + region the voice speaks
   // in. Mutually exclusive with Language — Cartesia 400s when both are sent.
   const [locale, setLocale] = useState('')
@@ -120,8 +120,10 @@ export function TtsModal({
   const [referenceTranscript, setReferenceTranscript] = useState('')
   const [instruction, setInstruction] = useState('')
   // Cartesia delivery guidance (per-generation override; Auto = omit).
-  const [delivery, setDelivery] = useState<CartesiaDelivery>(() => getDefaultCartesiaDelivery())
-  const [hasEditedDelivery, setHasEditedDelivery] = useState(false)
+  const [delivery, setDelivery] = useState<CartesiaDelivery>(() =>
+    part?.ttsProsody ? { ...part.ttsProsody } : getDefaultCartesiaDelivery(),
+  )
+  const [hasEditedDelivery, setHasEditedDelivery] = useState(Boolean(part?.ttsProsody))
 
   const [status, setStatus] = useState<'idle' | 'generating' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -676,6 +678,10 @@ export function TtsModal({
       // Canonicalize locale once so payload + exclusivity below agree.
       const normalizedLocale = normalizeCartesiaLocale(locale)
       try {
+        const prosodyResult = dispatch(
+          new UpdatePrompterPartCommand({ slideId, partId, ttsProsody: delivery }),
+        )
+        if (!prosodyResult.ok) throw new Error(prosodyResult.error.message)
         const asset = await provider.generate({
           text: partText,
           promptId: selectedPromptId || undefined,
@@ -777,6 +783,10 @@ export function TtsModal({
       provider,
       plannedDuration,
       engine,
+      dispatch,
+      slideId,
+      partId,
+      referenceTranscript,
       commitTtsAtomic,
       onClose,
     ],
@@ -2006,6 +2016,16 @@ export function TtsModal({
               value={language}
               onChange={(e) => {
                 setLanguage(e.target.value)
+                if (e.target.value === '' || e.target.value === 'en' || e.target.value === 'es') {
+                  const result = dispatch(
+                    new UpdatePrompterPartCommand({
+                      slideId,
+                      partId,
+                      ttsLanguage: e.target.value === '' ? null : e.target.value,
+                    }),
+                  )
+                  if (!result.ok) setError(result.error.message)
+                }
                 // `language` and `locale` are mutually exclusive on the wire.
                 if (e.target.value) setLocale('')
               }}

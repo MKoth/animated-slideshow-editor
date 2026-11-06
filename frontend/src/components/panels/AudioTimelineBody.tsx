@@ -63,7 +63,11 @@ import { RecordModal } from '../audio/RecordModal'
 import { TtsModal } from '../audio/TtsModal'
 import { WordLevelTtsModal } from '../audio/WordLevelTtsModal'
 import { WaveformEditorModal } from '../audio/WaveformEditorModal'
-import { getPrompterRecordingShortcut, getPrompterSecondsPerCharacter } from '../../engine/prompter'
+import {
+  detectPrompterLanguage,
+  getPrompterRecordingShortcut,
+  getPrompterSecondsPerCharacter,
+} from '../../engine/prompter'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { captureAudioSnapshot } from '../../app/assetSnapshot'
 import { TtsGlobalSettings } from '../settings/TtsGlobalSettings'
@@ -2371,6 +2375,39 @@ export function AudioTimelineBody({
                             >
                               {part.startTime.toFixed(1)}–{part.endTime.toFixed(1)}
                             </small>
+                            <select
+                              data-testid={`prompter-language-${part.id}`}
+                              aria-label={`TTS language for ${part.text}`}
+                              title="Language sent to TTS (Auto uses the TTS provider’s detection)"
+                              value={part.ttsLanguage ?? ''}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              onClick={(event) => event.stopPropagation()}
+                              onChange={(event) => {
+                                const value = event.target.value
+                                const result = dispatch(
+                                  new UpdatePrompterPartCommand({
+                                    slideId: slide.id,
+                                    partId: part.id,
+                                    ttsLanguage: value === '' ? null : (value as 'en' | 'es'),
+                                  }),
+                                )
+                                if (!result.ok)
+                                  useNotificationStore.getState().notify(result.error.message)
+                              }}
+                              style={{ fontSize: 8, maxWidth: 54, padding: 1, borderRadius: 4 }}
+                            >
+                              <option value="">
+                                {detectPrompterLanguage(part.text) === 'es'
+                                  ? 'ES auto'
+                                  : detectPrompterLanguage(part.text) === 'en'
+                                    ? 'EN auto'
+                                    : detectPrompterLanguage(part.text) === 'mixed'
+                                      ? 'Mix'
+                                      : 'Auto'}
+                              </option>
+                              <option value="es">ES</option>
+                              <option value="en">EN</option>
+                            </select>
                             {part.segments && part.segments.length > 0 && (
                               <span
                                 data-testid="segment-badge"

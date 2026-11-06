@@ -1646,6 +1646,14 @@ export function applyUndo(
             import('../prompter').PrompterPartStatus | undefined
           if (oldStatus) part.status = oldStatus
           else delete (part as unknown as Record<string, unknown>).status
+          const oldTtsLanguage = (inv as Record<string, unknown>).oldTtsLanguage as
+            'en' | 'es' | undefined
+          if (oldTtsLanguage) part.ttsLanguage = oldTtsLanguage
+          else delete part.ttsLanguage
+          const oldTtsProsody = (inv as Record<string, unknown>).oldTtsProsody as
+            import('../cartesiaControls').CartesiaDelivery | undefined
+          if (oldTtsProsody) part.ttsProsody = { ...oldTtsProsody }
+          else delete part.ttsProsody
         }
         if (shiftedParts) {
           for (const sp of shiftedParts) {

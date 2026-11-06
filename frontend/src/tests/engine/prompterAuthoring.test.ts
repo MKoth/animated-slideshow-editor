@@ -15,6 +15,7 @@ import {
   getPrompterSecondsPerCharacter,
   splitImportText,
   reflowPrompter,
+  detectPrompterLanguage,
 } from '../../engine/prompter'
 import type { LessonJSON } from '../../engine/json'
 
@@ -44,6 +45,29 @@ describe('Prompter Authoring 15.02', () => {
     engine.createProject({ name: 'P' })
     const slide = engine.createSlide('S1')
     slideId = slide.id
+  })
+
+  it('detects common English/Spanish text and allows an undoable per-part TTS language override', () => {
+    expect(detectPrompterLanguage('El gato está aquí')).toBe('es')
+    expect(detectPrompterLanguage('The cat is here')).toBe('en')
+    expect(detectPrompterLanguage('The gato is here')).toBe('mixed')
+    dispatchOk(dispatcher, new ImportPrompterCommand({ slideId, rawText: 'El gato está aquí' }))
+    const partId = engine.getSlide(slideId).prompter!.parts[0].id
+    const delivery = { emotion: 'curious', speed: 0.95, volume: 1.05 }
+    dispatchOk(
+      dispatcher,
+      new UpdatePrompterPartCommand({
+        slideId,
+        partId,
+        ttsLanguage: 'es',
+        ttsProsody: delivery,
+      }),
+    )
+    expect(engine.getSlide(slideId).prompter!.parts[0].ttsLanguage).toBe('es')
+    expect(engine.getSlide(slideId).prompter!.parts[0].ttsProsody).toEqual(delivery)
+    undoStack.undo(engine)
+    expect(engine.getSlide(slideId).prompter!.parts[0].ttsLanguage).toBeUndefined()
+    expect(engine.getSlide(slideId).prompter!.parts[0].ttsProsody).toBeUndefined()
   })
 
   it('global secondsPerCharacter default is 0.1 unless the project overrides it', () => {

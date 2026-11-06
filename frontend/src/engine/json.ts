@@ -322,6 +322,12 @@ export type PrompterPartJSON = {
   readonly audioClipId?: string
   readonly audioAssetId?: string
   readonly promptId?: string
+  readonly ttsLanguage?: 'en' | 'es'
+  readonly ttsProsody?: {
+    readonly emotion: string
+    readonly speed: number | null
+    readonly volume: number | null
+  }
   readonly status?: string
   readonly segments?: readonly AudioSegmentJSON[]
 }

@@ -1,6 +1,7 @@
 import { isRecord, requireFiniteNumber, requireString } from './guards'
 import { newId } from './ids'
 import type { PrompterJSON } from './json'
+import type { CartesiaDelivery } from './cartesiaControls'
 
 export type PrompterPartStatus = 'stale'
 
@@ -21,6 +22,10 @@ export interface PrompterPart {
   audioClipId?: string
   audioAssetId?: string
   promptId?: string
+  /** Explicit speech language override for mixed-language TTS. Omitted means Auto. */
+  ttsLanguage?: 'en' | 'es'
+  /** Per-part Cartesia generation prosody; null fields mean provider Auto. */
+  ttsProsody?: CartesiaDelivery
   status?: PrompterPartStatus
   segments?: AudioSegment[]
 }
@@ -151,6 +156,22 @@ export function getPrompterSecondsPerCharacter(settings: unknown): number {
 
 export function estimatePrompterDuration(text: string, secondsPerCharacter: number): number {
   return text.length * secondsPerCharacter
+}
+
+/** Lightweight display hint only; explicit `ttsLanguage` always takes precedence. */
+export function detectPrompterLanguage(text: string): 'en' | 'es' | 'mixed' | 'unknown' {
+  const words = text.toLocaleLowerCase().match(/[a-záéíóúüñ]+/g) ?? []
+  if (words.length === 0) return 'unknown'
+  const spanishWords =
+    /^(el|la|los|las|de|del|que|y|en|un|una|es|por|para|con|pero|muy|cómo|qué|gato|gatos|casa|casas|mundo|hola|gracias|perro|perros|texto|amor|amigo|amiga|niño|niña|también|está|son|como|este|esta|mi|tu|su)$/
+  const spanish = words.filter((word) => /[áéíóúüñ]/.test(word) || spanishWords.test(word)).length
+  const english = words.filter((word) =>
+    /^(the|and|of|to|in|is|are|for|with|but|this|that|what|how|a|an)$/.test(word),
+  ).length
+  if (spanish > 0 && english > 0) return 'mixed'
+  if (spanish / words.length >= 0.12) return 'es'
+  if (english > 0) return 'en'
+  return 'unknown'
 }
 
 export function splitImportText(rawText: string, splitChars: readonly string[]): string[] {
@@ -309,6 +330,8 @@ export function createPrompterPart(input: {
   audioClipId?: string
   audioAssetId?: string
   promptId?: string
+  ttsLanguage?: 'en' | 'es'
+  ttsProsody?: CartesiaDelivery
   status?: PrompterPartStatus
   segments?: AudioSegment[]
 }): PrompterPart {
@@ -328,6 +351,12 @@ export function createPrompterPart(input: {
     part.audioAssetId = requireString(input.audioAssetId, 'PrompterPart audioAssetId')
   if (input.promptId !== undefined)
     part.promptId = requireString(input.promptId, 'PrompterPart promptId')
+  if (input.ttsLanguage !== undefined) {
+    if (input.ttsLanguage !== 'en' && input.ttsLanguage !== 'es')
+      throw new Error('PrompterPart ttsLanguage must be en or es')
+    part.ttsLanguage = input.ttsLanguage
+  }
+  if (input.ttsProsody !== undefined) part.ttsProsody = { ...input.ttsProsody }
   if (input.status !== undefined) {
     if (input.status !== 'stale') throw new Error('PrompterPart status must be stale')
     part.status = input.status
@@ -394,6 +423,8 @@ export function prompterToJSON(prompter: Prompter): PrompterJSON {
       ...(part.audioClipId !== undefined ? { audioClipId: part.audioClipId } : {}),
       ...(part.audioAssetId !== undefined ? { audioAssetId: part.audioAssetId } : {}),
       ...(part.promptId !== undefined ? { promptId: part.promptId } : {}),
+      ...(part.ttsLanguage !== undefined ? { ttsLanguage: part.ttsLanguage } : {}),
+      ...(part.ttsProsody !== undefined ? { ttsProsody: { ...part.ttsProsody } } : {}),
       ...(part.status !== undefined ? { status: part.status } : {}),
       ...(part.segments !== undefined && part.segments.length > 0
         ? { segments: part.segments.map(audioSegmentToJSON) }
@@ -413,6 +444,8 @@ export function prompterFromJSON(json: PrompterJSON): Prompter {
       audioClipId: partJson.audioClipId,
       audioAssetId: partJson.audioAssetId,
       promptId: partJson.promptId,
+      ttsLanguage: (partJson as { ttsLanguage?: 'en' | 'es' }).ttsLanguage,
+      ttsProsody: (partJson as { ttsProsody?: CartesiaDelivery }).ttsProsody,
       status: partJson.status as PrompterPartStatus | undefined,
       segments: (partJson as { segments?: import('./json').AudioSegmentJSON[] }).segments?.map(
         (s) => audioSegmentFromJSON(s),
@@ -446,6 +479,8 @@ export function validatePrompterJSON(errors: string[], value: unknown, slideId: 
     else if (ids.has(part.id)) errors.push(`Duplicate prompter part id: ${part.id}`)
     else ids.add(part.id)
     if (typeof part.text !== 'string') errors.push(`${where} text must be a string`)
+    if (part.ttsLanguage !== undefined && part.ttsLanguage !== 'en' && part.ttsLanguage !== 'es')
+      errors.push(`${where} ttsLanguage must be en or es`)
     if (
       typeof part.startTime !== 'number' ||
       !Number.isFinite(part.startTime) ||
