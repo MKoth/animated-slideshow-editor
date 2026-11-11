@@ -6,6 +6,7 @@ import type { EngineContextValue } from '../app/engineContext'
 import { TimelinePanel } from '../components/panels/TimelinePanel'
 import { TRACK_HEADER_WIDTH } from '../components/panels/timelineTracks'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
+import { MovePrompterPartCommand } from '../engine/commands'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { noopPersistence } from './contextHarness'
@@ -524,5 +525,59 @@ describe('TimelinePanel view state', () => {
 
     expect(usePlaybackController.getState().getTime(slide.id)).toBe(2.5)
     expect(logger).not.toHaveBeenCalled()
+  })
+})
+
+describe('TimelinePanel prompter shift-right-to-un-overlap', () => {
+  function setupOverlapping(engine: Engine) {
+    const slide = createProjectAndSlide(engine)
+    engine.createPrompterPart(slide.id, { id: 'p1', text: 'One.', duration: 2 })
+    engine.createPrompterPart(slide.id, { id: 'p2', text: 'Two.', duration: 2 })
+    engine.createPrompterPart(slide.id, { id: 'p3', text: 'Three.', duration: 2 })
+    return slide
+  }
+
+  async function openMenuFor(partId: string) {
+    const chips = await screen.findAllByTestId('prompter-chip')
+    const chip = chips.find((c) => c.getAttribute('data-prompter-id') === partId)
+    expect(chip).toBeDefined()
+    fireEvent.contextMenu(chip!, { clientX: 100, clientY: 100 })
+    return screen.findByTestId('prompter-shift-right-btn')
+  }
+
+  it('shifts the block and its tail right so it starts at the previous block end', async () => {
+    const { engine, undoStack, dispatcher } = renderPanel()
+    const slide = setupOverlapping(engine)
+    expect(
+      dispatcher.dispatch(
+        new MovePrompterPartCommand({ slideId: slide.id, partId: 'p2', newStartTime: 1 }),
+      ).ok,
+    ).toBe(true)
+    const before = undoStack.entries.length
+
+    fireEvent.click(await screen.findByTestId('timeline-tab-audio'))
+    const btn = await openMenuFor('p2')
+    expect(btn).not.toBeDisabled()
+    fireEvent.click(btn)
+
+    expect(
+      engine.getSlide(slide.id).prompter!.parts.map((p) => [p.id, p.startTime, p.endTime]),
+    ).toEqual([
+      ['p1', 0, 2],
+      ['p2', 2, 4],
+      ['p3', 5, 7],
+    ])
+    expect(undoStack.entries.length).toBe(before + 1)
+    expect(undoStack.entries[0]!.type).toBe('Transaction')
+    expect(screen.queryByTestId('prompter-context-menu')).not.toBeInTheDocument()
+  })
+
+  it('disables the item for the first block and when nothing overlaps', async () => {
+    const { engine } = renderPanel()
+    setupOverlapping(engine)
+
+    fireEvent.click(await screen.findByTestId('timeline-tab-audio'))
+    expect(await openMenuFor('p1')).toBeDisabled()
+    expect(await openMenuFor('p3')).toBeDisabled()
   })
 })

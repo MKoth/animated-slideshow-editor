@@ -67,6 +67,7 @@ import {
   detectPrompterLanguage,
   getPrompterRecordingShortcut,
   getPrompterSecondsPerCharacter,
+  PROMPTER_DURATION_TOLERANCE,
 } from '../../engine/prompter'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { captureAudioSnapshot } from '../../app/assetSnapshot'
@@ -2875,6 +2876,75 @@ export function AudioTimelineBody({
                       >
                         TTS
                       </button>
+                      {(() => {
+                        // Shift-right ripple: move this block so its start lands
+                        // on the previous block's end, carrying every following
+                        // block along so the tail never re-overlaps.
+                        const parts = slide.prompter?.parts ?? []
+                        const index = parts.findIndex((p) => p.id === prompterContextMenu.partId)
+                        const part = index >= 0 ? parts[index] : undefined
+                        const prev = index > 0 ? parts[index - 1] : undefined
+                        const delta =
+                          part !== undefined && prev !== undefined
+                            ? prev.endTime - part.startTime
+                            : 0
+                        const canShift =
+                          part !== undefined &&
+                          prev !== undefined &&
+                          delta > PROMPTER_DURATION_TOLERANCE
+                        return (
+                          <button
+                            data-testid="prompter-shift-right-btn"
+                            disabled={!canShift}
+                            title={
+                              prev === undefined
+                                ? 'First block has no previous block to align to'
+                                : !canShift
+                                  ? 'This block does not overlap the previous block'
+                                  : `Shift this block and every following block right by ${delta.toFixed(2)}s so it starts at the previous block's end`
+                            }
+                            onClick={() => {
+                              if (!canShift || part === undefined) return
+                              const tail = parts.slice(index)
+                              const result = dispatch(
+                                new TransactionCommand(
+                                  tail.map(
+                                    (p) =>
+                                      new MovePrompterPartCommand({
+                                        slideId: slide.id,
+                                        partId: p.id,
+                                        newStartTime: p.startTime + delta,
+                                      }),
+                                  ),
+                                ),
+                              )
+                              if (!result.ok) {
+                                useNotificationStore.getState().notify(result.error.message)
+                                return
+                              }
+                              useNotificationStore
+                                .getState()
+                                .notify(
+                                  `Shifted ${tail.length} block${tail.length === 1 ? '' : 's'} right by ${delta.toFixed(2)}s to clear the overlap`,
+                                )
+                              setPrompterContextMenu(null)
+                            }}
+                            style={{
+                              padding: '6px 10px',
+                              textAlign: 'left',
+                              background: '#2a2a3a',
+                              color: '#ffd9a0',
+                              border: '1px solid #8a6d2f',
+                              borderRadius: 4,
+                              cursor: canShift ? 'pointer' : 'not-allowed',
+                              fontSize: 11,
+                              opacity: canShift ? 1 : 0.45,
+                            }}
+                          >
+                            Shift right to un-overlap
+                          </button>
+                        )
+                      })()}
                     </div>
                   )}
                 </div>
