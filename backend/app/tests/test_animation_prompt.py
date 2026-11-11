@@ -153,6 +153,7 @@ def test_shape_and_collection_defaults_differ_from_animation() -> None:
     assert "sub-word pieces and word fragments" in DEFAULT_AUDIO_SYSTEM_PROMPT
     assert "single-word language isolates" in DEFAULT_AUDIO_SYSTEM_PROMPT
     assert "when in doubt split it out" in DEFAULT_AUDIO_SYSTEM_PROMPT
+    assert "three dots" in DEFAULT_AUDIO_SYSTEM_PROMPT
     assert (
         "for Spanish-only blocks, isolated Spanish words and fragments, and the rare multi-word mixed blocks"
         in DEFAULT_AUDIO_SYSTEM_PROMPT

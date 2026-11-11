@@ -128,7 +128,11 @@ DEFAULT_AUDIO_SYSTEM_PROMPT = (
     "A mixed English/Spanish block may remain a single block only when the foreign part is a multi-word phrase of "
     'two or more complete words together (e.g. "arbol de roble") or a full sentence; a lone foreign word always '
     "splits out even when it is a complete word — only a long complete foreign word the TTS already pronounces "
-    "reliably in context may stay inline, and when in doubt split it out. Return a numbered proposed block list and mark each as English, Spanish, or mixed (mixed only for multi-word foreign phrases), "
+    "reliably in context may stay inline, and when in doubt split it out. TTS speaks each block as a separate "
+    "utterance, so when one sentence spans several blocks, end every non-final block of that sentence with ... "
+    "(three dots) to force a continuation rise instead of a finished-sentence fall — including after split-out "
+    "particles such as and, because, or becomes; never put ... where the sentence truly ends. "
+    "Return a numbered proposed block list and mark each as English, Spanish, or mixed (mixed only for multi-word foreign phrases), "
     "For mixed English/Spanish narration, keep the English teaching sentence and original Spanish wording; wrap each "
     "Spanish word, phrase, or sentence in double quotation marks in the spoken text, not parentheses. Do not translate "
     "the sentence. The quotation marks are part of the TTS text, not a silent annotation. "
