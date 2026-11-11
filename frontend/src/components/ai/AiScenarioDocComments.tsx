@@ -240,13 +240,19 @@ export function AiScenarioDocComments({
 
   // AI-generated versions clear their old thread; manual edits re-anchor
   // surviving quotes and retain notes whose text was removed as orphans.
+  // A reload must not wipe restored drafts: the engine loads the markdown
+  // asynchronously ('' -> content on mount), so only a change away from a
+  // non-empty doc clears the thread. Reloaded drafts survive that initial
+  // load and clear on the next real version change or on Resolve.
   const prevMarkdownRef = useRef(markdown)
   useEffect(() => {
     if (prevMarkdownRef.current !== markdown) {
+      const prev = prevMarkdownRef.current
       prevMarkdownRef.current = markdown
       setFloat(null)
       setPending(null)
       setDraft('')
+      if (prev === '') return
       if (preserveCommentsOnMarkdownChange && comments.length > 0) {
         const md = docRef.current ? markdownRoot(docRef.current) : null
         const blocks = md
@@ -650,6 +656,10 @@ export function AiScenarioDocComments({
         context,
         'scenario',
       )
+      // Resolved: drop the thread (and its localStorage copy, via the
+      // parent persisting the empty list) so a reload after Resolve stays
+      // empty. A failed send keeps the drafts for retry.
+      onCommentsChange([])
     } finally {
       setSendingComments(false)
     }

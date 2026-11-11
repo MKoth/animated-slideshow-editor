@@ -130,6 +130,7 @@ function resetStores() {
 }
 
 beforeEach(() => {
+  window.localStorage.clear()
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => new Response(JSON.stringify([]), { status: 200 })),

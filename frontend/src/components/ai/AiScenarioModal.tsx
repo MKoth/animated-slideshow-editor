@@ -67,6 +67,35 @@ import type { AssetDefinition } from '../../api'
 
 const EMPTY_MARKDOWN_VERSIONS: ScenarioMarkdownVersion[] = []
 
+function docCommentsStorageKey(projectId: string, conversationId: string | null): string {
+  return `ai-scenario-doc-comments:${projectId}:${conversationId ?? 'no-conversation'}`
+}
+
+function isStoredDocComment(item: unknown): item is ScenarioDocComment {
+  if (typeof item !== 'object' || item === null) return false
+  const candidate = item as Record<string, unknown>
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.blockIndex === 'number' &&
+    typeof candidate.quote === 'string' &&
+    typeof candidate.comment === 'string' &&
+    typeof candidate.blockKind === 'string'
+  )
+}
+
+function readStoredDocComments(key: string): ScenarioDocComment[] {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return []
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(isStoredDocComment)
+  } catch {
+    return []
+  }
+}
+
 /**
  * Shared asset resolution maps: checklist binding ids resolve to filename
  * hints (Generate imageFiles), embedded snapshots, and library originals
@@ -209,7 +238,33 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const acceptedStoreId = useAiStore((s) => s.acceptedMarkdownVersionIdByProject[projectId] ?? null)
   // Inline doc comments live in the modal (survive Doc/History tab switches)
   // and clear once the doc itself changes to a new markdown version.
-  const [docComments, setDocComments] = useState<ScenarioDocComment[]>([])
+  // Unresolved drafts also persist to localStorage so a reload or an
+  // accidental modal close never wipes them; resolving (or any doc change
+  // that clears the thread) writes back the empty list.
+  const commentsKey = docCommentsStorageKey(projectId, conversationId)
+  const [commentState, setCommentState] = useState(() => ({
+    key: docCommentsStorageKey(projectId, conversationId),
+    comments: readStoredDocComments(docCommentsStorageKey(projectId, conversationId)),
+  }))
+  // Switching project/conversation swaps to that thread's stored drafts.
+  // Render-phase adjustment (not an effect) so typing never resets.
+  if (commentState.key !== commentsKey) {
+    setCommentState({
+      key: commentsKey,
+      comments: readStoredDocComments(commentsKey),
+    })
+  }
+  const docComments = commentState.comments
+  const setDocComments = (next: ScenarioDocComment[]): void => {
+    setCommentState((prev) => ({ key: prev.key, comments: next }))
+  }
+  useEffect(() => {
+    try {
+      window.localStorage?.setItem(commentsKey, JSON.stringify(docComments))
+    } catch {
+      // Quota or private-mode write failure: keep the in-memory thread.
+    }
+  }, [commentsKey, docComments])
   // Reviewable script-draft preview (issue #471): the generated plan plus
   // per-step completion live in the persisted workflow store, so closing
   // and reopening the modal keeps the draft, the active buttons, and the
