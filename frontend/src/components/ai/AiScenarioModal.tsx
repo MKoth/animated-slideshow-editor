@@ -176,7 +176,9 @@ async function runRebuiltBoardSource(
  * Doc-first scenario modal (issue #463, adopted Variant A).
  * Full doc center plus right-rail blocking checklist, top-bar Generate /
  * View / Download actions, Doc versus History versus Preview tabs.
- * Generate hard-blocked while any live-scanned row is unbound; View
+ * Generate hard-blocked while any live-scanned row is unbound; Generate
+ * Script shares the same bytes-required gate evaluated against the accepted
+ * snapshot (the actual script source); View
  * explains itself before the first render; View plus zip enable once HTML
  * is ready with re-generation allowed and a stale hint after doc edits.
  * Deterministic chalk render (#464) wires into Generate — pure
@@ -796,6 +798,17 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     explicitAcceptedVersionId !== null ? explicitAcceptedContent : latestFallback?.content
   const hasAcceptedSnapshot = acceptedVersionId !== null && acceptedContent !== undefined
 
+  // Same bytes-required gate as Generate HTML, evaluated against the
+  // accepted snapshot (the actual script source) instead of the live draft:
+  // board scripts place bound images, so an unbound snapshot cannot draft.
+  const acceptedRows = useMemo(
+    () => buildScenarioChecklistRows(acceptedContent ?? '', bindings, availableIds),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [acceptedContent, bindings, availableIds, scenarioRev, scenarioDocRev],
+  )
+  const scriptUnboundCount = getScenarioUnboundCount(acceptedRows)
+  const scriptGenerateBlocked = hasAcceptedSnapshot && isScenarioGenerateBlocked(acceptedRows)
+
   // Live plan inputs: a stored workflow is only reused while these still
   // match (reading speed, split chars, bindings). An accepted-version change
   // keeps the preview and reads stale; changed inputs discard it.
@@ -821,7 +834,13 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
 
   const handleGenerateScript = () => {
     const engineValue = engine
-    if (!engineValue?.project || !hasAcceptedSnapshot || acceptedContent === undefined) return
+    if (
+      !engineValue?.project ||
+      !hasAcceptedSnapshot ||
+      acceptedContent === undefined ||
+      scriptGenerateBlocked
+    )
+      return
     setScriptPrompterError(null)
     setTtsErrorByStep({})
     setTtsProgressByStep({})
@@ -1465,17 +1484,23 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
           )}
           <button
             data-testid="ai-scenario-generate-script"
-            disabled={!hasAcceptedSnapshot}
+            disabled={!hasAcceptedSnapshot || scriptGenerateBlocked}
             title={
-              hasAcceptedSnapshot
-                ? isDefaultAccept
-                  ? 'Draft slides, prompter parts, and board scripts from the latest version (default — nothing accepted yet)'
-                  : 'Draft slides, prompter parts, and board scripts from the accepted snapshot'
-                : 'No versions yet — chat to iterate, then Generate Script reads the latest version by default'
+              !hasAcceptedSnapshot
+                ? 'No versions yet — chat to iterate, then Generate Script reads the latest version by default'
+                : scriptGenerateBlocked
+                  ? `Blocked — ${scriptUnboundCount} unbound`
+                  : isDefaultAccept
+                    ? 'Draft slides, prompter parts, and board scripts from the latest version (default — nothing accepted yet)'
+                    : 'Draft slides, prompter parts, and board scripts from the accepted snapshot'
             }
             onClick={handleGenerateScript}
           >
-            {scriptPreview ? 'Regenerate Script' : 'Generate Script'}
+            {scriptGenerateBlocked && hasAcceptedSnapshot
+              ? `Generate Script (blocked — ${scriptUnboundCount} unbound)`
+              : scriptPreview
+                ? 'Regenerate Script'
+                : 'Generate Script'}
           </button>
           <button data-testid="ai-scenario-modal-close" onClick={handleClose}>
             Close

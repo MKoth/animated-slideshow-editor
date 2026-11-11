@@ -62,7 +62,15 @@ const BLOCKED_DOC = [
   '',
 ].join('\n')
 
-function setupEngine(markdown: string, accepted: boolean) {
+function toBase64(bytes: number[]): string {
+  return btoa(String.fromCharCode(...bytes))
+}
+
+// Fully-bound fixture bindings: each target resolves to embedded bytes so
+// the unbound gate (shared with Generate HTML) passes.
+const BOUND_BINDINGS = { 'oak-tree': 'emb-oak', 'melting-ice': 'emb-ice' }
+
+function setupEngine(markdown: string, accepted: boolean, bindings: Record<string, string> = {}) {
   const engine = createEngineInternal()
   engine.createProject({ name: 'Demo' })
   engine.createSlide('Slide 1')
@@ -73,8 +81,16 @@ function setupEngine(markdown: string, accepted: boolean) {
     section = { ...section, currentMarkdown: markdown }
     if (accepted) section = withScenarioAcceptedVersion(section, v1.id)
   }
-  section = withScenarioBindings(section, {})
+  section = withScenarioBindings(section, bindings)
   engine.project!.setScenario(section)
+  for (const id of new Set(Object.values(bindings))) {
+    engine.embedAsset({
+      id,
+      name: `${id}.png`,
+      data: toBase64([137, 80, 78, 71, 1, 2, 3]),
+      mimeType: 'image/png',
+    })
+  }
   const undoStack = new UndoStack()
   const dispatcher = new CommandDispatcher(engine, undoStack, () => undefined)
   const value: EngineContextValue = {
@@ -139,7 +155,7 @@ beforeEach(() => {
 
 describe('AiScenarioModal Generate Script (issue #471)', () => {
   it('defaults to the latest version when nothing is accepted yet', async () => {
-    const { value } = setupEngine(TWO_STEP_DOC, false)
+    const { value } = setupEngine(TWO_STEP_DOC, false, BOUND_BINDINGS)
     render(
       <EngineContext.Provider value={value}>
         <AiScenarioModal projectId="p-1" conversationId="c-1" />
@@ -164,7 +180,7 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
   })
 
   it('opens the Script tab on Generate and highlights board source; closing returns to Doc', async () => {
-    const { value } = setupEngine(TWO_STEP_DOC, true)
+    const { value } = setupEngine(TWO_STEP_DOC, true, BOUND_BINDINGS)
     render(
       <EngineContext.Provider value={value}>
         <AiScenarioModal projectId="p-1" conversationId="c-1" />
@@ -214,7 +230,7 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
     const { promptBlockColor } = await import('../components/ai/AiScenarioScriptPanel')
     expect(promptBlockColor('prompt-1')).not.toBe(promptBlockColor('prompt-2'))
     expect(promptBlockColor('prompt-1-1')).not.toBe(promptBlockColor('prompt-1-2'))
-    const { value } = setupEngine(TWO_STEP_DOC, true)
+    const { value } = setupEngine(TWO_STEP_DOC, true, BOUND_BINDINGS)
     render(
       <EngineContext.Provider value={value}>
         <AiScenarioModal projectId="p-1" conversationId="c-1" />
@@ -254,8 +270,27 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
     )
   })
 
-  it('previews per-slide durations, sources, fractions, and diagnostics from the accepted snapshot', async () => {
+  it('blocks Generate Script while the accepted snapshot has unbound visuals (same gate as HTML)', async () => {
     const { value } = setupEngine(TWO_STEP_DOC, true)
+    render(
+      <EngineContext.Provider value={value}>
+        <AiScenarioModal projectId="p-1" conversationId="c-1" />
+      </EngineContext.Provider>,
+    )
+    const generate = await screen.findByTestId('ai-scenario-generate-script')
+    expect(generate).toBeDisabled()
+    expect(generate).toHaveAttribute('title', expect.stringContaining('unbound'))
+    expect(generate).toHaveTextContent(/blocked — 2 unbound/)
+    // The HTML button shares the gate on the same unbound rows.
+    expect(await screen.findByTestId('ai-scenario-generate')).toBeDisabled()
+
+    const user = userEvent.setup()
+    await user.click(generate)
+    expect(screen.queryByTestId('ai-scenario-script-preview')).not.toBeInTheDocument()
+  })
+
+  it('previews per-slide durations, sources, fractions, and diagnostics from the accepted snapshot', async () => {
+    const { value } = setupEngine(TWO_STEP_DOC, true, BOUND_BINDINGS)
     render(
       <EngineContext.Provider value={value}>
         <AiScenarioModal projectId="p-1" conversationId="c-1" />
@@ -309,7 +344,7 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
   })
 
   it('applies prompter text (step 1) then per-step board scripts; re-runs converge', async () => {
-    const { engine, value, undoStack } = setupEngine(TWO_STEP_DOC, true)
+    const { engine, value, undoStack } = setupEngine(TWO_STEP_DOC, true, BOUND_BINDINGS)
     render(
       <EngineContext.Provider value={value}>
         <AiScenarioModal projectId="p-1" conversationId="c-1" />
@@ -411,7 +446,7 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
   })
 
   it('keeps the draft and per-step states across modal close and reopen', async () => {
-    const { engine, value } = setupEngine(TWO_STEP_DOC, true)
+    const { engine, value } = setupEngine(TWO_STEP_DOC, true, BOUND_BINDINGS)
     const view = render(
       <EngineContext.Provider value={value}>
         <AiScenarioModal projectId="p-1" conversationId="c-1" />
@@ -474,7 +509,7 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
       'Ser is identity.',
       '',
     ].join('\n')
-    const { engine, value, undoStack } = setupEngine(doc, true)
+    const { engine, value, undoStack } = setupEngine(doc, true, { 'oak-tree': 'emb-oak' })
     // Chalk HTML highlights the foreign word, so the planner carves `Ser`
     // out as its own prompt block.
     const section = engine.project!.scenario!
@@ -538,7 +573,7 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
   })
 
   it('blocks apply when the accepted snapshot changes after Generate', async () => {
-    const { value } = setupEngine(TWO_STEP_DOC, true)
+    const { value } = setupEngine(TWO_STEP_DOC, true, BOUND_BINDINGS)
     const view = render(
       <EngineContext.Provider value={value}>
         <AiScenarioModal projectId="p-1" conversationId="c-1" />
