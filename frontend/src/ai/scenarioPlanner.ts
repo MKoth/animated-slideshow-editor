@@ -1183,7 +1183,7 @@ function buildBoardSource(input: {
   const lines: string[] = []
   lines.push(`script "${escapeQuoted(slideName)}" from 0`)
   lines.push('defaults { duration: 0.5s, ease: easeInOut }')
-  lines.push('setCamera(-236, 10, 0.583)')
+  lines.push('setCamera(-236, 10, 1.22)')
   lines.push(
     `create asset "${BG_ASSET}" as background at (${BG_AT.x}, ${BG_AT.y}) { scaleX: ${BG_SCALE}, scaleY: ${BG_SCALE} }`,
   )
