@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AiScenarioModal } from '../components/ai/AiScenarioModal'
 import { EngineContext, type EngineContextValue } from '../app/engineContext'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
+import { UpdatePrompterPartCommand } from '../engine/commands/updatePrompterPartCommand'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import {
   appendScenarioVersion,
@@ -287,6 +288,60 @@ describe('AiScenarioModal Generate Script (issue #471)', () => {
     const user = userEvent.setup()
     await user.click(generate)
     expect(screen.queryByTestId('ai-scenario-script-preview')).not.toBeInTheDocument()
+  })
+
+  it('per-step TTS respects the per-block language set by Improve blocks', async () => {
+    const { engine, value, dispatcher } = setupEngine(TWO_STEP_DOC, true, BOUND_BINDINGS)
+    // No chalk HTML and no stored foreign words: nothing matches the foreign
+    // list, so without the per-block language the batch would speak English.
+    const ttsBodies: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown, init?: { body?: unknown }) => {
+        const path = String(url)
+        if (path.includes('/api/tts/models')) {
+          return new Response(
+            JSON.stringify({
+              models: ['m1'],
+              providers: ['auto'],
+              defaultModel: 'm1',
+              defaultProvider: 'auto',
+            }),
+            { status: 200 },
+          )
+        }
+        if (path.includes('/api/tts/generate')) {
+          ttsBodies.push(String((init?.body as string) ?? ''))
+          return new Response(new Uint8Array([82, 73, 70, 70]), { status: 200 })
+        }
+        return new Response(JSON.stringify([]), { status: 200 })
+      }),
+    )
+    render(
+      <EngineContext.Provider value={value}>
+        <AiScenarioModal projectId="p-1" conversationId="c-1" />
+      </EngineContext.Provider>,
+    )
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('ai-scenario-generate-script'))
+    await screen.findByTestId('ai-scenario-script-preview')
+    await user.click(screen.getByTestId('ai-scenario-script-apply-prompter'))
+    await screen.findByTestId('ai-scenario-script-prompter-done')
+
+    // Improve blocks tagged this part Spanish — language stored on the part.
+    const slide = engine.project!.slides[0]!
+    const part = slide.prompter!.parts[0]!
+    expect(
+      dispatcher.dispatch(
+        new UpdatePrompterPartCommand({ slideId: slide.id, partId: part.id, ttsLanguage: 'es' }),
+      ).ok,
+    ).toBe(true)
+
+    await user.click(screen.getByTestId('ai-scenario-script-generate-tts-1'))
+    expect(await screen.findByTestId('ai-scenario-script-tts-done-1')).toBeInTheDocument()
+
+    expect(ttsBodies).toHaveLength(1)
+    expect((JSON.parse(ttsBodies[0]!) as { language?: string }).language).toBe('es')
   })
 
   it('previews per-slide durations, sources, fractions, and diagnostics from the accepted snapshot', async () => {

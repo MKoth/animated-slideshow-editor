@@ -995,6 +995,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                 text: p.text,
                 duration: p.duration,
                 startTime: p.startTime,
+                ...(p.ttsLanguage ? { ttsLanguage: p.ttsLanguage } : {}),
               })),
             }
           : null,
