@@ -74,6 +74,27 @@ describe('Context snapshot', () => {
     expect(snapshot).not.toHaveProperty('draft')
   })
 
+  it('includes every prompter block on long slides without a 100-part cap', () => {
+    const engine = createEngineInternal()
+    engine.createProject({ name: 'Long audio lesson' })
+    const slide = engine.createSlide('Long slide')
+    for (let i = 0; i < 107; i++) {
+      engine.createPrompterPart(slide.id, {
+        id: `part-${i + 1}`,
+        text: `spoken text ${i + 1}`,
+        duration: 1,
+      })
+    }
+
+    const snapshot = buildContextSnapshot(engine, { includePrompterContext: true })
+
+    expect(snapshot.audioPrompterFocus?.parts).toHaveLength(107)
+    expect(snapshot.audioPrompterFocus?.parts.at(-1)).toMatchObject({
+      id: 'part-107',
+      text: 'spoken text 107',
+    })
+  })
+
   it('assembles well under 50 ms for typical projects', () => {
     const engine = mockEngine()
     const started = performance.now()

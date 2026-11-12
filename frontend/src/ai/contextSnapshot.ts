@@ -531,7 +531,7 @@ export function buildContextSnapshot(
           audioPrompterFocus: {
             slideId: active.id,
             slideName: active.name,
-            parts: active.prompter.parts.slice(0, 100).map((part) => ({
+            parts: active.prompter.parts.map((part) => ({
               id: part.id,
               text: part.text.slice(0, 1000),
               ...(part.ttsLanguage ? { language: part.ttsLanguage } : {}),

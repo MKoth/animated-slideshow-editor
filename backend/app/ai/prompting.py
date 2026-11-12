@@ -445,17 +445,21 @@ def context_to_text(context: object) -> str:
             audio_parts = audio_focus.get("parts")
             if isinstance(audio_parts, list):
                 rendered_audio_parts: list[str] = []
-                for index, entry in enumerate(audio_parts[:100]):
+                for index, entry in enumerate(audio_parts):
                     if not isinstance(entry, dict):
                         continue
                     text = entry.get("text")
                     if not isinstance(text, str):
                         continue
+                    block_id = entry.get("id")
+                    id_tag = f" [{block_id}]" if isinstance(block_id, str) and block_id else ""
                     language = entry.get("language")
                     language_tag = (
                         f" ({language})" if isinstance(language, str) and language else ""
                     )
-                    rendered_audio_parts.append(f"{index + 1}.{language_tag} {text.strip()}")
+                    rendered_audio_parts.append(
+                        f"{index + 1}{id_tag}.{language_tag} {text.strip()}"
+                    )
                 if rendered_audio_parts:
                     parts.append(audio_header + ":\n" + "\n".join(rendered_audio_parts))
         slides = context.get("slides")
