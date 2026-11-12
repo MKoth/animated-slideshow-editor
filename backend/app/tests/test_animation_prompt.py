@@ -153,7 +153,7 @@ def test_shape_and_collection_defaults_differ_from_animation() -> None:
     assert "sub-word pieces and word fragments" in DEFAULT_AUDIO_SYSTEM_PROMPT
     assert "single-word language isolates" in DEFAULT_AUDIO_SYSTEM_PROMPT
     assert "when in doubt split it out" in DEFAULT_AUDIO_SYSTEM_PROMPT
-    assert "three dots" in DEFAULT_AUDIO_SYSTEM_PROMPT
+    assert "genuinely suspending an unfinished thought" in DEFAULT_AUDIO_SYSTEM_PROMPT
     assert (
         "for Spanish-only blocks, isolated Spanish words and fragments, and the rare multi-word mixed blocks"
         in DEFAULT_AUDIO_SYSTEM_PROMPT
@@ -200,6 +200,11 @@ def test_scenario_audio_blackboard_prompts_scope_to_their_stages() -> None:
     assert "speech" in audio
     assert "prompter" in audio or "voice" in audio
     assert "per-part" in audio or "per part" in audio
+    assert "use ... only when" in audio
+    assert "do not use ellipses just because another block follows" in audio
+    assert "use ... where ordinary punctuation is more natural" in audio
+    assert "use semicolons between complex list items" in audio
+    assert "end every non-final block" not in audio
     assert "never claim a mutation happened before approval" in audio
     assert ANIMATION_REQUEST_COVERAGE_INSTRUCTIONS not in _system_prompt_for_mode(
         DEFAULT_SYSTEM_PROMPT, "audio"

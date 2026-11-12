@@ -137,6 +137,11 @@ describe('TimelinePanel Improve blocks action', () => {
     expect(sentConversationId).toBe(conversationId)
     expect(text).toContain('Improve the current slide')
     expect(text).toContain('double quotes (not parentheses)')
+    expect(text).toContain('use ... only for a genuinely suspended unfinished thought')
+    expect(text).toContain('Do NOT add ... just because another block follows')
+    expect(text).toContain(
+      'semicolons between complex items or clauses that already contain commas',
+    )
     expect((context as { activeSlideId?: string | null }).activeSlideId).toBe(slide.id)
     expect(mode).toBe('audio')
   })
