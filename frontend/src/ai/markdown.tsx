@@ -149,6 +149,19 @@ function isolateBoardLines(content: string): string {
   return out.join('\n')
 }
 
+/** Unwrap chat responses that fence the entire scenario as `markdown` code. */
+function unwrapScenarioMarkdownFence(content: string): string {
+  const lines = content.trim().split('\n')
+  if (
+    lines.length >= 3 &&
+    /^\s*```(?:markdown|md)?\s*$/i.test(lines[0] ?? '') &&
+    /^\s*```\s*$/.test(lines[lines.length - 1] ?? '')
+  ) {
+    return lines.slice(1, -1).join('\n')
+  }
+  return content
+}
+
 /** Reveal targets are bookkeeping ids (`text1`); chips show the kind only. */
 function revealKind(target: string): string {
   const kind = target.replace(/\d+$/g, '').trim() || target.trim()
@@ -215,7 +228,10 @@ export function ScenarioDocMarkdown({ content }: { content: string }) {
   // quote line so the reference stays visible (whole-line form only).
   // Board lines are isolated so glued markers still render as their own blocks.
   const prepared = useMemo(
-    () => isolateBoardLines(content.replace(REUSE_COMMENT_RE, '> Reuse: $1')),
+    () =>
+      isolateBoardLines(
+        unwrapScenarioMarkdownFence(content).replace(REUSE_COMMENT_RE, '> Reuse: $1'),
+      ),
     [content],
   )
   return (

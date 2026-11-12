@@ -7,10 +7,15 @@ from dotenv import load_dotenv
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "var"
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 DEFAULT_ZEN_URL = "https://opencode.ai/zen/go/v1"
+DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1"
+#: Canonical AI provider ids. "opencode" is the legacy default; "openrouter"
+#: is the OpenAI-compatible alternative selectable in AI Settings.
+SUPPORTED_AI_PROVIDERS = ("opencode", "openrouter")
 #: TTS provider/model choice saved from the TTS Global Settings UI. Lives in
 #: the data dir next to library.db so a UI save survives backend restarts.
 TTS_SETTINGS_FILENAME = "tts_settings.json"
 DEFAULT_FALLBACK_MODELS = ("kimi-k2.6",)
+DEFAULT_FALLBACK_MODELS_OPENROUTER = ("openai/gpt-4o-mini",)
 DEFAULT_CONTEXT_BUDGET = 8000
 DEFAULT_SYSTEM_PROMPT = (
     "You are the AI lesson advisor inside the AI Slideshow Editor. "
@@ -520,17 +525,32 @@ class Settings:
     tts_ref_text: str | None = None
     cartesia_api_key: str | None = None
     opencode_base_url: str = DEFAULT_ZEN_URL
+    opencode_api_key: str | None = None
+    openrouter_base_url: str = DEFAULT_OPENROUTER_URL
+    openrouter_api_key: str | None = None
     ai_fallback_models: tuple[str, ...] = DEFAULT_FALLBACK_MODELS
+    ai_fallback_models_openrouter: tuple[str, ...] = DEFAULT_FALLBACK_MODELS_OPENROUTER
     ai_context_budget: int = DEFAULT_CONTEXT_BUDGET
     ai_secret_key: str | None = None
     ai_system_prompt_default: str = DEFAULT_SYSTEM_PROMPT
 
 
-def _parse_fallback_models(raw: str | None) -> tuple[str, ...]:
+def _parse_fallback_models(
+    raw: str | None, default: tuple[str, ...] = DEFAULT_FALLBACK_MODELS
+) -> tuple[str, ...]:
     if raw is None or not raw.strip():
-        return DEFAULT_FALLBACK_MODELS
+        return default
     models = tuple(part.strip() for part in raw.split(",") if part.strip())
-    return models or DEFAULT_FALLBACK_MODELS
+    return models or default
+
+
+def _optional_env(*names: str) -> str | None:
+    """First non-empty env value among aliases (e.g. OPEN_ROUTER_KEY / OPENROUTER_API_KEY)."""
+    for name in names:
+        raw = os.getenv(name)
+        if raw is not None and raw.strip():
+            return raw.strip()
+    return None
 
 
 def _parse_context_budget(raw: str | None) -> int:
@@ -708,7 +728,16 @@ def load_settings() -> Settings:
         cartesia_api_key=cartesia_key,
         opencode_base_url=os.getenv("OPENCODE_BASE_URL", DEFAULT_ZEN_URL).strip()
         or DEFAULT_ZEN_URL,
-        ai_fallback_models=_parse_fallback_models(os.getenv("AI_FALLBACK_MODELS_OPENCODE")),
+        opencode_api_key=_optional_env("OPENCODE_API_KEY"),
+        openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", DEFAULT_OPENROUTER_URL).strip()
+        or DEFAULT_OPENROUTER_URL,
+        openrouter_api_key=_optional_env("OPEN_ROUTER_KEY", "OPENROUTER_API_KEY"),
+        ai_fallback_models=_parse_fallback_models(
+            os.getenv("AI_FALLBACK_MODELS_OPENCODE"), DEFAULT_FALLBACK_MODELS
+        ),
+        ai_fallback_models_openrouter=_parse_fallback_models(
+            os.getenv("AI_FALLBACK_MODELS_OPENROUTER"), DEFAULT_FALLBACK_MODELS_OPENROUTER
+        ),
         ai_context_budget=_parse_context_budget(os.getenv("AI_CONTEXT_BUDGET")),
         ai_secret_key=secret,
     )

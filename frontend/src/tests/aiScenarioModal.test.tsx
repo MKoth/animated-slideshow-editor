@@ -679,5 +679,8 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
         'unknown-remove',
       )
     })
+    expect(await screen.findByTestId('ai-scenario-warnings-feedback')).toHaveTextContent(
+      'Sent to the assistant. Close Scenario to view its reply in the AI chat.',
+    )
   })
 })

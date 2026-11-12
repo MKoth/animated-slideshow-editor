@@ -18,14 +18,15 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 
+from app.ai.failure_log import log_ai_failure, log_ai_request
 from app.ai.library import AiLibrary
 from app.ai.zen import (
     ZenFetchError,
     friendly_error_for_status,
-    inference_endpoint,
-    inference_request,
-    model_api_family,
-    opencode_headers,
+    normalize_ai_provider,
+    provider_headers,
+    resolve_provider_endpoint,
+    structured_inference_payload_for_provider,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,7 @@ def _inference_response_text(data: dict[str, Any]) -> str:
 
 def _structured_inference_payload(
     *,
+    provider: str = "opencode",
     model: str,
     messages: list[dict[str, str]],
     temperature: float,
@@ -114,29 +116,21 @@ def _structured_inference_payload(
     name: str,
     schema: dict[str, object],
 ) -> tuple[str, dict[str, object]]:
-    # Verbatim copy of app.api.ai._structured_inference_payload.
-    path, payload = inference_request(
+    # Single owner for structured envelopes; mirrors app.api.ai.
+    return structured_inference_payload_for_provider(
+        provider=provider,
         model=model,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
-        stream=False,
+        name=name,
+        schema=schema,
     )
-    family = model_api_family(model)
-    if family == "anthropic":
-        payload["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
-    elif family == "responses":
-        payload["text"] = {"format": {"type": "json_schema", "name": name, "schema": schema}}
-    else:
-        payload["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {"name": name, "schema": schema},
-        }
-    return path, payload
 
 
 def generate_scenario_structured(
     *,
+    provider: str = "opencode",
     endpoint: str,
     api_key: str,
     model: str,
@@ -149,6 +143,7 @@ def generate_scenario_structured(
     from app.ai.scenarios import SCENARIO_JSON_SCHEMA
 
     path, payload = _structured_inference_payload(
+        provider=provider,
         model=model,
         messages=messages,
         temperature=temperature,
@@ -158,8 +153,8 @@ def generate_scenario_structured(
     )
     try:
         response = httpx.post(
-            f"{inference_endpoint(endpoint)}{path}",
-            headers=opencode_headers(api_key, session_id),
+            f"{resolve_provider_endpoint(provider, endpoint)}{path}",
+            headers=provider_headers(provider, api_key, session_id),
             json=payload,
             timeout=60.0,
         )
@@ -269,6 +264,17 @@ def _require_conversation_in_project(
         raise HTTPException(status_code=404, detail="conversation not found") from exc
     if conv.project_id != project_id:
         raise HTTPException(status_code=422, detail="conversation does not belong to this project")
+
+
+def _data_dir(request: Request) -> Path:
+    """Backend data dir for append-only logs; falls back to cwd-adjacent var/."""
+    settings = getattr(request.app.state, "settings", None)
+    data_dir = getattr(settings, "data_dir", None)
+    if isinstance(data_dir, Path):
+        return data_dir
+    if isinstance(data_dir, str) and data_dir:
+        return Path(data_dir)
+    return Path("var")
 
 
 @router.post("/ai/scenarios/markdown/apply", status_code=200)
@@ -762,6 +768,7 @@ def parse_foreign_words_content(content: object) -> list[str]:
 
 def _post_foreign_words_once(
     *,
+    provider: str = "opencode",
     endpoint: str,
     api_key: str,
     model: str,
@@ -772,8 +779,11 @@ def _post_foreign_words_once(
     structured: bool,
 ) -> str:
     """One non-streaming inference call; returns the raw content text. Mock seam for tests."""
+    from app.ai.zen import inference_request_for_provider
+
     if structured:
         path, payload = _structured_inference_payload(
+            provider=provider,
             model=model,
             messages=messages,
             temperature=temperature,
@@ -782,7 +792,8 @@ def _post_foreign_words_once(
             schema=FOREIGN_WORDS_SCHEMA,
         )
     else:
-        path, payload = inference_request(
+        path, payload = inference_request_for_provider(
+            provider=provider,
             model=model,
             messages=messages,
             temperature=temperature,
@@ -791,8 +802,8 @@ def _post_foreign_words_once(
         )
     try:
         response = httpx.post(
-            f"{inference_endpoint(endpoint)}{path}",
-            headers=opencode_headers(api_key, session_id),
+            f"{resolve_provider_endpoint(provider, endpoint)}{path}",
+            headers=provider_headers(provider, api_key, session_id),
             json=payload,
             # Reasoning models can think for minutes before the first byte;
             # chat streaming allows 300s, so don't fail fast here either.
@@ -846,6 +857,7 @@ def _post_foreign_words_once(
 
 def detect_scenario_foreign_words(
     *,
+    provider: str = "opencode",
     endpoint: str,
     api_key: str,
     model: str,
@@ -868,6 +880,7 @@ def detect_scenario_foreign_words(
     """
     messages = build_foreign_words_messages(text)
     common: dict[str, Any] = {
+        "provider": normalize_ai_provider(provider),
         "endpoint": endpoint,
         "api_key": api_key,
         "model": model,
@@ -958,6 +971,7 @@ def post_scenario_foreign_words(request: Request, body: dict[str, Any]) -> dict[
     if parsed.conversationId:
         _require_conversation_in_project(library, parsed.conversationId, parsed.projectId)
     row, key = library.get_settings_raw()
+    provider = normalize_ai_provider(getattr(row, "provider", None))
     if not key:
         raise HTTPException(
             status_code=409, detail={"code": "missing_key", "message": "AI key is not set."}
@@ -971,6 +985,7 @@ def post_scenario_foreign_words(request: Request, body: dict[str, Any]) -> dict[
                 "ts": datetime.now(UTC).isoformat(),
                 "operation": "scenario_foreign_words",
                 "projectId": parsed.projectId,
+                "provider": provider,
                 "model": row.model,
                 "structured": structured,
                 "responseChars": len(raw),
@@ -986,6 +1001,7 @@ def post_scenario_foreign_words(request: Request, body: dict[str, Any]) -> dict[
                 logger.warning("ai foreign-words diagnostic log write failed: %s", exc)
 
         words = detect_scenario_foreign_words(
+            provider=provider,
             endpoint=row.endpoint,
             api_key=key,
             model=row.model,
@@ -1001,9 +1017,49 @@ def post_scenario_foreign_words(request: Request, body: dict[str, Any]) -> dict[
             max_tokens=max(2000, min(row.max_tokens, 4000)),
             on_attempt=log_attempt,
         )
+        log_ai_request(
+            _data_dir(request),
+            operation="scenario_foreign_words",
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            ok=True,
+            message_excerpt=parsed.text,
+            project_id=parsed.projectId,
+            conversation_id=parsed.conversationId or "",
+        )
     except ZenFetchError as exc:
-        code, friendly = friendly_error_for_status(exc.status, exc.body)
+        code, friendly = friendly_error_for_status(exc.status, exc.body, provider)
         logger.warning("ai foreign-words failed for model %s: %s", row.model, exc.body[:500])
+        log_id = log_ai_failure(
+            _data_dir(request),
+            operation="scenario_foreign_words",
+            code=code,
+            http_status=409 if code != "provider_error" else 502,
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            provider_status=exc.status,
+            provider_body=exc.body,
+            message_excerpt=parsed.text,
+            project_id=parsed.projectId,
+            conversation_id=parsed.conversationId or "",
+        )
+        log_ai_request(
+            _data_dir(request),
+            operation="scenario_foreign_words",
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            ok=False,
+            code=code,
+            http_status=409 if code != "provider_error" else 502,
+            provider_status=exc.status,
+            message_excerpt=parsed.text,
+            project_id=parsed.projectId,
+            conversation_id=parsed.conversationId or "",
+            log_id=log_id,
+        )
         # Surface the provider's own status/body snippet: chat works in this
         # setup, so a failure here is provider-specific and the raw reason
         # is what unblocks debugging.
@@ -1015,6 +1071,6 @@ def post_scenario_foreign_words(request: Request, body: dict[str, Any]) -> dict[
                 message = f"{message}: {snippet}"
         raise HTTPException(
             status_code=409 if code != "provider_error" else 502,
-            detail={"code": code, "message": message},
+            detail={"code": code, "message": message, "logId": log_id},
         ) from exc
     return {"words": words}

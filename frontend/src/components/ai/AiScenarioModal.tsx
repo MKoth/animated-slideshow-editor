@@ -229,6 +229,8 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const [markdownDraft, setMarkdownDraft] = useState('')
   const [savingMarkdown, setSavingMarkdown] = useState(false)
   const [markdownEditError, setMarkdownEditError] = useState<string | null>(null)
+  const [warningSendFeedback, setWarningSendFeedback] = useState<string | null>(null)
+  const [sendingWarnings, setSendingWarnings] = useState(false)
   const [confirmingMarkdownWarnings, setConfirmingMarkdownWarnings] = useState(false)
   const [scenarioRetryMode, setScenarioRetryMode] = useState<'draft' | 'revise'>('draft')
   const [confirmingDeleteDoc, setConfirmingDeleteDoc] = useState(false)
@@ -763,18 +765,42 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     [markdownDraft],
   )
 
-  const handleSendWarnings = () => {
+  const handleSendWarnings = async () => {
     if (!projectId || !conversationId || docWarnings.length === 0) return
+    if (useAiStore.getState().status === 'streaming') {
+      setWarningSendFeedback(
+        'The assistant is already responding. Wait for it to finish, then retry.',
+      )
+      return
+    }
     const lines = docWarnings.map(
       (w) => `- [${w.code}]${w.step ? ` step ${w.step}` : ''}: ${w.message}`,
     )
-    void store.sendMessage(
-      projectId,
-      conversationId,
-      `The scenario doc has these validation warnings — fix them all and reply with the corrected full markdown (same steps, corrected):\n${lines.join('\n')}\nDeclare intent: edit with Summary: and Touched-steps: lines as usual. Do not claim anything was created.`,
-      context,
-      'scenario',
-    )
+    setSendingWarnings(true)
+    setWarningSendFeedback('Sending validation warnings to the assistant…')
+    try {
+      await store.sendMessage(
+        projectId,
+        conversationId,
+        `The scenario doc has these validation warnings — fix them all and reply with the corrected full markdown (same steps, corrected):\n${lines.join('\n')}\nDeclare intent: edit with Summary: and Touched-steps: lines as usual. Do not claim anything was created.`,
+        context,
+        'scenario',
+      )
+      const error = useAiStore.getState().lastError
+      setWarningSendFeedback(
+        error
+          ? `Could not send to the assistant: ${error.message}`
+          : 'Sent to the assistant. Close Scenario to view its reply in the AI chat.',
+      )
+    } catch (error) {
+      setWarningSendFeedback(
+        error instanceof Error
+          ? `Could not send to the assistant: ${error.message}`
+          : 'Could not send to the assistant.',
+      )
+    } finally {
+      setSendingWarnings(false)
+    }
   }
 
   // Source gate (issue #471 + default-latest): the script draft reads the
@@ -1682,17 +1708,22 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                   Doc warnings ({docWarnings.length})
                   <button
                     data-testid="ai-scenario-warnings-send"
-                    disabled={!conversationId}
+                    disabled={!conversationId || sendingWarnings}
                     title={
                       conversationId
                         ? 'Send warnings to the assistant as a fix request'
                         : 'Start a conversation to send fix requests'
                     }
-                    onClick={handleSendWarnings}
+                    onClick={() => void handleSendWarnings()}
                   >
-                    Send to assistant
+                    {sendingWarnings ? 'Sending…' : 'Send to assistant'}
                   </button>
                 </div>
+                {warningSendFeedback && (
+                  <div role="status" data-testid="ai-scenario-warnings-feedback">
+                    {warningSendFeedback}
+                  </div>
+                )}
                 <ul>
                   {docWarnings.map((warning, index) => (
                     <li key={index}>

@@ -12,6 +12,7 @@ class AiSettingsRow(Base):
     __tablename__ = "ai_settings"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    provider: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
     endpoint: Mapped[str] = mapped_column(String(512), nullable=False)
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     temperature: Mapped[float] = mapped_column(nullable=False, default=0.7)
@@ -19,6 +20,7 @@ class AiSettingsRow(Base):
     streaming: Mapped[bool] = mapped_column(nullable=False, default=True)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
     encrypted_key: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    encrypted_key_openrouter: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 

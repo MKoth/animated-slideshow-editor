@@ -88,4 +88,15 @@ describe('ScenarioDocMarkdown board actions', () => {
     expect(chip).toHaveTextContent('Oak tree')
     expect(chip).toHaveTextContent('oak-tree')
   })
+
+  it('renders a complete markdown-fenced scenario as scenario content, not a code block', () => {
+    const fenced = ['```markdown', ...MD.trimEnd().split('\n'), '```'].join('\n')
+    const { container } = render(<ScenarioDocMarkdown content={fenced} />)
+
+    expect(container.querySelector('pre')).toBeNull()
+    expect(container.querySelector('h1')).toHaveTextContent('Lesson')
+    expect(container.querySelector('table')).not.toBeNull()
+    expect(screen.getAllByText('Reveal')).toHaveLength(2)
+    expect(screen.queryByText('[reveal: table]')).not.toBeInTheDocument()
+  })
 })

@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.ai.zen import ZenClient
+from app.ai.zen import ZenClient, ZenFetchError
 
 SAMPLE_SCENARIO = {
     "title": "Ser vs Estar cat lesson",
@@ -465,3 +465,76 @@ def test_scenario_missing_key_and_unlisted_model_surface_in_conversation(
     )
     assert r2.status_code in (409, 502)
     assert r2.json()["detail"]["code"] == "model_unlisted"
+
+
+def test_scenario_generation_failure_leaves_logs_with_log_id(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    """A provider outage on scenario generation must leave logs with provider + log id."""
+    import app.api.ai as ai_api
+
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+    _make_project(client, "p-scen-log")
+    conv = client.post("/api/ai/conversations", json={"projectId": "p-scen-log"}).json()
+
+    def _boom(**kwargs: Any) -> dict[str, Any]:
+        raise ZenFetchError(503, "upstream exploded")
+
+    monkeypatch.setattr(ai_api, "_generate_scenario_structured", _boom)
+    r = client.post(
+        "/api/ai/scenarios",
+        json={
+            "projectId": "p-scen-log",
+            "conversationId": conv["id"],
+            "request": "Draft something",
+            "context": {},
+        },
+    )
+    assert r.status_code == 502, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "provider_error"
+    assert isinstance(detail.get("logId"), str)
+
+    failures = (settings.data_dir / "ai_provider_failures.jsonl").read_text(encoding="utf-8")
+    event = json.loads(failures.splitlines()[-1])
+    assert event["logId"] == detail["logId"]
+    assert event["operation"] == "scenarios/generate"
+    assert event["provider"] == "opencode"
+    assert "upstream exploded" in event["providerBodySnippet"]
+
+    requests = (settings.data_dir / "ai_provider_requests.jsonl").read_text(encoding="utf-8")
+    req = json.loads(requests.splitlines()[-1])
+    assert req["logId"] == detail["logId"]
+    assert req["operation"] == "scenarios/generate"
+    assert req["ok"] is False
+
+
+def test_scenario_generation_success_leaves_request_log(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    """A successful generation leaves one ok line in the per-request log."""
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+    _fake_scenario(monkeypatch, SAMPLE_SCENARIO)
+    _make_project(client, "p-scen-log-ok")
+    conv = client.post("/api/ai/conversations", json={"projectId": "p-scen-log-ok"}).json()
+
+    r = client.post(
+        "/api/ai/scenarios",
+        json={
+            "projectId": "p-scen-log-ok",
+            "conversationId": conv["id"],
+            "request": "Draft a cat lesson",
+            "context": {},
+        },
+    )
+    assert r.status_code == 200, r.text
+    requests = (settings.data_dir / "ai_provider_requests.jsonl").read_text(encoding="utf-8")
+    req = json.loads(requests.splitlines()[-1])
+    assert req["operation"] == "scenarios/generate"
+    assert req["ok"] is True
+    assert req["provider"] == "opencode"
+    assert req["model"] == "anthropic/claude-sonnet-4-5"

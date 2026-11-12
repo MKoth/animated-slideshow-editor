@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -115,6 +117,31 @@ def test_ai_models_falls_back_when_provider_unreachable(client: TestClient) -> N
     assert isinstance(data["models"], list) and len(data["models"]) >= 1
     assert data["fallback"] is True  # no key / no network in tests
     assert "selected" in data
+
+
+def test_ai_models_can_fetch_selected_provider_before_saving(
+    client: TestClient, settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.ai.zen import ZenClient
+
+    settings.openrouter_api_key = "openrouter-test-key"
+    observed: dict[str, str] = {}
+
+    def list_models(self: ZenClient) -> list[str]:
+        observed["provider"] = self.provider
+        observed["key"] = self._api_key
+        return ["example/free-model"]
+
+    monkeypatch.setattr(ZenClient, "list_models", list_models)
+    response = client.get("/api/ai/models", params={"provider": "openrouter"})
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "openrouter"
+    assert response.json()["models"] == ["example/free-model"]
+    assert response.json()["fallback"] is False
+    assert observed == {"provider": "openrouter", "key": "openrouter-test-key"}
+    # A catalog preview must not switch the saved active provider.
+    assert client.get("/api/ai/settings").json()["provider"] == "opencode"
 
 
 def test_ai_chat_missing_key_surfaces_actionable_message(client: TestClient) -> None:

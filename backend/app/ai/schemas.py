@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class AiSettingsUpdate(BaseModel):
+    provider: Literal["opencode", "openrouter"] | None = None
     endpoint: str | None = None
     model: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)

@@ -1,4 +1,4 @@
-"""Client for the OpenCode inference API and its model-family endpoints."""
+"""Client for the AI inference APIs (OpenCode + OpenRouter) and their model-family endpoints."""
 
 # ruff: noqa: BLE001, S112
 from __future__ import annotations
@@ -13,6 +13,42 @@ import httpx
 
 logger = logging.getLogger(__name__)
 DEFAULT_GO_ENDPOINT = "https://opencode.ai/zen/go/v1"
+DEFAULT_OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1"
+
+SUPPORTED_AI_PROVIDERS = ("opencode", "openrouter")
+
+#: Legacy OpenCode URL prefixes migrated to the Go endpoint (opencode only).
+_LEGACY_OPENCODE_ENDPOINTS = {
+    "https://opencode.ai/zen/v1",
+    "https://opencode.ai/zen",
+    "https://opencode.ai",
+    "https://opencode.ai/inference",
+}
+
+
+def normalize_ai_provider(provider: object) -> str:
+    """Canonical provider id; unknown/empty reads as the legacy default."""
+    text = str(provider or "").strip().lower()
+    if text in SUPPORTED_AI_PROVIDERS:
+        return text
+    return "opencode"
+
+
+def openrouter_headers(api_key: str, session_id: str | None = None) -> dict[str, str]:
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/MKoth/animated-slideshow-editor",
+        "X-Title": "animated-slideshow-editor",
+    }
+    _ = session_id
+    return headers
+
+
+def provider_headers(provider: str, api_key: str, session_id: str | None = None) -> dict[str, str]:
+    if normalize_ai_provider(provider) == "openrouter":
+        return openrouter_headers(api_key, session_id)
+    return opencode_headers(api_key, session_id)
 
 
 def opencode_headers(api_key: str, session_id: str | None = None) -> dict[str, str]:
@@ -39,6 +75,28 @@ def inference_endpoint(endpoint: str) -> str:
     return normalized
 
 
+def resolve_provider_endpoint(provider: str, endpoint: str | None) -> str:
+    """Default endpoint per provider; custom endpoints pass through.
+
+    Switching providers without an explicit endpoint resets to that
+    provider's default instead of calling one provider's URL with the
+    other provider's key. Legacy OpenCode URLs always migrate to the Go
+    endpoint for the opencode provider; for openrouter they reset to the
+    OpenRouter default.
+    """
+    name = normalize_ai_provider(provider)
+    raw = (endpoint or "").strip()
+    if name == "openrouter":
+        if not raw or raw.rstrip("/") in _LEGACY_OPENCODE_ENDPOINTS:
+            return DEFAULT_OPENROUTER_ENDPOINT
+        if raw.rstrip("/") == DEFAULT_GO_ENDPOINT:
+            return DEFAULT_OPENROUTER_ENDPOINT
+        return raw.rstrip("/")
+    if not raw:
+        return DEFAULT_GO_ENDPOINT
+    return inference_endpoint(raw)
+
+
 def canonical_model_id(model: str) -> str:
     """Remove legacy provider prefixes from model IDs stored by older builds."""
     for prefix in ("anthropic/", "openai/", "google/", "opencode/"):
@@ -54,6 +112,40 @@ def model_api_family(model: str) -> str:
     if model_id.startswith(("gpt-", "grok-", "muse-spark-")):
         return "responses"
     return "openai"
+
+
+def inference_request_for_provider(
+    *,
+    provider: str,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+    stream: bool,
+) -> tuple[str, dict[str, object]]:
+    """Build path + body for a provider.
+
+    OpenRouter speaks OpenAI-compatible chat/completions for every model, so
+    model ids stay whole (`openai/gpt-4o-mini`) and family routing is skipped.
+    OpenCode keeps its per-family (anthropic/responses/openai) routing with
+    canonical (prefix-stripped) model ids.
+    """
+    if normalize_ai_provider(provider) == "openrouter":
+        payload = chat_completions_payload(
+            model=model.strip(),
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=stream,
+        )
+        return "/chat/completions", payload
+    return inference_request(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=stream,
+    )
 
 
 def inference_request(
@@ -105,13 +197,26 @@ class ZenError:
     message: str
 
 
-def friendly_error_for_status(status: int, body_text: str = "") -> tuple[str, str]:
+def friendly_error_for_status(
+    status: int, body_text: str = "", provider: str = "opencode"
+) -> tuple[str, str]:
     """Map provider failures to (code, user-facing message) per Spec 12 R17."""
     lowered = (body_text or "").lower()
+    name = normalize_ai_provider(provider)
     if status == 403 and "freetiererror" in lowered:
         return (
             "model_access_denied",
             "OpenCode rejected this model for your Go plan. Check that the model is included in your plan, then retry.",
+        )
+    if status == 403:
+        if name == "openrouter":
+            return (
+                "model_access_denied",
+                "OpenRouter rejected this model for your key. Check that the model id is enabled, then retry.",
+            )
+        return (
+            "model_access_denied",
+            "Model access denied for this key — check access, then retry.",
         )
     if status == 401:
         return (
@@ -119,6 +224,11 @@ def friendly_error_for_status(status: int, body_text: str = "") -> tuple[str, st
             "Key invalid or credits exhausted — check your key or top up, then retry.",
         )
     if status == 402:
+        if name == "openrouter":
+            return (
+                "limit_exceeded",
+                "OpenRouter credits exhausted — top up your OpenRouter balance, then retry.",
+            )
         return (
             "limit_exceeded",
             "OpenCode Go usage limit reached — check your 5-hour, weekly, and monthly usage in Console; wait for a reset or enable balance fallback.",
@@ -308,16 +418,88 @@ def parse_sse_tokens(raw: str) -> list[str]:
     return tokens
 
 
+def structured_inference_payload_for_provider(
+    *,
+    provider: str,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+    name: str,
+    schema: dict[str, object],
+) -> tuple[str, dict[str, object]]:
+    """Structured (JSON-schema) payload for a provider.
+
+    OpenRouter uses the OpenAI `response_format` envelope for every model;
+    OpenCode keeps its per-family envelopes (anthropic output_config,
+    responses text.format, openai response_format).
+    """
+    if normalize_ai_provider(provider) == "openrouter":
+        path, payload = inference_request_for_provider(
+            provider=provider,
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=False,
+        )
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": name, "schema": schema},
+        }
+        return path, payload
+    path, payload = inference_request(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=False,
+    )
+    family = model_api_family(model)
+    if family == "anthropic":
+        payload["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
+    elif family == "responses":
+        payload["text"] = {"format": {"type": "json_schema", "name": name, "schema": schema}}
+    else:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": name, "schema": schema},
+        }
+    return path, payload
+
+
+def provider_display_name(provider: str) -> str:
+    return "OpenRouter" if normalize_ai_provider(provider) == "openrouter" else "OpenCode"
+
+
+def missing_key_text(provider: str) -> str:
+    return (
+        f"No API key saved — open AI Settings and save your {provider_display_name(provider)} key, "
+        "then retry."
+    )
+
+
 class ZenClient:
     """Thin wrapper over httpx so tests can inject a MockTransport."""
 
-    def __init__(self, endpoint: str, api_key: str, timeout_s: float = 15.0) -> None:
-        self._endpoint = inference_endpoint(endpoint)
+    def __init__(
+        self,
+        endpoint: str,
+        api_key: str,
+        provider: str = "opencode",
+        timeout_s: float = 15.0,
+    ) -> None:
+        self._provider = normalize_ai_provider(provider)
+        self._endpoint = resolve_provider_endpoint(self._provider, endpoint)
         self._api_key = api_key
         self._timeout = timeout_s
 
+    @property
+    def provider(self) -> str:
+        return self._provider
+
     def _headers(self, session_id: str | None = None) -> dict[str, str]:
-        return opencode_headers(self._api_key, session_id)
+        return provider_headers(self._provider, self._api_key, session_id)
 
     def list_models(self, http_client: httpx.Client | None = None) -> list[str]:
         client = http_client or httpx.Client(timeout=self._timeout)
@@ -335,9 +517,16 @@ class ZenClient:
             if isinstance(raw, list):
                 for entry in raw:
                     if isinstance(entry, str):
-                        models.append(canonical_model_id(entry))
+                        models.append(
+                            entry if self._provider == "openrouter" else canonical_model_id(entry)
+                        )
                     elif isinstance(entry, dict) and isinstance(entry.get("id"), str):
-                        models.append(canonical_model_id(entry["id"]))
+                        entry_id = str(entry["id"])
+                        models.append(
+                            entry_id
+                            if self._provider == "openrouter"
+                            else canonical_model_id(entry_id)
+                        )
             return models
         finally:
             if close:
@@ -364,7 +553,8 @@ class ZenClient:
         filled in with stream shape info (bytes, chunks, event types, a head
         sample) so empty-content failures can be diagnosed from the log.
         """
-        path, payload = inference_request(
+        path, payload = inference_request_for_provider(
+            provider=self._provider,
             model=model,
             messages=messages,
             temperature=temperature,
@@ -442,7 +632,8 @@ class ZenClient:
         http_client: httpx.AsyncClient | None = None,
         usage: dict[str, int] | None = None,
     ) -> AsyncIterator[str]:
-        path, payload = inference_request(
+        path, payload = inference_request_for_provider(
+            provider=self._provider,
             model=model,
             messages=messages,
             temperature=temperature,

@@ -1,6 +1,20 @@
 import { ApiClient } from './apiClient'
 
+export type AiProvider = 'opencode' | 'openrouter'
+
+export const AI_PROVIDERS: AiProvider[] = ['opencode', 'openrouter']
+
+export const AI_PROVIDER_DEFAULTS: Record<AiProvider, { endpoint: string; label: string }> = {
+  opencode: { endpoint: 'https://opencode.ai/zen/go/v1', label: 'OpenCode' },
+  openrouter: { endpoint: 'https://openrouter.ai/api/v1', label: 'OpenRouter' },
+}
+
+export function normalizeAiProvider(provider: unknown): AiProvider {
+  return provider === 'openrouter' ? 'openrouter' : 'opencode'
+}
+
 export interface AiSettings {
+  provider: AiProvider
   endpoint: string
   model: string
   temperature: number
@@ -12,6 +26,7 @@ export interface AiSettings {
 }
 
 export interface AiSettingsUpdate {
+  provider?: AiProvider
   endpoint?: string
   model?: string
   temperature?: number
@@ -85,6 +100,7 @@ export interface AiModels {
   models: string[]
   selected: string
   fallback: boolean
+  provider?: AiProvider
 }
 
 export type AiChatMode = 'send' | 'regenerate'
@@ -554,8 +570,9 @@ export class AiApi {
     return this.client.put<AiSettings>('/api/ai/settings', JSON.stringify(input))
   }
 
-  async listModels(): Promise<AiModels> {
-    return this.client.get<AiModels>('/api/ai/models')
+  async listModels(provider?: AiProvider): Promise<AiModels> {
+    const query = provider ? `?provider=${encodeURIComponent(provider)}` : ''
+    return this.client.get<AiModels>(`/api/ai/models${query}`)
   }
 
   async listConversations(

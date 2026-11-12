@@ -106,6 +106,31 @@ def test_chat_persists_real_provider_usage(
     assert msgs[0].get("promptTokens") is None
 
 
+def test_chat_success_writes_request_log(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, settings: Any
+) -> None:
+    """Every successful chat leaves one ok line with provider/model in the request log."""
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5"})
+    _fake_stream(monkeypatch, ["Hello"])
+
+    conv = client.post("/api/ai/conversations", json={"projectId": "p-1"}).json()
+    r = client.post(
+        "/api/ai/chat",
+        json={"conversationId": conv["id"], "message": "Hi", "mode": "send", "context": {}},
+    )
+    assert r.status_code == 200
+
+    requests = (settings.data_dir / "ai_provider_requests.jsonl").read_text(encoding="utf-8")
+    req = json.loads(requests.splitlines()[-1])
+    assert req["operation"] == "chat"
+    assert req["ok"] is True
+    assert req["provider"] == "opencode"
+    assert req["model"] == "anthropic/claude-sonnet-4-5"
+    assert "sk-test-key" not in requests
+
+
 def test_chat_regenerate_replaces_last_assistant_only(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

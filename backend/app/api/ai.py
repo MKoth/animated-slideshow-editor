@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.ai.failure_log import log_ai_failure
+from app.ai.failure_log import log_ai_failure, log_ai_request
 from app.ai.library import (
     AiConversationNotFoundError,
     AiLibrary,
@@ -61,11 +62,13 @@ from app.ai.zen import (
     ZenFetchError,
     canonical_model_id,
     friendly_error_for_status,
-    inference_endpoint,
-    inference_request,
+    inference_request_for_provider,
     inference_response_usage,
-    model_api_family,
-    opencode_headers,
+    missing_key_text,
+    normalize_ai_provider,
+    provider_headers,
+    resolve_provider_endpoint,
+    structured_inference_payload_for_provider,
 )
 from app.config import (
     DEFAULT_ANIMATION_SYSTEM_PROMPT,
@@ -131,6 +134,7 @@ def put_ai_settings(request: Request, body: AiSettingsUpdate) -> dict[str, objec
     library = _library(request)
     try:
         return library.update_settings(
+            provider=body.provider,
             endpoint=body.endpoint,
             model=body.model,
             temperature=body.temperature,
@@ -141,29 +145,57 @@ def put_ai_settings(request: Request, body: AiSettingsUpdate) -> dict[str, objec
         )
     except AiSecretMissingError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 class AiModelsOut(BaseModel):
     models: list[str]
     selected: str
     fallback: bool
+    provider: str = "opencode"
+
+
+def _fallback_models_for_provider(request: Request, provider: str, selected: str) -> list[str]:
+    settings = request.app.state.settings
+    if normalize_ai_provider(provider) == "openrouter":
+        fallback = list(getattr(settings, "ai_fallback_models_openrouter", []) or [])
+        if fallback:
+            return fallback
+        return [selected]
+    fallback = list(getattr(settings, "ai_fallback_models", []) or [])
+    return fallback or [selected]
+
+
+def _live_model_selected(provider: str, selected: str, live: list[str]) -> bool:
+    """Provider-aware model gate: OpenCode compares canonical (prefix-stripped) ids."""
+    if normalize_ai_provider(provider) == "openrouter":
+        wanted = {m.strip().lower() for m in live if m.strip()}
+        return selected.strip().lower() in wanted
+    canonical_live = {canonical_model_id(model) for model in live}
+    return canonical_model_id(selected) in canonical_live
 
 
 @router.get("/ai/models", response_model=AiModelsOut)
-def get_ai_models(request: Request) -> AiModelsOut:
+def get_ai_models(request: Request, provider: str | None = None) -> AiModelsOut:
     library = _library(request)
-    row, key = library.get_settings_raw()
-    settings = request.app.state.settings
-    fallback_models = list(getattr(settings, "ai_fallback_models", [row.model]))
+    row, key = library.get_settings_raw(provider)
+    selected_provider = normalize_ai_provider(
+        provider if provider is not None else getattr(row, "provider", None)
+    )
+    endpoint = resolve_provider_endpoint(selected_provider, row.endpoint)
+    fallback_models = _fallback_models_for_provider(request, selected_provider, row.model)
     if key:
         try:
-            live = ZenClient(row.endpoint, key).list_models()
+            live = ZenClient(endpoint, key, selected_provider).list_models()
             if live:
-                return AiModelsOut(models=live, selected=row.model, fallback=False)
+                return AiModelsOut(
+                    models=live, selected=row.model, fallback=False, provider=selected_provider
+                )
         except Exception:
             pass
     models = fallback_models or [row.model]
-    return AiModelsOut(models=models, selected=row.model, fallback=True)
+    return AiModelsOut(models=models, selected=row.model, fallback=True, provider=selected_provider)
 
 
 # -- conversations -----------------------------------------------------
@@ -310,26 +342,31 @@ def _sse(event: str, payload: dict[str, object]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
 
 
-def _error_assistant_text(code: str, fallback: str) -> str:
+def _error_assistant_text(code: str, fallback: str, provider: str = "opencode") -> str:
+    if code == "missing_key":
+        return missing_key_text(provider)
     mapping = {
-        "missing_key": "No API key saved — open AI Settings and save your opencode.ai key, then retry.",
         "invalid_or_exhausted": "Key invalid or credits exhausted — check your key or top up, then retry.",
         "limit_exceeded": "Credit limit exceeded — top up and retry.",
         "rate_limited": "Rate-limited — wait a moment and retry.",
         "model_unlisted": "Model no longer listed — reselect a model in AI Settings, then retry.",
-        "model_access_denied": "OpenCode rejected this model for your Go plan. Check that the model is included in your plan, then retry.",
+        "model_access_denied": (
+            "OpenRouter rejected this model for your key. Check that the model id is enabled, then retry."
+            if normalize_ai_provider(provider) == "openrouter"
+            else "OpenCode rejected this model for your Go plan. Check that the model is included in your plan, then retry."
+        ),
         "provider_error": "Provider error — retry.",
     }
     return mapping.get(code, fallback)
 
 
 def _resolve_live_models(
-    endpoint: str, key: str | None, fallback: list[str]
+    endpoint: str, key: str | None, fallback: list[str], provider: str = "opencode"
 ) -> tuple[list[str], bool]:
     if not key:
         return fallback, True
     try:
-        live = ZenClient(endpoint, key).list_models()
+        live = ZenClient(endpoint, key, normalize_ai_provider(provider)).list_models()
         if live:
             return live, False
     except Exception:
@@ -538,9 +575,9 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
 
     effective_mode = _effective_assistant_mode(body.assistantMode, conversation.mode)
 
-    settings = request.app.state.settings
-    fallback_models: list[str] = list(getattr(settings, "ai_fallback_models", []))
     row, key = library.get_settings_raw()
+    provider = normalize_ai_provider(getattr(row, "provider", None))
+    fallback_models = _fallback_models_for_provider(request, provider, row.model)
     system_prompt = _system_prompt_for_mode(row.system_prompt, effective_mode)
 
     # Resolve the prompt input without persisting yet.
@@ -591,7 +628,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
             library.append_message(body.conversationId, "user", current)
 
         if not key:
-            text = _error_assistant_text("missing_key", "")
+            text = _error_assistant_text("missing_key", "", provider)
             assistant = library.append_message(
                 body.conversationId, "assistant", text, error_code="missing_key"
             )
@@ -602,11 +639,11 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
             )
             return
 
-        live_models, _ = _resolve_live_models(row.endpoint, key, fallback_models or [row.model])
-        if canonical_model_id(row.model) not in {
-            canonical_model_id(model) for model in live_models
-        }:
-            text = _error_assistant_text("model_unlisted", "")
+        live_models, _ = _resolve_live_models(
+            row.endpoint, key, fallback_models or [row.model], provider
+        )
+        if not _live_model_selected(provider, row.model, live_models):
+            text = _error_assistant_text("model_unlisted", "", provider)
             assistant = library.append_message(
                 body.conversationId, "assistant", text, error_code="model_unlisted"
             )
@@ -640,10 +677,11 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
 
         yield _sse("start", {"conversationId": body.conversationId, "messageId": assistant_id})
 
-        zen = ZenClient(row.endpoint, key)
+        zen = ZenClient(row.endpoint, key, provider)
         collected: list[str] = []
         reported_usage: dict[str, int] = {}
         stream_diag: dict[str, Any] = {}
+        started = time.monotonic()
         try:
             if row.streaming:
                 # Generous time-to-first-token: large scene prompts plus
@@ -663,6 +701,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                     yield _sse("token", {"delta": token, "messageId": assistant_id})
             else:
                 content, non_stream_usage = _chat_once_non_streaming(
+                    provider=provider,
                     endpoint=row.endpoint,
                     api_key=key,
                     model=row.model,
@@ -675,10 +714,10 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                 collected.append(content)
                 yield _sse("token", {"delta": content, "messageId": assistant_id})
         except ZenFetchError as exc:
-            code, friendly = friendly_error_for_status(exc.status, exc.body)
+            code, friendly = friendly_error_for_status(exc.status, exc.body, provider)
             if exc.status == 401:
                 logger.warning("ai zen 401 for model %s: %s", row.model, exc.body[:200])
-            text = _error_assistant_text(code, friendly)
+            text = _error_assistant_text(code, friendly, provider)
             # Preserve any partial stream content, then append the actionable error.
             partial = "".join(collected)
             combined = f"{partial}\n\n{text}" if partial else text
@@ -688,6 +727,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                 operation="chat",
                 code=code,
                 http_status=exc.status,
+                provider=provider,
                 model=row.model,
                 endpoint=row.endpoint,
                 provider_status=exc.status,
@@ -696,6 +736,22 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                 conversation_id=body.conversationId,
                 message_id=assistant_id,
                 extra={"partialChars": len(partial), "streaming": row.streaming},
+            )
+            log_ai_request(
+                _data_dir(request),
+                operation="chat",
+                provider=provider,
+                model=row.model,
+                endpoint=row.endpoint,
+                ok=False,
+                code=code,
+                http_status=exc.status,
+                provider_status=exc.status,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                message_excerpt=current,
+                conversation_id=body.conversationId,
+                message_id=assistant_id,
+                log_id=log_id,
             )
             yield _sse(
                 "error",
@@ -706,9 +762,23 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
             # Client pressed Stop: persist the partial response as-is with a stopped marker.
             partial = "".join(collected)
             library.update_message_content(assistant_id, partial, stopped=True)
+            log_ai_request(
+                _data_dir(request),
+                operation="chat",
+                provider=provider,
+                model=row.model,
+                endpoint=row.endpoint,
+                ok=False,
+                code="stopped",
+                http_status=200,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                message_excerpt=current,
+                conversation_id=body.conversationId,
+                message_id=assistant_id,
+            )
             raise
         except (httpx.HTTPError, TimeoutError) as exc:
-            text = _error_assistant_text("provider_error", "Provider error — retry.")
+            text = _error_assistant_text("provider_error", "Provider error — retry.", provider)
             partial = "".join(collected)
             combined = f"{partial}\n\n{text}" if partial else text
             library.update_message_content(assistant_id, combined, error_code="provider_error")
@@ -718,6 +788,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                 operation="chat",
                 code="provider_error",
                 http_status=502,
+                provider=provider,
                 model=row.model,
                 endpoint=row.endpoint,
                 message_excerpt=current,
@@ -731,6 +802,21 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                     "streaming": row.streaming,
                 },
             )
+            log_ai_request(
+                _data_dir(request),
+                operation="chat",
+                provider=provider,
+                model=row.model,
+                endpoint=row.endpoint,
+                ok=False,
+                code="provider_error",
+                http_status=502,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                message_excerpt=current,
+                conversation_id=body.conversationId,
+                message_id=assistant_id,
+                log_id=log_id,
+            )
             yield _sse(
                 "error",
                 {
@@ -742,7 +828,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
             )
             return
         except Exception as exc:
-            text = _error_assistant_text("provider_error", "Provider error — retry.")
+            text = _error_assistant_text("provider_error", "Provider error — retry.", provider)
             partial = "".join(collected)
             combined = f"{partial}\n\n{text}" if partial else text
             library.update_message_content(assistant_id, combined, error_code="provider_error")
@@ -752,6 +838,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                 operation="chat",
                 code="provider_error",
                 http_status=502,
+                provider=provider,
                 model=row.model,
                 endpoint=row.endpoint,
                 message_excerpt=current,
@@ -764,6 +851,21 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                     "partialChars": len(partial),
                     "streaming": row.streaming,
                 },
+            )
+            log_ai_request(
+                _data_dir(request),
+                operation="chat",
+                provider=provider,
+                model=row.model,
+                endpoint=row.endpoint,
+                ok=False,
+                code="provider_error",
+                http_status=502,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                message_excerpt=current,
+                conversation_id=body.conversationId,
+                message_id=assistant_id,
+                log_id=log_id,
             )
             yield _sse(
                 "error",
@@ -793,13 +895,14 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                 )
             else:
                 code = "provider_error"
-                text = _error_assistant_text(code, "Provider error — retry.")
+                text = _error_assistant_text(code, "Provider error — retry.", provider)
             library.update_message_content(assistant_id, text, error_code=code)
             log_id = log_ai_failure(
                 _data_dir(request),
                 operation="chat",
                 code=code,
                 http_status=502,
+                provider=provider,
                 model=row.model,
                 endpoint=row.endpoint,
                 message_excerpt=current,
@@ -814,6 +917,21 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                     "streamEventTypes": stream_diag.get("streamEventTypes", []),
                     "streamSample": stream_diag.get("streamSample", ""),
                 },
+            )
+            log_ai_request(
+                _data_dir(request),
+                operation="chat",
+                provider=provider,
+                model=row.model,
+                endpoint=row.endpoint,
+                ok=False,
+                code=code,
+                http_status=502,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                message_excerpt=current,
+                conversation_id=body.conversationId,
+                message_id=assistant_id,
+                log_id=log_id,
             )
             yield _sse(
                 "error",
@@ -899,6 +1017,20 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
             done_payload["scenarioAudit"] = scenario_audit
         if scenario_question is not None:
             done_payload["scenarioQuestion"] = scenario_question
+        log_ai_request(
+            _data_dir(request),
+            operation="chat",
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            ok=True,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            usage=usage_kwargs or None,
+            message_excerpt=current,
+            project_id=conversation.project_id,
+            conversation_id=body.conversationId,
+            message_id=assistant_id,
+        )
         yield _sse("done", done_payload)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
@@ -906,6 +1038,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
 
 def _chat_once_non_streaming(
     *,
+    provider: str = "opencode",
     endpoint: str,
     api_key: str,
     model: str,
@@ -914,7 +1047,8 @@ def _chat_once_non_streaming(
     max_tokens: int,
     session_id: str,
 ) -> tuple[str, dict[str, int]]:
-    path, payload = inference_request(
+    path, payload = inference_request_for_provider(
+        provider=provider,
         model=model,
         messages=messages,
         temperature=temperature,
@@ -923,8 +1057,8 @@ def _chat_once_non_streaming(
     )
     try:
         response = httpx.post(
-            f"{inference_endpoint(endpoint)}{path}",
-            headers=opencode_headers(api_key, session_id),
+            f"{resolve_provider_endpoint(provider, endpoint)}{path}",
+            headers=provider_headers(provider, api_key, session_id),
             json=payload,
             timeout=30.0,
         )
@@ -1009,6 +1143,7 @@ def _inference_response_text(data: dict[str, Any]) -> str:
 
 def _structured_inference_payload(
     *,
+    provider: str = "opencode",
     model: str,
     messages: list[dict[str, str]],
     temperature: float,
@@ -1016,24 +1151,15 @@ def _structured_inference_payload(
     name: str,
     schema: dict[str, object],
 ) -> tuple[str, dict[str, object]]:
-    path, payload = inference_request(
+    return structured_inference_payload_for_provider(
+        provider=provider,
         model=model,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
-        stream=False,
+        name=name,
+        schema=schema,
     )
-    family = model_api_family(model)
-    if family == "anthropic":
-        payload["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
-    elif family == "responses":
-        payload["text"] = {"format": {"type": "json_schema", "name": name, "schema": schema}}
-    else:
-        payload["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {"name": name, "schema": schema},
-        }
-    return path, payload
 
 
 # -- action scenarios (Stage A) --------------------------------------------
@@ -1044,6 +1170,7 @@ def _structured_inference_payload(
 
 def _generate_scenario_structured(
     *,
+    provider: str = "opencode",
     endpoint: str,
     api_key: str,
     model: str,
@@ -1056,6 +1183,7 @@ def _generate_scenario_structured(
     from app.api import scenario_routes
 
     return scenario_routes.generate_scenario_structured(
+        provider=provider,
         endpoint=endpoint,
         api_key=api_key,
         model=model,
@@ -1108,18 +1236,20 @@ def post_ai_scenario(request: Request, body: AiScenarioCreate) -> dict[str, obje
 
     library.append_message(body.conversationId, "user", current_text)
 
-    settings = request.app.state.settings
-    fallback_models: list[str] = list(getattr(settings, "ai_fallback_models", []))
     row, key = library.get_settings_raw()
+    provider = normalize_ai_provider(getattr(row, "provider", None))
+    fallback_models = _fallback_models_for_provider(request, provider, row.model)
 
     if not key:
-        text = _error_assistant_text("missing_key", "")
+        text = _error_assistant_text("missing_key", "", provider)
         library.append_message(body.conversationId, "assistant", text, error_code="missing_key")
         raise HTTPException(status_code=409, detail={"code": "missing_key", "message": text})
 
-    live_models, _ = _resolve_live_models(row.endpoint, key, fallback_models or [row.model])
-    if canonical_model_id(row.model) not in {canonical_model_id(model) for model in live_models}:
-        text = _error_assistant_text("model_unlisted", "")
+    live_models, _ = _resolve_live_models(
+        row.endpoint, key, fallback_models or [row.model], provider
+    )
+    if not _live_model_selected(provider, row.model, live_models):
+        text = _error_assistant_text("model_unlisted", "", provider)
         library.append_message(body.conversationId, "assistant", text, error_code="model_unlisted")
         raise HTTPException(status_code=409, detail={"code": "model_unlisted", "message": text})
 
@@ -1135,6 +1265,7 @@ def post_ai_scenario(request: Request, body: AiScenarioCreate) -> dict[str, obje
 
     try:
         raw = _generate_scenario_structured(
+            provider=provider,
             endpoint=row.endpoint,
             api_key=key,
             model=row.model,
@@ -1144,19 +1275,75 @@ def post_ai_scenario(request: Request, body: AiScenarioCreate) -> dict[str, obje
             session_id=body.conversationId,
         )
     except ZenFetchError as exc:
-        code, friendly = friendly_error_for_status(exc.status, exc.body)
-        text = _error_assistant_text(code, friendly)
+        code, friendly = friendly_error_for_status(exc.status, exc.body, provider)
+        text = _error_assistant_text(code, friendly, provider)
         library.append_message(body.conversationId, "assistant", text, error_code=code)
+        log_id = log_ai_failure(
+            _data_dir(request),
+            operation="scenarios/generate",
+            code=code,
+            http_status=409 if code != "provider_error" else 502,
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            provider_status=exc.status,
+            provider_body=exc.body,
+            message_excerpt=current_text,
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+        )
+        log_ai_request(
+            _data_dir(request),
+            operation="scenarios/generate",
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            ok=False,
+            code=code,
+            http_status=409 if code != "provider_error" else 502,
+            provider_status=exc.status,
+            message_excerpt=current_text,
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            log_id=log_id,
+        )
         raise HTTPException(
             status_code=409 if code != "provider_error" else 502,
-            detail={"code": code, "message": text},
+            detail={"code": code, "message": text, "logId": log_id},
         ) from exc
     except Exception as exc:
         logger.warning("ai scenario unexpected error: %s", exc)
-        text = _error_assistant_text("provider_error", "Provider error — retry.")
+        text = _error_assistant_text("provider_error", "Provider error — retry.", provider)
         library.append_message(body.conversationId, "assistant", text, error_code="provider_error")
+        log_id = log_ai_failure(
+            _data_dir(request),
+            operation="scenarios/generate",
+            code="provider_error",
+            http_status=502,
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            message_excerpt=current_text,
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            extra={"errorType": type(exc).__name__, "error": str(exc)[:500]},
+        )
+        log_ai_request(
+            _data_dir(request),
+            operation="scenarios/generate",
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            ok=False,
+            code="provider_error",
+            http_status=502,
+            message_excerpt=current_text,
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            log_id=log_id,
+        )
         raise HTTPException(
-            status_code=502, detail={"code": "provider_error", "message": text}
+            status_code=502, detail={"code": "provider_error", "message": text, "logId": log_id}
         ) from exc
 
     try:
@@ -1166,10 +1353,37 @@ def post_ai_scenario(request: Request, body: AiScenarioCreate) -> dict[str, obje
         validated = parse_and_validate_scenario(merged_raw)
         content = validated.model_dump(by_alias=False)
     except ValueError as exc:
-        text = _error_assistant_text("provider_error", "Provider error — retry.")
+        text = _error_assistant_text("provider_error", "Provider error — retry.", provider)
         library.append_message(body.conversationId, "assistant", text, error_code="provider_error")
+        log_id = log_ai_failure(
+            _data_dir(request),
+            operation="scenarios/generate",
+            code="provider_error",
+            http_status=502,
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            message_excerpt=current_text,
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            extra={"reason": "model output failed validation", "error": str(exc)[:500]},
+        )
+        log_ai_request(
+            _data_dir(request),
+            operation="scenarios/generate",
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            ok=False,
+            code="provider_error",
+            http_status=502,
+            message_excerpt=current_text,
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            log_id=log_id,
+        )
         raise HTTPException(
-            status_code=502, detail={"code": "provider_error", "message": text}
+            status_code=502, detail={"code": "provider_error", "message": text, "logId": log_id}
         ) from exc
 
     if body.scenarioId:
@@ -1188,6 +1402,17 @@ def post_ai_scenario(request: Request, body: AiScenarioCreate) -> dict[str, obje
         f"{len(content.get('steps', [])) if isinstance(content.get('steps'), list) else 0} steps. "
         "Review it in the AI panel, edit, revise, then accept — the project is untouched. "
         "Stage B runs only on the accepted version."
+    )
+    log_ai_request(
+        _data_dir(request),
+        operation="scenarios/generate",
+        provider=provider,
+        model=row.model,
+        endpoint=row.endpoint,
+        ok=True,
+        message_excerpt=current_text,
+        project_id=body.projectId,
+        conversation_id=body.conversationId,
     )
     library.append_message(body.conversationId, "assistant", narration)
     return _scenario_to_out(request, scenario_row.id)
@@ -2974,6 +3199,7 @@ def _proposal_asset_instructions(effective_mode: str) -> str:
 
 def _generate_proposal_structured(
     *,
+    provider: str = "opencode",
     endpoint: str,
     api_key: str,
     model: str,
@@ -2984,6 +3210,7 @@ def _generate_proposal_structured(
 ) -> dict[str, object]:
     """Call Zen chat/completions with a proposal-draft JSON schema. Mock seam for tests."""
     path, payload = _structured_inference_payload(
+        provider=provider,
         model=model,
         messages=messages,
         temperature=temperature,
@@ -2993,8 +3220,8 @@ def _generate_proposal_structured(
     )
     try:
         response = httpx.post(
-            f"{inference_endpoint(endpoint)}{path}",
-            headers=opencode_headers(api_key, session_id),
+            f"{resolve_provider_endpoint(provider, endpoint)}{path}",
+            headers=provider_headers(provider, api_key, session_id),
             json=payload,
             timeout=60.0,
         )
@@ -3038,19 +3265,21 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
         raise HTTPException(status_code=422, detail="message does not belong to this conversation")
 
     effective_mode = _effective_assistant_mode(None, conversation.mode)
-    settings = request.app.state.settings
-    fallback_models: list[str] = list(getattr(settings, "ai_fallback_models", []))
     row, key = library.get_settings_raw()
+    provider = normalize_ai_provider(getattr(row, "provider", None))
+    fallback_models = _fallback_models_for_provider(request, provider, row.model)
     system_prompt = _system_prompt_for_mode(row.system_prompt, effective_mode)
 
     if not key:
-        text = _error_assistant_text("missing_key", "")
+        text = _error_assistant_text("missing_key", "", provider)
         library.append_message(body.conversationId, "assistant", text, error_code="missing_key")
         raise HTTPException(status_code=409, detail={"code": "missing_key", "message": text})
 
-    live_models, _ = _resolve_live_models(row.endpoint, key, fallback_models or [row.model])
-    if canonical_model_id(row.model) not in {canonical_model_id(model) for model in live_models}:
-        text = _error_assistant_text("model_unlisted", "")
+    live_models, _ = _resolve_live_models(
+        row.endpoint, key, fallback_models or [row.model], provider
+    )
+    if not _live_model_selected(provider, row.model, live_models):
+        text = _error_assistant_text("model_unlisted", "", provider)
         library.append_message(body.conversationId, "assistant", text, error_code="model_unlisted")
         raise HTTPException(status_code=409, detail={"code": "model_unlisted", "message": text})
 
@@ -3102,6 +3331,7 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
 
     try:
         raw = _generate_proposal_structured(
+            provider=provider,
             endpoint=row.endpoint,
             api_key=key,
             model=row.model,
@@ -3111,14 +3341,15 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
             session_id=body.conversationId,
         )
     except ZenFetchError as exc:
-        code, friendly = friendly_error_for_status(exc.status, exc.body)
-        text = _error_assistant_text(code, friendly)
+        code, friendly = friendly_error_for_status(exc.status, exc.body, provider)
+        text = _error_assistant_text(code, friendly, provider)
         library.append_message(body.conversationId, "assistant", text, error_code=code)
         log_id = log_ai_failure(
             _data_dir(request),
             operation="proposals/draft",
             code=code,
             http_status=409 if code != "provider_error" else 502,
+            provider=provider,
             model=row.model,
             endpoint=row.endpoint,
             provider_status=exc.status,
@@ -3128,19 +3359,36 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
             conversation_id=body.conversationId,
             message_id=body.messageId,
         )
+        log_ai_request(
+            _data_dir(request),
+            operation="proposals/draft",
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            ok=False,
+            code=code,
+            http_status=409 if code != "provider_error" else 502,
+            provider_status=exc.status,
+            message_excerpt=message.content,
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            message_id=body.messageId,
+            log_id=log_id,
+        )
         raise HTTPException(
             status_code=409 if code != "provider_error" else 502,
             detail={"code": code, "message": text, "logId": log_id},
         ) from exc
     except Exception as exc:
         logger.warning("ai proposal draft unexpected error: %s", exc)
-        text = _error_assistant_text("provider_error", "Provider error — retry.")
+        text = _error_assistant_text("provider_error", "Provider error — retry.", provider)
         library.append_message(body.conversationId, "assistant", text, error_code="provider_error")
         log_id = log_ai_failure(
             _data_dir(request),
             operation="proposals/draft",
             code="provider_error",
             http_status=502,
+            provider=provider,
             model=row.model,
             endpoint=row.endpoint,
             message_excerpt=message.content,
@@ -3148,6 +3396,21 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
             conversation_id=body.conversationId,
             message_id=body.messageId,
             extra={"errorType": type(exc).__name__, "error": str(exc)[:500]},
+        )
+        log_ai_request(
+            _data_dir(request),
+            operation="proposals/draft",
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            ok=False,
+            code="provider_error",
+            http_status=502,
+            message_excerpt=message.content,
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            message_id=body.messageId,
+            log_id=log_id,
         )
         raise HTTPException(
             status_code=502,
@@ -3180,6 +3443,7 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
             operation="proposals/draft",
             code="no_actionable_edit",
             http_status=422,
+            provider=provider,
             model=row.model,
             endpoint=row.endpoint,
             message_excerpt=message.content,
@@ -3193,6 +3457,21 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
                 "commandsType": type(commands_raw).__name__,
                 "commandsLen": len(commands_raw) if isinstance(commands_raw, list) else 0,
             },
+        )
+        log_ai_request(
+            _data_dir(request),
+            operation="proposals/draft",
+            provider=provider,
+            model=row.model,
+            endpoint=row.endpoint,
+            ok=False,
+            code="no_actionable_edit",
+            http_status=422,
+            message_excerpt=message.content,
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            message_id=body.messageId,
+            log_id=log_id,
         )
         raise HTTPException(
             status_code=422,
@@ -3215,6 +3494,18 @@ def post_ai_proposal_draft(request: Request, body: AiProposalDraft) -> dict[str,
         raise HTTPException(status_code=404, detail="conversation not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    log_ai_request(
+        _data_dir(request),
+        operation="proposals/draft",
+        provider=provider,
+        model=row.model,
+        endpoint=row.endpoint,
+        ok=True,
+        message_excerpt=message.content,
+        project_id=body.projectId,
+        conversation_id=body.conversationId,
+        message_id=body.messageId,
+    )
     return _proposal_to_out(request, created.id)
 
 

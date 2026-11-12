@@ -25,8 +25,18 @@ from app.ai.model import (
     AiSettingsRow,
 )
 from app.ai.proposals import validate_proposal_commands
-from app.ai.zen import canonical_model_id, inference_endpoint
-from app.config import DEFAULT_CONTEXT_BUDGET, DEFAULT_SYSTEM_PROMPT, DEFAULT_ZEN_URL, Settings
+from app.ai.zen import (
+    canonical_model_id,
+    inference_endpoint,
+    normalize_ai_provider,
+    resolve_provider_endpoint,
+)
+from app.config import (
+    DEFAULT_CONTEXT_BUDGET,
+    DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_ZEN_URL,
+    Settings,
+)
 from app.database import Database
 
 GO_MODEL_MIGRATIONS = {
@@ -58,10 +68,40 @@ class AiLibrary:
 
     # -- settings -----------------------------------------------------
 
+    @staticmethod
+    def normalize_provider(provider: object) -> str:
+        return normalize_ai_provider(provider)
+
+    def _active_provider(self, row: AiSettingsRow) -> str:
+        return normalize_ai_provider(getattr(row, "provider", None))
+
+    def _provider_ciphertext(self, row: AiSettingsRow, provider: str) -> str | None:
+        if normalize_ai_provider(provider) == "openrouter":
+            return getattr(row, "encrypted_key_openrouter", None)
+        return row.encrypted_key
+
+    def _decrypt_provider_key(self, row: AiSettingsRow, provider: str) -> str | None:
+        return self._decrypt_or_none(self._provider_ciphertext(row, provider))
+
+    def _env_fallback_key(self, provider: str) -> str | None:
+        """Env-provided key (e.g. OPEN_ROUTER_KEY) used when no UI key is saved.
+
+        A UI-saved key always wins; the env value only fills the gap so a
+        backend `.env` entry alone is enough to run the assistants.
+        """
+        if normalize_ai_provider(provider) == "openrouter":
+            return getattr(self._settings, "openrouter_api_key", None)
+        return getattr(self._settings, "opencode_api_key", None)
+
+    def _effective_provider_key(self, row: AiSettingsRow, provider: str) -> str | None:
+        return self._decrypt_provider_key(row, provider) or self._env_fallback_key(provider)
+
     def get_settings_view(self) -> dict[str, object]:
         row = self._get_or_seed_settings_row()
-        plaintext = self._decrypt_or_none(row.encrypted_key)
+        provider = self._active_provider(row)
+        plaintext = self._effective_provider_key(row, provider)
         return {
+            "provider": provider,
             "endpoint": row.endpoint,
             "model": row.model,
             "temperature": row.temperature,
@@ -72,13 +112,17 @@ class AiLibrary:
             "hasKey": bool(plaintext),
         }
 
-    def get_settings_raw(self) -> tuple[AiSettingsRow, str | None]:
+    def get_settings_raw(self, provider: str | None = None) -> tuple[AiSettingsRow, str | None]:
         row = self._get_or_seed_settings_row()
-        return row, self._decrypt_or_none(row.encrypted_key)
+        wanted_provider = (
+            normalize_ai_provider(provider) if provider is not None else self._active_provider(row)
+        )
+        return row, self._effective_provider_key(row, wanted_provider)
 
     def update_settings(
         self,
         *,
+        provider: str | None = None,
         endpoint: str | None = None,
         model: str | None = None,
         temperature: float | None = None,
@@ -89,12 +133,27 @@ class AiLibrary:
     ) -> dict[str, object]:
         if api_key is not None and api_key != "" and not self._settings.ai_secret_key:
             raise AiSecretMissingError("AI_SECRET_KEY is not set — cannot save the provider key")
+        if provider is not None and normalize_ai_provider(provider) != provider.strip().lower():
+            raise ValueError("provider must be 'opencode' or 'openrouter'")
         with self._database.session() as session:
             row = session.get(AiSettingsRow, "singleton")
             if row is None:
                 row = self._seed_row(session)
+            current_provider = self._active_provider(row)
+            wanted_provider = (
+                normalize_ai_provider(provider) if provider is not None else current_provider
+            )
+            provider_changed = wanted_provider != current_provider
+            if provider is not None:
+                row.provider = wanted_provider
             if endpoint is not None:
-                row.endpoint = endpoint.strip() or row.endpoint
+                cleaned = endpoint.strip()
+                row.endpoint = cleaned or resolve_provider_endpoint(wanted_provider, row.endpoint)
+            elif provider_changed:
+                # Switching providers without an explicit endpoint resets to the
+                # new provider's default instead of calling one provider's URL
+                # with the other provider's key.
+                row.endpoint = resolve_provider_endpoint(wanted_provider, None)
             if model is not None:
                 row.model = model.strip() or row.model
             if temperature is not None:
@@ -108,7 +167,11 @@ class AiLibrary:
             if api_key is not None and api_key != "":
                 secret = self._settings.ai_secret_key
                 assert secret is not None
-                row.encrypted_key = encrypt_key(api_key, secret)
+                encrypted = encrypt_key(api_key, secret)
+                if wanted_provider == "openrouter":
+                    row.encrypted_key_openrouter = encrypted
+                else:
+                    row.encrypted_key = encrypted
             row.updated_at = _now()
             session.commit()
         return self.get_settings_view()
@@ -132,7 +195,11 @@ class AiLibrary:
                 session.commit()
             else:
                 changed = False
-                if row.endpoint.rstrip("/") in {
+                if getattr(row, "provider", None) in (None, ""):
+                    row.provider = "opencode"
+                    changed = True
+                active = normalize_ai_provider(getattr(row, "provider", None))
+                if active == "opencode" and row.endpoint.rstrip("/") in {
                     "https://opencode.ai/zen/v1",
                     "https://opencode.ai/zen",
                     "https://opencode.ai",
@@ -140,10 +207,13 @@ class AiLibrary:
                 }:
                     row.endpoint = DEFAULT_ZEN_URL
                     changed = True
-                replacement_model = GO_MODEL_MIGRATIONS.get(canonical_model_id(row.model).lower())
-                if replacement_model:
-                    row.model = replacement_model
-                    changed = True
+                if active == "opencode":
+                    replacement_model = GO_MODEL_MIGRATIONS.get(
+                        canonical_model_id(row.model).lower()
+                    )
+                    if replacement_model:
+                        row.model = replacement_model
+                        changed = True
                 if changed:
                     row.updated_at = _now()
                     session.commit()
@@ -167,6 +237,7 @@ class AiLibrary:
         )
         row = AiSettingsRow(
             id="singleton",
+            provider="opencode",
             endpoint=inference_endpoint(self._settings.opencode_base_url or DEFAULT_ZEN_URL),
             model=fallback_model,
             temperature=0.7,
@@ -174,6 +245,7 @@ class AiLibrary:
             streaming=True,
             system_prompt=self._settings.ai_system_prompt_default or DEFAULT_SYSTEM_PROMPT,
             encrypted_key=None,
+            encrypted_key_openrouter=None,
             updated_at=_now(),
         )
         session.add(row)

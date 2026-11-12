@@ -27,6 +27,10 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 LOG_FILENAME = "ai_provider_failures.jsonl"
+#: Every inference request (success or failure) leaves one line here so a
+#: "it doesn't work with provider X" report can be diagnosed after the fact
+#: without reproducing. Failures additionally land in LOG_FILENAME.
+REQUEST_LOG_FILENAME = "ai_provider_requests.jsonl"
 MAX_BODY_CHARS = 2000
 MAX_EXCERPT_CHARS = 500
 
@@ -55,6 +59,7 @@ def log_ai_failure(
     http_status: int,
     model: str = "",
     endpoint: str = "",
+    provider: str = "opencode",
     provider_status: int | None = None,
     provider_body: str = "",
     message_excerpt: str = "",
@@ -75,6 +80,7 @@ def log_ai_failure(
         "operation": operation,
         "code": code,
         "httpStatus": http_status,
+        "provider": provider,
         "model": model,
         "endpoint": _safe_endpoint(endpoint),
         "projectId": project_id,
@@ -90,11 +96,12 @@ def log_ai_failure(
     if extra:
         event["extra"] = extra
     logger.warning(
-        "ai failure %s op=%s code=%s http=%d model=%s provider_status=%s body=%.200s",
+        "ai failure %s op=%s code=%s http=%d provider=%s model=%s provider_status=%s body=%.200s",
         log_id,
         operation,
         code,
         http_status,
+        provider,
         model,
         provider_status,
         provider_body.replace("\n", " ") if provider_body else "",
@@ -105,4 +112,74 @@ def log_ai_failure(
             handle.write(json.dumps(event, default=str) + "\n")
     except Exception as exc:  # noqa: BLE001 - logging must never break requests
         logger.warning("ai failure log write failed (%s): %s", log_id, exc)
+    return log_id
+
+
+def log_ai_request(
+    data_dir: Path,
+    *,
+    operation: str,
+    provider: str = "opencode",
+    model: str = "",
+    endpoint: str = "",
+    ok: bool,
+    code: str = "ok",
+    http_status: int = 200,
+    provider_status: int | None = None,
+    duration_ms: int | None = None,
+    usage: dict[str, int] | None = None,
+    message_excerpt: str = "",
+    project_id: str = "",
+    conversation_id: str = "",
+    message_id: str = "",
+    log_id: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> str:
+    """Append one per-request event (success or failure), return its log id.
+
+    Pass the failure's log id on error paths so the requests line correlates
+    with the failures line. Best-effort like the failure log: never breaks
+    the request path. Same redaction rules apply (no keys, truncated bodies).
+    """
+    if log_id is None:
+        log_id = f"{operation.split('/')[-1]}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+    event: dict[str, Any] = {
+        "ts": datetime.now(UTC).isoformat(),
+        "logId": log_id,
+        "operation": operation,
+        "provider": provider,
+        "model": model,
+        "endpoint": _safe_endpoint(endpoint),
+        "ok": ok,
+        "code": code,
+        "httpStatus": http_status,
+        "projectId": project_id,
+        "conversationId": conversation_id,
+        "messageId": message_id,
+    }
+    if provider_status is not None:
+        event["providerStatus"] = provider_status
+    if duration_ms is not None:
+        event["durationMs"] = duration_ms
+    if usage:
+        event["usage"] = {k: v for k, v in usage.items() if isinstance(v, int)}
+    if message_excerpt:
+        event["messageExcerpt"] = _truncate(message_excerpt, MAX_EXCERPT_CHARS)
+    if extra:
+        event["extra"] = extra
+    logger.info(
+        "ai request %s op=%s ok=%s provider=%s model=%s http=%d",
+        log_id,
+        operation,
+        ok,
+        provider,
+        model,
+        http_status,
+    )
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        with open(data_dir / REQUEST_LOG_FILENAME, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, default=str) + "\n")
+    except Exception as exc:  # noqa: BLE001 - logging must never break requests
+        logger.warning("ai request log write failed (%s): %s", log_id, exc)
     return log_id
