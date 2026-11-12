@@ -1048,7 +1048,6 @@ export class Engine {
     const oldTtsProsody = part.ttsProsody ? { ...part.ttsProsody } : undefined
     const shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[] = []
     const shiftedClips: { id: string; oldTimelineStart: number }[] = []
-    let textTriggeredReflow = false
     if (patch.text !== undefined && patch.text !== part.text) {
       const settings = this.#projects.current?.settings ?? {}
       const secondsPerCharacter = getPrompterSecondsPerCharacter(settings)
@@ -1060,35 +1059,13 @@ export class Engine {
       } else {
         const newDuration = estimatePrompterDuration(patch.text, secondsPerCharacter)
         if (newDuration !== part.duration) {
-          const delta = newDuration - part.duration
-          // Capture downstream parts/clips before mutation for undo and to shift clips after reflow
-          for (let i = index + 1; i < slide.prompter.parts.length; i++) {
-            const downstream = slide.prompter.parts[i]
-            shiftedParts.push({
-              id: downstream.id,
-              oldStartTime: downstream.startTime,
-              oldEndTime: downstream.endTime,
-            })
-          }
-          for (const clip of slide.audio.clips) {
-            // Voice-only: effect SFX stay glued to their board visuals.
-            if (clip.trackId !== 'voice') continue
-            if (clip.timelineStart > oldEndTime - 1e-6) {
-              shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
-            }
-          }
           part.text = patch.text
           part.duration = newDuration
           part.endTime = part.startTime + newDuration
           part.status = undefined
-          // Gap-free invariant via reflowPrompter as one Transaction (Spec 7)
-          if (slide.prompter) reflowPrompter(slide.prompter)
-          // Shift downstream clips by same delta to stay gap-free (no silent hole)
-          for (const sc of shiftedClips) {
-            const clip = slide.audio.clips.find((c) => c.id === sc.id)
-            if (clip) clip.timelineStart = sc.oldTimelineStart + delta
-          }
-          textTriggeredReflow = true
+          // Editing text changes only this block's estimated size. Downstream
+          // blocks and their audio stay at their existing timeline positions;
+          // ripple movement is an explicit duration-edit operation.
         } else {
           part.text = patch.text
           part.status = undefined
@@ -1127,27 +1104,14 @@ export class Engine {
       part.duration = patch.duration
       part.endTime = part.startTime + part.duration
       if (patch.shiftDownstream) {
-        if (textTriggeredReflow) {
-          // Text already reflowed and shifted clips by its delta; now add duration delta on top
-          for (let i = index + 1; i < slide.prompter.parts.length; i++) {
-            const downstream = slide.prompter.parts[i]
-            downstream.startTime += delta
-            downstream.endTime += delta
-          }
-          for (const sc of shiftedClips) {
-            const clip = slide.audio.clips.find((c) => c.id === sc.id)
-            if (clip) clip.timelineStart += delta
-          }
-        } else {
-          for (let i = index + 1; i < slide.prompter.parts.length; i++) {
-            const downstream = slide.prompter.parts[i]
-            downstream.startTime += delta
-            downstream.endTime += delta
-          }
-          for (const sc of shiftedClips) {
-            const clip = slide.audio.clips.find((c) => c.id === sc.id)
-            if (clip) clip.timelineStart = sc.oldTimelineStart + delta
-          }
+        for (let i = index + 1; i < slide.prompter.parts.length; i++) {
+          const downstream = slide.prompter.parts[i]
+          downstream.startTime += delta
+          downstream.endTime += delta
+        }
+        for (const sc of shiftedClips) {
+          const clip = slide.audio.clips.find((c) => c.id === sc.id)
+          if (clip) clip.timelineStart = sc.oldTimelineStart + delta
         }
       } else {
         // Free placement: do not reflow gap-free — keep downstream where it is, gap may change

@@ -15,7 +15,14 @@ import { useSyncedAudio } from '../../audio/useSyncedAudio'
 import { useViewportWidth } from './useViewportWidth'
 import { PopularAudioModal } from '../audio/PopularAudioModal'
 import { usePopularAudioStore } from '../../stores/popularAudioStore'
-import { CreateAudioClipCommand } from '../../engine/commands'
+import {
+  CreateAudioClipCommand,
+  DeleteAudioClipCommand,
+  MovePrompterPartCommand,
+  SetPrompterPartAudioCommand,
+  TransactionCommand,
+} from '../../engine/commands'
+import { newId } from '../../engine/ids'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useAiStore } from '../../stores/aiStore'
@@ -27,6 +34,7 @@ import { TtsSettingsApi } from '../../api/ttsSettingsApi'
 import { useAudioResizePreferenceStore } from '../../stores/audioResizePreferenceStore'
 import { useTtsForeignVoiceStore } from '../../stores/ttsForeignVoiceStore'
 import { hasPrompterPartAudio } from '../../engine/prompter'
+import { useAudioClipSelectionStore } from '../../stores/audioClipSelectionStore'
 
 export function TimelinePanel({ height }: { height: number }) {
   const { engine, dispatch, undoStack } = useEngine()
@@ -293,6 +301,77 @@ export function TimelinePanel({ height }: { height: number }) {
     else void generateSlideTts()
   }
 
+  const deleteSlidePrompterAudio = () => {
+    if (!slide) return
+    const existingClipIds = new Set(slide.audio.clips.map((clip) => clip.id))
+    const clipIds = [
+      ...new Set(
+        prompterParts.flatMap((part) => [
+          ...(part.audioClipId ? [part.audioClipId] : []),
+          ...(part.segments?.map((segment) => segment.audioClipId) ?? []),
+        ]),
+      ),
+    ].filter((clipId) => existingClipIds.has(clipId))
+    if (clipIds.length === 0) return
+    if (
+      !window.confirm(
+        `Delete audio from all prompter blocks on this slide (${clipIds.length} clip${clipIds.length === 1 ? '' : 's'})? Prompter text stays; unlinked audio will be kept.`,
+      )
+    ) {
+      return
+    }
+    const result = dispatch(
+      new TransactionCommand(
+        clipIds.map((clipId) => new DeleteAudioClipCommand({ slideId: slide.id, clipId })),
+      ),
+    )
+    if (!result.ok) {
+      useNotificationStore.getState().notify(result.error.message)
+      return
+    }
+    useAudioClipSelectionStore.getState().clear()
+  }
+
+  const unoverlapSlidePrompterBlocks = () => {
+    if (!slide || prompterParts.length < 2) return
+    const sorted = [...prompterParts].sort((a, b) => a.startTime - b.startTime)
+    const targets = new Map<string, number>()
+    let cursor = sorted[0].startTime
+    for (const part of sorted) {
+      const target = Math.max(part.startTime, cursor)
+      targets.set(part.id, target)
+      cursor = target + part.duration
+    }
+    const moves = sorted.filter(
+      (part) => (targets.get(part.id) ?? part.startTime) > part.startTime + 1e-6,
+    )
+    if (moves.length === 0) {
+      useNotificationStore.getState().notify('No overlapping prompter blocks.')
+      return
+    }
+    const result = dispatch(
+      new TransactionCommand(
+        moves.map(
+          (part) =>
+            new MovePrompterPartCommand({
+              slideId: slide.id,
+              partId: part.id,
+              newStartTime: targets.get(part.id) ?? part.startTime,
+            }),
+        ),
+      ),
+    )
+    if (!result.ok) {
+      useNotificationStore.getState().notify(result.error.message)
+      return
+    }
+    useNotificationStore
+      .getState()
+      .notify(
+        `Unoverlapped ${moves.length} block${moves.length === 1 ? '' : 's'} — audio moved with its block.`,
+      )
+  }
+
   return (
     <div
       className={`timeline-panel${isClipEdit ? ' timeline-panel--clip-edit' : ''}`}
@@ -379,6 +458,24 @@ export function TimelinePanel({ height }: { height: number }) {
                   : 'Generate TTS for all blocks'}
               </button>
               <button
+                type="button"
+                data-testid="delete-prompter-audio-btn"
+                disabled={generatedAudioCount === 0 || ttsBatchProgress !== null}
+                title="Delete audio attached to all prompter blocks on this slide; keep unlinked audio"
+                onClick={deleteSlidePrompterAudio}
+              >
+                Delete audio from all blocks
+              </button>
+              <button
+                type="button"
+                data-testid="prompter-unoverlap-blocks"
+                disabled={prompterParts.length < 2 || ttsBatchProgress !== null}
+                title="Shift overlapping prompter blocks right so none overlap; linked audio moves with its block"
+                onClick={unoverlapSlidePrompterBlocks}
+              >
+                Unoverlap all blocks
+              </button>
+              <button
                 className="popular-audio-open-button"
                 data-testid="prompter-ai-improve"
                 title="Send a preset TTS improvement request for the current slide's prompter blocks"
@@ -445,12 +542,97 @@ export function TimelinePanel({ height }: { height: number }) {
                 mimeType: recording.mimeType,
                 metadata: { duration: recording.duration, waveformPeaks: recording.waveformPeaks },
               })
+            const timelineStart = Math.max(0, currentTime)
+            const playbackRate = recording.playbackRate ?? 1
+            const sourceStart = recording.sourceStart ?? 0
+            const sourceEnd = recording.sourceEnd
+            const playbackDuration =
+              playbackRate > 0 && sourceEnd > sourceStart
+                ? (sourceEnd - sourceStart) / playbackRate
+                : (recording.duration ?? 0)
+            const timelineEnd = timelineStart + playbackDuration
+            let bestPartId: string | null = null
+            let bestOverlap = 0
+            for (const part of prompterParts) {
+              const overlap = Math.max(
+                0,
+                Math.min(part.endTime, timelineEnd) - Math.max(part.startTime, timelineStart),
+              )
+              if (overlap > bestOverlap + 1e-6) {
+                bestOverlap = overlap
+                bestPartId = part.id
+              }
+            }
+            const bestPart =
+              bestPartId !== null
+                ? (prompterParts.find((part) => part.id === bestPartId) ?? null)
+                : null
+            if (bestPart && !hasPrompterPartAudio(bestPart)) {
+              const index = prompterParts.findIndex((part) => part.id === bestPart.id)
+              const snippet =
+                bestPart.text.length > 40 ? `${bestPart.text.slice(0, 40)}…` : bestPart.text
+              if (
+                !window.confirm(
+                  `Attach to block ${index + 1} ("${snippet}", ${bestPart.startTime.toFixed(1)}s–${bestPart.endTime.toFixed(1)}s)? OK attaches the audio to that block; Cancel adds it unlinked at the playhead.`,
+                )
+              ) {
+                const unlinked = dispatch(
+                  new CreateAudioClipCommand({
+                    slideId: slide.id,
+                    assetId,
+                    trackId: 'voice',
+                    timelineStart,
+                    sourceStart: recording.sourceStart,
+                    sourceEnd: recording.sourceEnd,
+                    volume: recording.volume,
+                    playbackRate: recording.playbackRate,
+                    pitchSemitones: recording.pitchSemitones,
+                    noiseReduction: recording.noiseReduction,
+                  }),
+                )
+                if (!unlinked.ok) useNotificationStore.getState().notify(unlinked.error.message)
+                else setShowPopularAudio(false)
+                return
+              }
+              const clipId = newId('audio-clip')
+              const result = dispatch(
+                new TransactionCommand([
+                  new CreateAudioClipCommand({
+                    id: clipId,
+                    slideId: slide.id,
+                    assetId,
+                    trackId: 'voice',
+                    timelineStart: bestPart.startTime,
+                    sourceStart: recording.sourceStart,
+                    sourceEnd: recording.sourceEnd,
+                    volume: recording.volume,
+                    playbackRate: recording.playbackRate,
+                    pitchSemitones: recording.pitchSemitones,
+                    noiseReduction: recording.noiseReduction,
+                  }),
+                  new SetPrompterPartAudioCommand({
+                    slideId: slide.id,
+                    partId: bestPart.id,
+                    audioClipId: clipId,
+                    audioAssetId: assetId,
+                  }),
+                ]),
+              )
+              if (!result.ok) {
+                useNotificationStore.getState().notify(result.error.message)
+              } else {
+                const index = prompterParts.findIndex((part) => part.id === bestPart.id)
+                useNotificationStore.getState().notify(`Attached to prompter block ${index + 1}.`)
+                setShowPopularAudio(false)
+              }
+              return
+            }
             const result = dispatch(
               new CreateAudioClipCommand({
                 slideId: slide.id,
                 assetId,
                 trackId: 'voice',
-                timelineStart: Math.max(0, currentTime),
+                timelineStart,
                 sourceStart: recording.sourceStart,
                 sourceEnd: recording.sourceEnd,
                 volume: recording.volume,
@@ -459,8 +641,25 @@ export function TimelinePanel({ height }: { height: number }) {
                 noiseReduction: recording.noiseReduction,
               }),
             )
-            if (!result.ok) useNotificationStore.getState().notify(result.error.message)
-            else setShowPopularAudio(false)
+            if (!result.ok) {
+              useNotificationStore.getState().notify(result.error.message)
+            } else {
+              if (bestPart) {
+                const index = prompterParts.findIndex((part) => part.id === bestPart.id)
+                useNotificationStore
+                  .getState()
+                  .notify(
+                    `Cannot attach: block ${index + 1} already has audio — added as unlinked clip.`,
+                  )
+              } else if (prompterParts.length > 0) {
+                useNotificationStore
+                  .getState()
+                  .notify(
+                    `Cannot attach: no prompter block overlaps the playhead time (${timelineStart.toFixed(1)}s) — added as unlinked clip.`,
+                  )
+              }
+              setShowPopularAudio(false)
+            }
           }}
         />
       )}

@@ -12,6 +12,7 @@ import { UpdatePrompterPartCommand } from '../../engine/commands/updatePrompterP
 import { CommitTtsCommand } from '../../engine/commands/commitTtsCommand'
 import {
   DEFAULT_PROMPTER_SECONDS_PER_CHARACTER,
+  createAudioSegment,
   getPrompterSecondsPerCharacter,
   splitImportText,
   reflowPrompter,
@@ -269,6 +270,77 @@ describe('Prompter Authoring 15.02', () => {
     expect(stale.text).toBe('Hello world extended text that is longer')
     expect(stale.duration).toBe(frozenDur) // frozen
     expect(stale.status).toBe('stale')
+  })
+
+  it('editing text resizes only that block and leaves downstream prompts and audio in place', () => {
+    dispatchOk(dispatcher, new ImportPrompterCommand({ slideId, rawText: 'One. Two. Three.' }))
+    const slide = engine.getSlide(slideId)
+    const [first, second, third] = slide.prompter!.parts
+    const firstDuration = first.duration
+    const clip = engine.createAudioClip(slideId, {
+      assetId: 'audio-two',
+      trackId: 'voice',
+      timelineStart: second.startTime,
+      sourceEnd: 0.5,
+    })
+    engine.setPrompterPartAudio(slideId, second.id, clip.id, 'audio-two')
+    const secondStart = second.startTime
+    const thirdStart = third.startTime
+
+    dispatchOk(
+      dispatcher,
+      new UpdatePrompterPartCommand({
+        slideId,
+        partId: first.id,
+        text: 'A much longer first block that should not move anything else.',
+      }),
+    )
+
+    expect(first.duration).toBeGreaterThan(firstDuration)
+    expect(second.startTime).toBe(secondStart)
+    expect(third.startTime).toBe(thirdStart)
+    expect(
+      engine.getSlide(slideId).audio.clips.find((item) => item.id === clip.id)!.timelineStart,
+    ).toBe(secondStart)
+  })
+
+  it('editing text on a word-audio block preserves its duration and downstream audio alignment', () => {
+    dispatchOk(dispatcher, new ImportPrompterCommand({ slideId, rawText: 'One. Two.' }))
+    const slide = engine.getSlide(slideId)
+    const [first, second] = slide.prompter!.parts
+    const originalDuration = first.duration
+    const clip = engine.createAudioClip(slideId, {
+      assetId: 'word-audio',
+      trackId: 'voice',
+      timelineStart: first.startTime,
+      sourceEnd: 0.5,
+    })
+    first.segments = [
+      createAudioSegment({
+        id: 'word-segment',
+        text: 'One',
+        audioClipId: clip.id,
+        audioAssetId: 'word-audio',
+        order: 0,
+      }),
+    ]
+    const secondStart = second.startTime
+
+    dispatchOk(
+      dispatcher,
+      new UpdatePrompterPartCommand({
+        slideId,
+        partId: first.id,
+        text: 'A much longer replacement for the word-level audio block.',
+      }),
+    )
+
+    expect(first.duration).toBe(originalDuration)
+    expect(first.status).toBe('stale')
+    expect(second.startTime).toBe(secondStart)
+    expect(
+      engine.getSlide(slideId).audio.clips.find((item) => item.id === clip.id)!.timelineStart,
+    ).toBe(first.startTime)
   })
 
   it('shift-downstream atomicity: UpdatePrompterPartWithShift moves following parts + clips', () => {

@@ -199,7 +199,11 @@ export function splitImportText(rawText: string, splitChars: readonly string[]):
 }
 
 export function hasPrompterPartAudio(part: PrompterPart): boolean {
-  return part.audioClipId !== undefined || part.audioAssetId !== undefined
+  return (
+    part.audioClipId !== undefined ||
+    part.audioAssetId !== undefined ||
+    (part.segments?.length ?? 0) > 0
+  )
 }
 
 export function redistributeDurations(
