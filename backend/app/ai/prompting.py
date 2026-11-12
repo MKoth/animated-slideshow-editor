@@ -153,8 +153,9 @@ def _script_focus_to_text(focus: object) -> str:
         lines.append(header)
     source = focus.get("source")
     if isinstance(source, str) and source.strip():
-        # Bounded: the full source is the model's working view for this slide.
-        lines.append("script source:\n" + source.strip()[:6000])
+        # The current editor draft is authoritative; never silently substitute
+        # an older conversation turn or truncate the script being improved.
+        lines.append("script source:\n" + source.strip())
     blocks = focus.get("promptBlocks")
     if isinstance(blocks, list) and blocks:
         rendered: list[str] = []
@@ -432,6 +433,31 @@ def context_to_text(context: object) -> str:
         script_scene_text = _script_scene_to_text(context.get("scriptScene"))
         if script_scene_text:
             parts.append(script_scene_text)
+        audio_focus = context.get("audioPrompterFocus")
+        if isinstance(audio_focus, dict):
+            audio_slide_id = audio_focus.get("slideId")
+            audio_slide_name = audio_focus.get("slideName")
+            audio_header = "audio prompter focus"
+            if isinstance(audio_slide_name, str) and audio_slide_name.strip():
+                audio_header += f": {audio_slide_name.strip()}"
+            if isinstance(audio_slide_id, str) and audio_slide_id.strip():
+                audio_header += f" [{audio_slide_id.strip()}]"
+            audio_parts = audio_focus.get("parts")
+            if isinstance(audio_parts, list):
+                rendered_audio_parts: list[str] = []
+                for index, entry in enumerate(audio_parts[:100]):
+                    if not isinstance(entry, dict):
+                        continue
+                    text = entry.get("text")
+                    if not isinstance(text, str):
+                        continue
+                    language = entry.get("language")
+                    language_tag = (
+                        f" ({language})" if isinstance(language, str) and language else ""
+                    )
+                    rendered_audio_parts.append(f"{index + 1}.{language_tag} {text.strip()}")
+                if rendered_audio_parts:
+                    parts.append(audio_header + ":\n" + "\n".join(rendered_audio_parts))
         slides = context.get("slides")
         if isinstance(slides, list) and slides:
             # Slide ids ride alongside names so polish can target the active

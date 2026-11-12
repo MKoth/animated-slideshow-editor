@@ -657,6 +657,12 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
         budget = library.context_budget
         composed = compose_messages(system_prompt, context_text, history, current, budget)
         zen_messages = [{"role": m.role, "content": m.content} for m in composed]
+        # Long audio proposals and generated scripts need more output headroom
+        # than typical chat replies. The default 8k ceiling truncated slide 4's
+        # 70-part edit after only 50–53 blocks, yielding an unusable proposal.
+        response_max_tokens = (
+            max(row.max_tokens, 16_000) if effective_mode in {"audio", "script"} else row.max_tokens
+        )
         # Log prompt size for the budget test seam (no token math client-side).
         logger.debug(
             "ai chat prompt: %d messages, ~%d tokens (budget %d)",
@@ -691,7 +697,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                     model=row.model,
                     messages=zen_messages,
                     temperature=row.temperature,
-                    max_tokens=row.max_tokens,
+                    max_tokens=response_max_tokens,
                     session_id=body.conversationId,
                     usage=reported_usage,
                     diagnostics=stream_diag,
@@ -707,7 +713,7 @@ def post_ai_chat(request: Request, body: AiChatRequest) -> StreamingResponse:
                     model=row.model,
                     messages=zen_messages,
                     temperature=row.temperature,
-                    max_tokens=row.max_tokens,
+                    max_tokens=response_max_tokens,
                     session_id=body.conversationId,
                 )
                 reported_usage.update(non_stream_usage)

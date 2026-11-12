@@ -39,15 +39,10 @@ function extractProposal(content: string): {
   if (!match) return { proposal: null, error: null, found: false }
   try {
     const parsed = JSON.parse(match[1]) as Record<string, unknown>
-    if (
-      typeof parsed.slideId !== 'string' ||
-      !Array.isArray(parsed.sourcePartIds) ||
-      !parsed.sourcePartIds.every((id) => typeof id === 'string') ||
-      !Array.isArray(parsed.blocks)
-    )
+    if (typeof parsed.slideId !== 'string' || !Array.isArray(parsed.blocks))
       return {
         proposal: null,
-        error: 'The prompter-edit data needs slideId, sourcePartIds, and blocks.',
+        error: 'The prompter-edit data needs slideId and blocks.',
         found: true,
       }
     const blocks: ProposedBlock[] = []
@@ -56,29 +51,20 @@ function extractProposal(content: string): {
         return { proposal: null, error: 'Each proposed block must be a JSON object.', found: true }
       const block = raw as Record<string, unknown>
       if (
-        !Array.isArray(block.sourcePartIds) ||
-        block.sourcePartIds.length === 0 ||
-        !block.sourcePartIds.every((id) => typeof id === 'string') ||
         typeof block.text !== 'string' ||
+        (block.language !== 'en' && block.language !== 'es') ||
         !block.text.trim()
       ) {
         return {
           proposal: null,
-          error: 'Each block needs sourcePartIds and non-empty text.',
-          found: true,
-        }
-      }
-      if (block.language !== undefined && block.language !== 'en' && block.language !== 'es') {
-        return {
-          proposal: null,
-          error: 'Each block language must be "en" or "es".',
+          error: 'Each block needs non-empty text and an explicit language ("en" or "es").',
           found: true,
         }
       }
       blocks.push({
-        sourcePartIds: block.sourcePartIds as string[],
+        sourcePartIds: [],
         text: block.text.trim(),
-        ...(block.language ? { language: block.language } : {}),
+        language: block.language,
       })
     }
     if (blocks.length === 0)
@@ -86,7 +72,7 @@ function extractProposal(content: string): {
     return {
       proposal: {
         slideId: parsed.slideId,
-        sourcePartIds: parsed.sourcePartIds as string[],
+        sourcePartIds: [],
         blocks,
       },
       error: null,
@@ -101,17 +87,37 @@ function spokenWords(text: string): string[] {
   return text.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
 }
 
+/** Model-supplied IDs are advisory; derive attribution from the preserved word order. */
+function mapBlocksToLiveSources(
+  proposal: Proposal,
+  liveParts: readonly import('../../engine/prompter').PrompterPart[],
+): Proposal {
+  const sourceRanges: Array<{ id: string; start: number; end: number }> = []
+  let sourceCursor = 0
+  for (const part of liveParts) {
+    const end = sourceCursor + spokenWords(part.text).length
+    sourceRanges.push({ id: part.id, start: sourceCursor, end })
+    sourceCursor = end
+  }
+
+  let outputCursor = 0
+  const blocks = proposal.blocks.map((block) => {
+    const wordCount = spokenWords(block.text).length
+    const end = outputCursor + wordCount
+    const sourcePartIds = sourceRanges
+      .filter((range) => range.start < end && range.end > outputCursor)
+      .map((range) => range.id)
+    outputCursor = end
+    return { ...block, sourcePartIds }
+  })
+  return { ...proposal, sourcePartIds: liveParts.map((part) => part.id), blocks }
+}
+
 function validateProposal(
   proposal: Proposal,
   liveParts: readonly import('../../engine/prompter').PrompterPart[],
 ) {
   const ids = liveParts.map((part) => part.id)
-  if (
-    proposal.sourcePartIds.length !== ids.length ||
-    proposal.sourcePartIds.some((id, i) => id !== ids[i])
-  ) {
-    return 'The prompter blocks changed after this suggestion. Ask the assistant to improve them again.'
-  }
   if (proposal.blocks.some((block) => block.sourcePartIds.some((id) => !ids.includes(id)))) {
     return 'This suggestion refers to a prompter block that no longer exists.'
   }
@@ -155,8 +161,8 @@ export function PrompterEditProposal({
   const [plannedCommands, setPlannedCommands] = useState<Command<unknown>[]>([])
   const [dryRunFingerprint, setDryRunFingerprint] = useState<string | null>(null)
   if (!extracted.found) return null
-  const proposal = extracted.proposal
-  if (!proposal) {
+  const parsedProposal = extracted.proposal
+  if (!parsedProposal) {
     const parseError = extracted.error ?? 'The proposal could not be read.'
     return (
       <section
@@ -185,9 +191,9 @@ export function PrompterEditProposal({
   let slide: ReturnType<typeof engine.getSlide> | null = null
   let slideLookupError: string | null = null
   try {
-    slide = engine.getSlide(proposal.slideId)
+    slide = engine.getSlide(parsedProposal.slideId)
   } catch {
-    slideLookupError = `Slide “${proposal.slideId}” no longer exists.`
+    slideLookupError = `Slide “${parsedProposal.slideId}” no longer exists.`
   }
   if (!slide) {
     return (
@@ -201,7 +207,9 @@ export function PrompterEditProposal({
         }}
       >
         <strong>Dry-run failed</strong>
-        <p role="alert">{slideLookupError ?? `Slide “${proposal.slideId}” no longer exists.`}</p>
+        <p role="alert">
+          {slideLookupError ?? `Slide “${parsedProposal.slideId}” no longer exists.`}
+        </p>
         <button
           type="button"
           data-testid="prompter-edit-send-errors"
@@ -213,6 +221,7 @@ export function PrompterEditProposal({
     )
   }
   const liveParts = slide.prompter?.parts ?? []
+  const proposal = mapBlocksToLiveSources(parsedProposal, liveParts)
   const validationError = validateProposal(proposal, liveParts)
   const hasBoundAudio = liveParts.some(
     (part) => hasPrompterPartAudio(part) || (part.segments?.length ?? 0) > 0,

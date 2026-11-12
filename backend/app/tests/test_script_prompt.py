@@ -190,6 +190,12 @@ def test_script_focus_renders_source_blocks_and_diagnostics() -> None:
     assert "needs a duration" in text
 
 
+def test_script_focus_does_not_truncate_current_editor_source() -> None:
+    source = "x" * 7000 + "CURRENT_DRAFT_END"
+    text = context_to_text({"scriptFocus": {"slideId": "slide-1", "source": source}})
+    assert "CURRENT_DRAFT_END" in text
+
+
 def test_script_scene_renders_camera_frame_geometry_and_shader_links() -> None:
     text = context_to_text(
         {

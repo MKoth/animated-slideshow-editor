@@ -34,9 +34,7 @@ function renderProposal(content: string, onFix = vi.fn()) {
 function editResponse(sourcePartIds: string[], outputPartIds = sourcePartIds) {
   return `Proposed split.\n\n\`\`\`prompter-edit\n${JSON.stringify({
     slideId: 'slide-1',
-    sourcePartIds,
-    blocks: outputPartIds.map((id, index) => ({
-      sourcePartIds: [id],
+    blocks: outputPartIds.map((_id, index) => ({
       text: outputPartIds.length === 1 ? 'Hello mundo.' : index === 0 ? 'Hello' : '"mundo"',
       language: index === 0 ? 'en' : 'es',
     })),
@@ -51,6 +49,46 @@ describe('Prompter edit proposal local dry-run', () => {
     await user.click(screen.getByTestId('prompter-edit-apply'))
 
     expect(slide.prompter?.parts[0].ttsLanguage).toBe('en')
+  })
+
+  it('rejects a block when the assistant omits its required language', async () => {
+    const response = JSON.parse(
+      editResponse(['part-1']).match(/```prompter-edit\s*([\s\S]*?)```/)![1],
+    )
+    delete response.blocks[0].language
+    renderProposal(`\`\`\`prompter-edit\n${JSON.stringify(response)}\n\`\`\``)
+
+    expect(screen.getByTestId('prompter-edit-dry-run-errors')).toHaveTextContent(
+      'Each block needs non-empty text and an explicit language ("en" or "es").',
+    )
+  })
+
+  it('derives source mappings from preserved word order instead of trusting model-supplied IDs', async () => {
+    const response = JSON.parse(
+      editResponse(['part-1']).match(/```prompter-edit\s*([\s\S]*?)```/)![1],
+    )
+    renderProposal(`\`\`\`prompter-edit\n${JSON.stringify(response)}\n\`\`\``)
+    const user = userEvent.setup()
+
+    await user.click(screen.getByTestId('prompter-edit-dry-run'))
+
+    expect(screen.getByTestId('prompter-edit-dry-run')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Dry-run passed')
+  })
+
+  it('rejects a truncated proposal that omits spoken words', async () => {
+    const response = JSON.parse(
+      editResponse(['part-1']).match(/```prompter-edit\s*([\s\S]*?)```/)![1],
+    )
+    response.blocks[0].text = 'Hello.'
+    renderProposal(`\`\`\`prompter-edit\n${JSON.stringify(response)}\n\`\`\``)
+    const user = userEvent.setup()
+
+    await user.click(screen.getByTestId('prompter-edit-dry-run'))
+
+    expect(screen.getByTestId('prompter-edit-dry-run-errors')).toHaveTextContent(
+      'changes spoken words',
+    )
   })
 
   it('enables Apply only after a successful local dry-run, then applies as one change', async () => {
@@ -72,15 +110,19 @@ describe('Prompter edit proposal local dry-run', () => {
 
   it('shows local compile errors and sends them only after an explicit request', async () => {
     const onFix = vi.fn()
-    renderProposal(editResponse(['part-no-longer-exists']), onFix)
+    const response = JSON.parse(
+      editResponse(['part-1']).match(/```prompter-edit\s*([\s\S]*?)```/)![1],
+    )
+    response.blocks[0].text = 'Hello amigo.'
+    renderProposal(`\`\`\`prompter-edit\n${JSON.stringify(response)}\n\`\`\``, onFix)
     const user = userEvent.setup()
     await user.click(screen.getByTestId('prompter-edit-dry-run'))
     const errors = screen.getByTestId('prompter-edit-dry-run-errors')
-    expect(errors).toHaveTextContent('blocks changed after this suggestion')
+    expect(errors).toHaveTextContent('changes spoken words')
     expect(onFix).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('prompter-edit-send-errors'))
     expect(onFix).toHaveBeenCalledWith([
-      'The prompter blocks changed after this suggestion. Ask the assistant to improve them again.',
+      'This suggestion changes spoken words. Only punctuation and block boundaries can be applied automatically.',
     ])
   })
 })

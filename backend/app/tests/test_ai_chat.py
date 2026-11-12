@@ -75,6 +75,38 @@ def test_chat_streams_tokens_and_persists_history(
     assert msgs[1]["content"] == "Hello world"
 
 
+@pytest.mark.parametrize("assistant_mode", ["audio", "script"])
+def test_long_generation_modes_have_output_headroom(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, assistant_mode: str
+) -> None:
+    _enable_key(client)
+    _fake_models(monkeypatch, ["anthropic/claude-sonnet-4-5"])
+    client.put("/api/ai/settings", json={"model": "anthropic/claude-sonnet-4-5", "maxTokens": 8000})
+    captured: dict[str, Any] = {}
+
+    def _stream(self: ZenClient, **kwargs: Any) -> Iterator[str]:
+        _ = self
+        captured.update(kwargs)
+        yield "ok"
+
+    monkeypatch.setattr(ZenClient, "chat_stream", _stream)
+    conv = client.post(
+        "/api/ai/conversations", json={"projectId": "p-1", "mode": assistant_mode}
+    ).json()
+    response = client.post(
+        "/api/ai/chat",
+        json={
+            "conversationId": conv["id"],
+            "message": "Improve blocks",
+            "mode": "send",
+            "context": {},
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["max_tokens"] == 16_000
+
+
 def test_chat_persists_real_provider_usage(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

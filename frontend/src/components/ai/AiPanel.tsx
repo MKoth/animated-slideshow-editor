@@ -1016,8 +1016,8 @@ export function AiPanel() {
                               void store.sendMessage(
                                 projectId,
                                 activeId,
-                                `The proposed prompter edit failed local dry-run validation. Fix the proposal using the current prompter context and prior conversation. Do not invent part IDs. If a required value cannot be determined, ask me. Return a corrected prompter-edit JSON fence only.\n\nErrors:\n${errors.join('\n')}\n\nPrevious proposal:\n${message.content}`,
-                                context,
+                                `The proposed prompter edit failed local dry-run validation. Fix it using the current prompter text and preserve every spoken word in order. Return a compact prompter-edit JSON fence only; do not include source IDs.\n\nErrors:\n${errors.join('\n')}\n\nPrevious proposal:\n${message.content}`,
+                                buildContextSnapshot(engine, { includePrompterContext: true }),
                                 normalizeAiMode(assistantMode),
                               )
                             }}
