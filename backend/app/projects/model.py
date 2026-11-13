@@ -27,7 +27,7 @@ class ProjectRow(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     author: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     created: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    last_modified: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_modified: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     blob: Mapped[str] = mapped_column(Text, nullable=False)
     folder_id: Mapped[str | None] = mapped_column(
@@ -35,4 +35,5 @@ class ProjectRow(Base):
         ForeignKey("project_folders.id", ondelete="SET NULL"),
         nullable=True,
         default=None,
+        index=True,
     )

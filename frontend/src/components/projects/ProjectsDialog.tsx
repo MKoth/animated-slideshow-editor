@@ -18,6 +18,7 @@ import {
   renameLibraryProject,
   requestNewProject,
 } from '../../app/projectBrowser'
+import type { OpenProjectStage } from '../../app/projectBrowser'
 import { downloadLessonCopy, importLessonFile } from '../../app/lessonTransfer'
 import { useEngine } from '../../app/useEngine'
 import { usePersistenceStore } from '../../stores/persistenceStore'
@@ -53,6 +54,11 @@ export function ProjectsDialog() {
   const [pendingDeleteFolderId, setPendingDeleteFolderId] = useState<string | null>(null)
   const [pendingDeleteProject, setPendingDeleteProject] = useState<ProjectSummary | null>(null)
   const [backupBusy, setBackupBusy] = useState(false)
+  const [opening, setOpening] = useState<{
+    id: string
+    name: string
+    stage: OpenProjectStage
+  } | null>(null)
 
   useEffect(() => {
     if (visible) {
@@ -76,6 +82,7 @@ export function ProjectsDialog() {
       setPendingDeleteFolderId(null)
       setPendingDeleteProject(null)
       setBackupBusy(false)
+      setOpening(null)
     }
   }, [visible])
 
@@ -84,7 +91,15 @@ export function ProjectsDialog() {
   }
 
   const openProject = async (project: ProjectSummary): Promise<void> => {
-    if (await openLibraryProject(engine, project.id)) {
+    if (opening) {
+      return
+    }
+    setOpening({ id: project.id, name: project.name, stage: 'downloading' })
+    const ok = await openLibraryProject(engine, project.id, (stage) =>
+      setOpening((current) => (current ? { ...current, stage } : current)),
+    )
+    setOpening(null)
+    if (ok) {
       useProjectBrowserStore.getState().hide()
     }
   }
@@ -474,6 +489,28 @@ export function ProjectsDialog() {
     )
   }
 
+  if (opening) {
+    return (
+      <div className="projects-overlay">
+        <div
+          className="projects-dialog projects-dialog__opening"
+          role="dialog"
+          aria-label={`Opening ${opening.name}`}
+        >
+          <span className="projects-dialog__opening-spinner" aria-hidden="true" />
+          <p className="projects-dialog__message">Opening &ldquo;{opening.name}&rdquo;&hellip;</p>
+          <p className="projects-dialog__status" role="status" aria-live="polite">
+            {opening.stage === 'downloading'
+              ? 'Downloading project data…'
+              : opening.stage === 'parsing'
+                ? 'Parsing project…'
+                : 'Restoring scenes…'}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="projects-overlay">
       <div
@@ -751,7 +788,13 @@ export function ProjectsDialog() {
                       ) : (
                         <>
                           <div className="projects-dialog__meta">
-                            <span className="projects-dialog__name">{project.name}</span>
+                            <button
+                              className="projects-dialog__name projects-dialog__name-button"
+                              title={`Open ${project.name}`}
+                              onClick={() => handleOpen(project)}
+                            >
+                              {project.name}
+                            </button>
                             <span className="projects-dialog__date">
                               {formatLastModified(project.lastModified)}
                             </span>

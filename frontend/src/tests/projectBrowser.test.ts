@@ -178,6 +178,19 @@ describe('openLibraryProject', () => {
     expect(useSelectionStore.getState().selectedIds).toEqual([])
   })
 
+  it('reports downloading, parsing, and restoring stages while opening', async () => {
+    stubProjects([SUMMARY_1], { 'p-1': makeBlob('Spanish Lesson') })
+    const engine = setupEditor()
+
+    const stages: string[] = []
+    const result = await openLibraryProject(engine, 'p-1', (stage) => {
+      stages.push(stage)
+    })
+
+    expect(result).toBe(true)
+    expect(stages).toEqual(['downloading', 'parsing', 'restoring'])
+  })
+
   it('fails gracefully on an invalid blob, leaving the editor untouched', async () => {
     stubProjects([SUMMARY_1], { 'p-1': '{not json' })
     const engine = setupEditor()

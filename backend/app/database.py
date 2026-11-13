@@ -18,6 +18,7 @@ class Database:
     def init_schema(self) -> None:
         Base.metadata.create_all(self._engine)
         self._add_missing_columns()
+        self._ensure_indexes()
 
     def session(self) -> Session:
         return Session(self._engine, expire_on_commit=False)
@@ -42,6 +43,26 @@ class Database:
                     connection.execute(
                         text(f"ALTER TABLE {table.name} ADD COLUMN {column.name} {column_sql}")
                     )
+
+    def _ensure_indexes(self) -> None:
+        """Create indexes introduced after a table was first created.
+
+        create_all creates missing tables (with their indexes) but does not
+        add indexes to tables that already exist, so databases written by an
+        older version of the app would otherwise miss them. IF NOT EXISTS
+        keeps this idempotent.
+        """
+        with self._engine.begin() as connection:
+            if "projects" not in inspect(connection).get_table_names():
+                return
+            for statement in (
+                (
+                    "CREATE INDEX IF NOT EXISTS ix_projects_last_modified"
+                    " ON projects (last_modified)"
+                ),
+                ("CREATE INDEX IF NOT EXISTS ix_projects_folder_id ON projects (folder_id)"),
+            ):
+                connection.execute(text(statement))
 
 
 def _is_addable(column: Column[object]) -> bool:

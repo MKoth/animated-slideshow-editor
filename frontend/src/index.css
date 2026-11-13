@@ -3979,6 +3979,40 @@ button:disabled {
   white-space: nowrap;
 }
 
+.projects-dialog__name-button {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.projects-dialog__name-button:hover {
+  text-decoration: underline;
+}
+
+.projects-dialog__opening {
+  align-items: center;
+  text-align: center;
+}
+
+.projects-dialog__opening-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-text);
+  border-radius: 50%;
+  animation: projects-dialog-spin 0.8s linear infinite;
+}
+
+@keyframes projects-dialog-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .projects-dialog__date {
   color: var(--color-text-muted);
   font-size: 12px;

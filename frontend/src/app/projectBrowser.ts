@@ -16,6 +16,13 @@ export const FOLDER_DELETE_FAILED_MESSAGE = 'Could not delete the folder.'
 export const MOVE_FAILED_MESSAGE = 'Could not move the project.'
 export const BACKUP_FAILED_MESSAGE = 'Could not build the backup.'
 
+export type OpenProjectStage = 'downloading' | 'parsing' | 'restoring'
+
+/** Yield to the event loop so a loader can paint before blocking sync work. */
+function paintOnce(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
 export function openProjectBrowser(): void {
   useProjectBrowserStore.getState().show()
 }
@@ -39,13 +46,17 @@ export async function refreshProjects(): Promise<void> {
   useProjectBrowserStore.getState().setLoading(true)
   useProjectBrowserStore.getState().setError(null)
   try {
-    const projects = await projectsApi.list()
-    let folders: Awaited<ReturnType<typeof projectsApi.listFolders>> = []
-    try {
-      folders = await projectsApi.listFolders()
-    } catch {
-      folders = []
+    // Fetch in parallel: previously these were sequential, adding a full
+    // round-trip of latency to every dialog open.
+    const [projectsResult, foldersResult] = await Promise.allSettled([
+      projectsApi.list(),
+      projectsApi.listFolders(),
+    ])
+    if (projectsResult.status === 'rejected') {
+      throw projectsResult.reason
     }
+    const projects = projectsResult.value
+    const folders = foldersResult.status === 'fulfilled' ? foldersResult.value : []
     const state = useProjectBrowserStore.getState()
     state.setProjects(projects)
     state.setFolders(folders)
@@ -67,10 +78,21 @@ export async function refreshProjects(): Promise<void> {
   }
 }
 
-export async function openLibraryProject(engine: EnginePublic, id: string): Promise<boolean> {
+export async function openLibraryProject(
+  engine: EnginePublic,
+  id: string,
+  onStage?: (stage: OpenProjectStage) => void,
+): Promise<boolean> {
   try {
+    onStage?.('downloading')
     const blob = await projectsApi.get(id)
+    onStage?.('parsing')
+    // JSON.parse and restoreFromJSON block the main thread; let the loader
+    // paint the stage label first or the UI looks frozen.
+    await paintOnce()
     const json = JSON.parse(blob) as LessonJSON
+    onStage?.('restoring')
+    await paintOnce()
     engine.restoreFromJSON(json)
     restoreProjectInEditor(engine)
     return true

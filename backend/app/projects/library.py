@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import asc, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.database import Database
 from app.projects.model import ProjectFolder, ProjectRow
@@ -39,7 +39,21 @@ class ProjectLibrary:
         self._database = database
 
     def list(self) -> builtins.list[ProjectRow]:
-        statement = select(ProjectRow).order_by(ProjectRow.last_modified.desc(), asc(ProjectRow.id))
+        # The list view only needs metadata; the blob (verbatim .lesson JSON,
+        # potentially MBs per project) must not be fetched. load_only keeps
+        # this as SELECT id, name, last_modified, folder_id.
+        statement = (
+            select(ProjectRow)
+            .options(
+                load_only(
+                    ProjectRow.id,
+                    ProjectRow.name,
+                    ProjectRow.last_modified,
+                    ProjectRow.folder_id,
+                )
+            )
+            .order_by(ProjectRow.last_modified.desc(), asc(ProjectRow.id))
+        )
         with self._database.session() as session:
             return list(session.scalars(statement))
 
