@@ -112,7 +112,15 @@ describe('script assistant prompts', () => {
     expect(IMPROVE_SCRIPT_PROMPT).toContain('background/board')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('do not add, remove, or retune camera')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('purposeful variety of distinct, coordinated colors')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('never leave tables or text all in the same color')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('choice buttons')
+    // Accent-mark guidance: no wobble (compile error), visual optional, use often.
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('no wobble')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('visual is optional')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('use mark() often')
+    // Camera is authoritative by default — no camera-geometry questions.
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('trust the active camera')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('never emit camera-geometry questions')
   })
 
   it('error fix prompt lists each error with its position', () => {

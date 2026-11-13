@@ -84,6 +84,8 @@ export const IMPROVE_SCRIPT_PROMPT =
   'preserve the existing staging exactly: keep the script header `from`, any `setCamera(...)`, and ' +
   'every background/board `create` line (asset, position, scale) unchanged; do not add, remove, or ' +
   'retune camera or background/board transforms; ' +
+  'trust the active camera visible-world area from context as authoritative by default — never ask ' +
+  'whether to trust the camera versus board dimensions and never emit camera-geometry questions; ' +
   'no visual appears before the narrator mentions it; labels appear when their text is pronounced; ' +
   'tables are drawn on a general mention and each cell fills as its text is spoken; ' +
   'make tables as large as the current board layout safely allows without moving or resizing the ' +
@@ -94,10 +96,15 @@ export const IMPROVE_SCRIPT_PROMPT =
   'for a table with separately timed cell reveals, use reveal(nodeOnly(table)) for the border: ' +
   'reveal(table) also reveals all descendant cell text, and per-cell future reveal masks hide text ' +
   'until its turn, so do not add mask-setup wipes; use reveal(table) only for a composite reveal; ' +
-  'use a purposeful variety of distinct, coordinated colors across the board (for example, ' +
+  'default to a purposeful variety of distinct, coordinated colors across the board (for example, ' +
   'different colors for headings, categories, highlights, and table groups) instead of relying on ' +
-  'one color throughout; keep contrast and readability high; ' +
-  'use mark() to re-emphasize things already on screen instead of recreating them; ' +
+  'one color throughout — never leave tables or text all in the same color; keep contrast and ' +
+  'readability high; ' +
+  'use mark() often to re-emphasize things already on screen instead of recreating them — when the ' +
+  'narrator returns to written text or a cell, accentuate it again with mark(); mark() takes no ' +
+  'wobbleX/wobbleY/wobbleSpeed/direction (they are compile errors) and its visual is optional: omit ' +
+  'visual for a quiet built-in marker underline that avoids on-screen clutter, pass `visual: chalkHand, ' +
+  'visualScale: 4, visualAnchor: "top-center", sound: writeSfx` only when a paw performer is wanted; ' +
   'for long spoken stretches with no visual, add one short phrase that appears at the stretch start ' +
   'and leaves at its end. Prompter blocks can overlap: when a later block overlaps and its end is ' +
   "later than the current block's end, the current block effectively ends at the later block's start; " +
@@ -105,7 +112,7 @@ export const IMPROVE_SCRIPT_PROMPT =
   'A later block with an earlier end does not take priority. Respect these effective handoffs when ' +
   'placing visuals against the spoken text; do not treat overlapping block windows as simultaneous ' +
   'subtitle ownership. ' +
-  'If anything is ambiguous, ask me with choice buttons before rewriting.'
+  'If anything is ambiguous (other than camera/board geometry, which you already trust), ask me with choice buttons before rewriting.'
 
 /** One-button resubmission of check/run errors for the assistant to fix. */
 export function formatScriptErrorPrompt(

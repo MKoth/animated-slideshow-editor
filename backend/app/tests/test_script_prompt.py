@@ -70,10 +70,14 @@ def test_script_prompt_teaches_cursor_setup_and_reveal_pairing() -> None:
     assert "never wipe a node that has no reveal" in lowered
     # Full-block-or-continue policy against truncation.
     assert "never a prefix cut off by length" in lowered
-    # Target marks need an explicit visual and a measurable target.
+    # Target marks need a measurable target; visual is optional (built-in marker by default).
     assert "`mark(target" in lowered or "mark(target, ...)" in lowered
     assert "explicit `visual`" in prompt
+    assert "visual` is optional" in lowered
     assert "never carried pictures" in lowered
+    # mark() takes no wobble/direction — writing them is a compile error.
+    assert "no wobble or direction" in lowered
+    assert "unknown mark option" in lowered
     # Table teardown is one subtree wipe, never cell-by-cell plus table.
     assert "wipe(subtree(" in lowered
     assert "never cell by cell" in lowered
@@ -132,8 +136,9 @@ def test_script_prompt_teaches_positional_tint_syntax() -> None:
 def test_script_prompt_requires_varied_text_colors_and_end_cleanup() -> None:
     prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "script")
     lowered = prompt.lower()
-    assert "give text labels and table cells visibly different colors" in lowered
+    assert "visibly different colors for text labels and table cells" in lowered
     assert "do not tint every label or cell the same color" in lowered
+    assert "single-color board is a defect" in lowered
     assert "clear temporary content by the slide's final second" in lowered
     assert "always wipe a table once with `wipe(subtree(table))`" in lowered
     assert "carry a small number of images out" in lowered
@@ -151,6 +156,9 @@ def test_script_prompt_uses_live_chalk_material_and_camera_measurements() -> Non
     assert "material→shader links" in lowered
     assert "apply it to the blackboard with `board.material(chalk)`" in lowered
     assert "never silently omit the available chalk shader" in lowered
+    # Camera is authoritative by default — never ask camera-geometry questions.
+    assert "trust the active camera visible-world area as authoritative by default" in lowered
+    assert "never emit camera-geometry clarifying questions" in lowered
 
 
 def test_script_prompt_teaches_table_row_heights() -> None:
