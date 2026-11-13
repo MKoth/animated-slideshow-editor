@@ -166,24 +166,19 @@ def _normalize_wav_header(data: bytes) -> bytes:
         return data
 
 
-def synthesize_cartesia(
-    text: str,
+def _build_cartesia_body(
+    content: str,
+    voice_id: str | None,
+    language: str | None,
+    locale: str | None,
+    model_id: str,
+    emotion: str | None,
+    speed: float | None,
+    volume: float | None,
     *,
-    voice_id: str | None = None,
-    language: str | None = None,
-    locale: str | None = None,
-    model_id: str = "sonic-3.6",
-    api_key: str | None = None,
-    emotion: str | None = None,
-    speed: float | None = None,
-    volume: float | None = None,
-) -> bytes:
-    """Synthesize speech via Cartesia POST /tts/bytes. Returns WAV bytes.
-
-    `emotion`/`speed`/`volume` map to `generation_config` and are all
-    optional — when all are None no `generation_config` is sent and Cartesia
-    infers delivery from the transcript.
-    """
+    output_format: dict[str, Any],
+    add_timestamps: bool = False,
+) -> dict[str, Any]:
     from app.tts.registry import (
         DEFAULT_CARTESIA_VOICE_ID,
         normalize_cartesia_emotion,
@@ -192,10 +187,6 @@ def synthesize_cartesia(
         normalize_cartesia_volume,
     )
 
-    key = _require_key(api_key)
-    content = text.strip() if isinstance(text, str) else ""
-    if not content:
-        raise CartesiaRequestError("text must be a non-empty string")
     voice = (
         voice_id.strip()
         if isinstance(voice_id, str) and voice_id.strip()
@@ -219,10 +210,8 @@ def synthesize_cartesia(
         "model_id": model_id,
         "transcript": content,
         "voice": {"id": voice},
-        "output_format": {"container": "wav", "encoding": "pcm_s16le", "sample_rate": 44100},
+        "output_format": output_format,
     }
-    # Cartesia accepts `language` OR `locale`, never both (400). Locale wins
-    # when both are given; the HTTP API layer rejects the combination earlier.
     if normalized_locale is not None:
         body["locale"] = normalized_locale
     elif normalized_language is not None:
@@ -236,6 +225,44 @@ def synthesize_cartesia(
         generation_config["volume"] = normalized_volume
     if generation_config:
         body["generation_config"] = generation_config
+    if add_timestamps:
+        body["add_timestamps"] = True
+    return body
+
+
+def synthesize_cartesia(
+    text: str,
+    *,
+    voice_id: str | None = None,
+    language: str | None = None,
+    locale: str | None = None,
+    model_id: str = "sonic-3.6",
+    api_key: str | None = None,
+    emotion: str | None = None,
+    speed: float | None = None,
+    volume: float | None = None,
+) -> bytes:
+    """Synthesize speech via Cartesia POST /tts/bytes. Returns WAV bytes.
+
+    `emotion`/`speed`/`volume` map to `generation_config` and are all
+    optional — when all are None no `generation_config` is sent and Cartesia
+    infers delivery from the transcript.
+    """
+    key = _require_key(api_key)
+    content = text.strip() if isinstance(text, str) else ""
+    if not content:
+        raise CartesiaRequestError("text must be a non-empty string")
+    body = _build_cartesia_body(
+        content,
+        voice_id,
+        language,
+        locale,
+        model_id,
+        emotion,
+        speed,
+        volume,
+        output_format={"container": "wav", "encoding": "pcm_s16le", "sample_rate": 44100},
+    )
     import httpx
 
     try:
@@ -263,3 +290,83 @@ def synthesize_cartesia(
     if not data or len(data) < 44 or data[:4] != b"RIFF":
         raise CartesiaError("Cartesia returned invalid WAV bytes")
     return _normalize_wav_header(bytes(data))
+
+
+def synthesize_cartesia_sse_with_timestamps(
+    text: str,
+    *,
+    voice_id: str | None = None,
+    language: str | None = None,
+    locale: str | None = None,
+    model_id: str = "sonic-3.6",
+    api_key: str | None = None,
+    emotion: str | None = None,
+    speed: float | None = None,
+    volume: float | None = None,
+    sample_rate: int = 44100,
+) -> tuple[bytes, list[dict[str, Any]], int]:
+    """One continuous generation via POST /tts/sse with word timestamps.
+
+    Returns (pcm_bytes raw s16le mono, word_events [{word,start,end}], sample_rate).
+    Raises Cartesia* errors and TimestampStreamError (from timestamps module)
+    for incomplete streams.
+    """
+    from app.tts.timestamps import parse_sse_body
+
+    key = _require_key(api_key)
+    content = text.strip() if isinstance(text, str) else ""
+    if not content:
+        raise CartesiaRequestError("text must be a non-empty string")
+    if sample_rate not in (8000, 16000, 22050, 24000, 44100, 48000):
+        raise CartesiaRequestError(f"unsupported sample_rate {sample_rate}")
+    body = _build_cartesia_body(
+        content,
+        voice_id,
+        language,
+        locale,
+        model_id,
+        emotion,
+        speed,
+        volume,
+        output_format={
+            "container": "raw",
+            "encoding": "pcm_s16le",
+            "sample_rate": sample_rate,
+        },
+        add_timestamps=True,
+    )
+    import httpx
+
+    try:
+        resp = httpx.post(
+            f"{CARTESIA_API_BASE}/tts/sse",
+            headers={**_headers(key), "Content-Type": "application/json"},
+            json=body,
+            timeout=90.0,
+        )
+    except CartesiaRequestError:
+        raise
+    except Exception as e:
+        raise CartesiaError(f"Cartesia TTS SSE request failed: {e}") from e
+    if resp.status_code in (401, 403):
+        raise CartesiaError("Cartesia rejected the API key (401/403) — check CARTESIA_API_KEY")
+    if resp.status_code == 400:
+        detail = resp.text[:300]
+        raise CartesiaRequestError(f"Cartesia rejected the request (400): {detail}")
+    if resp.status_code == 422:
+        detail = resp.text[:300]
+        raise CartesiaRequestError(f"Cartesia validation error (422): {detail}")
+    if resp.status_code >= 400:
+        raise CartesiaError(f"Cartesia TTS SSE failed: HTTP {resp.status_code}: {resp.text[:300]}")
+    raw = resp.content if isinstance(resp.content, bytes) else b""
+    if not raw:
+        # httpx streaming edge: fall back to text
+        raw = resp.text.encode("utf-8") if isinstance(resp.text, str) else b""
+    if not raw:
+        from app.tts.timestamps import TimestampStreamError
+
+        raise TimestampStreamError("empty SSE response")
+    pcm, word_events, _ = parse_sse_body(raw)
+    # parse_sse_body returns WordTimestamp dataclasses; convert to dicts for stability.
+    events = [{"word": w.word, "start": w.start, "end": w.end} for w in word_events]
+    return pcm, events, sample_rate

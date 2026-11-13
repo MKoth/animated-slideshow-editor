@@ -14,6 +14,7 @@ import { AudioTimelineBody } from './AudioTimelineBody'
 import { useSyncedAudio } from '../../audio/useSyncedAudio'
 import { useViewportWidth } from './useViewportWidth'
 import { PopularAudioModal } from '../audio/PopularAudioModal'
+import { CombinedTtsModal } from '../audio/CombinedTtsModal'
 import { usePopularAudioStore } from '../../stores/popularAudioStore'
 import {
   CreateAudioClipCommand,
@@ -77,6 +78,7 @@ export function TimelinePanel({ height }: { height: number }) {
   const authoringModeByHost = useTimelineViewStore((state) => state.authoringModeByHost)
   const [activeTab, setActiveTab] = useState<'animation' | 'audio'>('animation')
   const [showPopularAudio, setShowPopularAudio] = useState(false)
+  const [showCombinedTts, setShowCombinedTts] = useState(false)
   const [confirmTtsReplace, setConfirmTtsReplace] = useState(false)
   const [ttsBatchProgress, setTtsBatchProgress] = useState<{ done: number; total: number } | null>(
     null,
@@ -459,6 +461,15 @@ export function TimelinePanel({ height }: { height: number }) {
               </button>
               <button
                 type="button"
+                data-testid="prompter-generate-combined-tts"
+                disabled={prompterParts.length === 0 || ttsBatchProgress !== null}
+                title="Pick blocks to glue into one Cartesia request with timestamps"
+                onClick={() => setShowCombinedTts(true)}
+              >
+                Generate combined TTS
+              </button>
+              <button
+                type="button"
                 data-testid="delete-prompter-audio-btn"
                 disabled={generatedAudioCount === 0 || ttsBatchProgress !== null}
                 title="Delete audio attached to all prompter blocks on this slide; keep unlinked audio"
@@ -661,6 +672,19 @@ export function TimelinePanel({ height }: { height: number }) {
               setShowPopularAudio(false)
             }
           }}
+        />
+      )}
+      {showCombinedTts && slide && (
+        <CombinedTtsModal
+          slideId={slide.id}
+          blocks={prompterParts.map((part) => ({
+            id: part.id,
+            text: part.text,
+            startTime: part.startTime,
+            duration: part.duration,
+            ...(part.ttsLanguage ? { ttsLanguage: part.ttsLanguage } : {}),
+          }))}
+          onClose={() => setShowCombinedTts(false)}
         />
       )}
       {confirmTtsReplace && slide && (

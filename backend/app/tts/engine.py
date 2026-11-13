@@ -306,6 +306,18 @@ class SineTtsEngine:
         # params/locale currently ignored for sine (could affect duration/freq in future)
         return _wav_bytes_for_text_sine(text, None, language, voice, instruction)
 
+    def generate_with_timestamps(
+        self,
+        text: str,
+        segments: list[dict[str, object]],
+        language: str | None = None,
+        voice: str | None = None,
+        instruction: str | None = None,
+        params: dict[str, object] | None = None,
+        locale: str | None = None,
+    ) -> dict[str, object]:
+        raise TtsError("timestamp-based segmentation is supported only for Cartesia")
+
 
 class CartesiaTtsEngine:
     """Remote TTS via the Cartesia API (sonic-3.6, saved voice clones).
@@ -350,6 +362,113 @@ class CartesiaTtsEngine:
             speed=speed,
             volume=volume,
         )
+
+    def generate_with_timestamps(
+        self,
+        text: str,
+        segments: list[dict[str, object]],
+        language: str | None = None,
+        voice: str | None = None,
+        instruction: str | None = None,
+        params: dict[str, object] | None = None,
+        locale: str | None = None,
+    ) -> dict[str, object]:
+        """One continuous Cartesia SSE generation split into per-block WAVs.
+
+        segments: [{id, text, start, end}] exact char offsets into text.
+        Returns {pcm, sample_rate, channels, duration, full_wav, segments:
+          [{id, start, end, duration, wav, words}]}.
+        """
+        from app.tts.cartesia import synthesize_cartesia_sse_with_timestamps
+        from app.tts.timestamps import (
+            BlockBoundary,
+            WordTimestamp,
+            full_wav_duration,
+            map_words_to_blocks,
+            pcm_to_wav,
+            slice_segments,
+            validate_boundaries,
+        )
+
+        voice_id: str | None = None
+        if isinstance(voice, str) and voice.strip():
+            voice_id = voice.strip()
+        elif isinstance(params, dict):
+            maybe = params.get("voiceId") or params.get("voice_id")
+            if isinstance(maybe, str) and maybe.strip():
+                voice_id = maybe.strip()
+        emotion = _params_str(params, "emotion")
+        speed = _params_float(params, "speed")
+        volume = _params_float(params, "volume")
+        pcm, word_dicts, sample_rate = synthesize_cartesia_sse_with_timestamps(
+            text,
+            voice_id=voice_id,
+            language=language,
+            locale=locale,
+            model_id=self._model_id,
+            emotion=emotion,
+            speed=speed,
+            volume=volume,
+        )
+        boundaries: list[BlockBoundary] = []
+        for s in segments:
+            sid = s.get("id")
+            stext = s.get("text")
+            sstart = s.get("start")
+            send = s.get("end")
+            if not isinstance(sid, str) or not isinstance(stext, str):
+                from app.tts.timestamps import TimestampMappingError as _TME
+
+                raise _TME("each segment needs id/text strings")
+            if (
+                isinstance(sstart, bool)
+                or not isinstance(sstart, int)
+                or isinstance(send, bool)
+                or not isinstance(send, int)
+            ):
+                from app.tts.timestamps import TimestampMappingError as _TME2
+
+                raise _TME2("segment start/end must be integers")
+            boundaries.append(BlockBoundary(id=sid, text=stext, start=sstart, end=send))
+        validate_boundaries(text, boundaries)
+        word_events: list[WordTimestamp] = []
+        for w in word_dicts:
+            wword = w.get("word")
+            wstart = w.get("start")
+            wend = w.get("end")
+            if (
+                not isinstance(wword, str)
+                or not isinstance(wstart, (int, float))
+                or not isinstance(wend, (int, float))
+            ):
+                from app.tts.timestamps import TimestampMappingError as _TME3
+
+                raise _TME3("malformed word timestamp")
+            word_events.append(WordTimestamp(word=wword, start=float(wstart), end=float(wend)))
+        ranges = map_words_to_blocks(boundaries, word_events)
+        sliced = slice_segments(pcm, sample_rate, ranges, word_events)
+        full_wav = pcm_to_wav(pcm, sample_rate, 1)
+        duration = full_wav_duration(pcm, sample_rate)
+        out_segments: list[dict[str, object]] = []
+        for seg in sliced:
+            out_segments.append(
+                {
+                    "id": seg.id,
+                    "start": seg.start,
+                    "end": seg.end,
+                    "duration": seg.duration,
+                    "wav": pcm_to_wav(seg.pcm, sample_rate, 1),
+                    "words": list(seg.words),
+                }
+            )
+        return {
+            "pcm": pcm,
+            "sample_rate": sample_rate,
+            "channels": 1,
+            "duration": duration,
+            "full_wav": full_wav,
+            "segments": out_segments,
+        }
 
 
 def _is_spanish_language(language: str | None) -> bool:
@@ -725,6 +844,18 @@ class MlxQwenTtsEngine:
         if len(wav_bytes) < 44:
             raise TtsInferenceError("generated WAV too short")
         return wav_bytes
+
+    def generate_with_timestamps(
+        self,
+        text: str,
+        segments: list[dict[str, object]],
+        language: str | None = None,
+        voice: str | None = None,
+        instruction: str | None = None,
+        params: dict[str, object] | None = None,
+        locale: str | None = None,
+    ) -> dict[str, object]:
+        raise TtsError("timestamp-based segmentation is supported only for Cartesia")
 
 
 # ---------------------------------------------------------------------------

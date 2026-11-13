@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.tts.cartesia import (
@@ -83,6 +84,31 @@ def _is_cartesia_configured() -> bool:
         return get_cartesia_api_key() is not None
     except Exception:
         return False
+
+
+class TTSGenerateSegment(BaseModel):
+    id: str = Field(description="original block id, preserved in order")
+    text: str = Field(description="block text; must equal text[start:end] exactly")
+    start: int = Field(description="char offset into combined text (inclusive)")
+    end: int = Field(description="char offset into combined text (exclusive)")
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def validate_id(cls, v: object) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("segment id must be a non-empty string")
+        return v
+
+    @field_validator("start", "end", mode="before")
+    @classmethod
+    def validate_offsets(cls, v: object) -> int:
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise TypeError("segment start/end must be integers")
+        if v < 0:
+            raise ValueError("segment start/end must be >= 0")
+        return v
 
 
 class TTSGenerateRequest(BaseModel):
@@ -212,12 +238,31 @@ class TTSGenerateRequest(BaseModel):
         except (ValueError, TypeError) as e:
             raise ValueError(str(e)) from e
 
+    includeTimestamps: bool = Field(
+        default=False,
+        description=(
+            "When true, generate one continuous Cartesia SSE recording with "
+            "word timestamps and split it into per-block WAVs (segments required)."
+        ),
+    )
+    segments: list[TTSGenerateSegment] | None = Field(
+        default=None,
+        description=(
+            "Block boundaries as exact char offsets into text. Required when "
+            "includeTimestamps is true; text[start:end] must equal the block text."
+        ),
+    )
+
     @model_validator(mode="after")
     def check_language_locale_exclusive(self) -> TTSGenerateRequest:
         # Cartesia rejects requests carrying both `language` and `locale`
         # (HTTP 400) — fail fast with a clear 422 instead.
         if self.language is not None and self.locale is not None:
             raise ValueError("set either language or locale, never both")
+        if self.segments is not None and not self.includeTimestamps:
+            raise ValueError("segments requires includeTimestamps=true")
+        if self.includeTimestamps and not self.segments:
+            raise ValueError("includeTimestamps=true requires a non-empty segments list")
         return self
 
     @field_validator("modelId", mode="before")
@@ -1105,6 +1150,111 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
             raise
         else:
             raise HTTPException(status_code=500, detail=f"TTS engine init failed: {exc}") from exc
+
+    # Timestamp-based segmentation: one continuous Cartesia SSE generation.
+    if body.includeTimestamps:
+        import base64 as _b64
+
+        from app.tts.timestamps import TimestampMappingError, TimestampStreamError
+
+        if effective_provider != "cartesia":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "timestamp-based segmentation is supported only for Cartesia "
+                    f"(provider={effective_provider!r}); use provider=cartesia with "
+                    "modelId=sonic-3.6"
+                ),
+            )
+        seg_dicts: list[dict[str, Any]] = [
+            {"id": s.id, "text": s.text, "start": s.start, "end": s.end}
+            for s in (body.segments or [])
+        ]
+        # Early exact-offset validation before spending a Cartesia call.
+        try:
+            from app.tts.timestamps import BlockBoundary, validate_boundaries
+
+            validate_boundaries(
+                text,
+                [
+                    BlockBoundary(id=d["id"], text=d["text"], start=d["start"], end=d["end"])
+                    for d in seg_dicts
+                ],
+            )
+        except (TimestampMappingError, ValueError) as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+        if not hasattr(engine, "generate_with_timestamps"):
+            raise HTTPException(
+                status_code=422,
+                detail="timestamp-based segmentation is supported only for Cartesia",
+            )
+        async with _tts_lock:
+            await asyncio.sleep(0.01)
+            try:
+                result = await asyncio.to_thread(
+                    engine.generate_with_timestamps,
+                    text,
+                    seg_dicts,
+                    effective_language,
+                    effective_voice,
+                    effective_instruction,
+                    effective_params,
+                    effective_locale,
+                )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                from app.tts.engine import TtsError
+
+                if isinstance(exc, CartesiaNotConfiguredError):
+                    raise HTTPException(status_code=503, detail=str(exc)) from exc
+                if isinstance(exc, CartesiaRequestError):
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                if isinstance(exc, CartesiaError):
+                    raise HTTPException(status_code=503, detail=str(exc)) from exc
+                if isinstance(exc, TimestampMappingError):
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                if isinstance(exc, TimestampStreamError):
+                    raise HTTPException(status_code=500, detail=str(exc)) from exc
+                if isinstance(exc, TtsError) and "only for Cartesia" in str(exc):
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                raise HTTPException(
+                    status_code=500, detail=f"timestamped TTS generation failed: {exc}"
+                ) from exc
+        try:
+            full_wav = result["full_wav"]
+            assert isinstance(full_wav, bytes)
+            out_segments = []
+            for seg in result["segments"]:
+                assert isinstance(seg, dict)
+                seg_wav = seg["wav"]
+                assert isinstance(seg_wav, bytes)
+                out_segments.append(
+                    {
+                        "id": seg["id"],
+                        "start": seg["start"],
+                        "end": seg["end"],
+                        "duration": seg["duration"],
+                        "audio": _b64.b64encode(seg_wav).decode("ascii"),
+                        "mimeType": "audio/wav",
+                        "words": seg.get("words", []),
+                    }
+                )
+            payload = {
+                "mimeType": "audio/wav",
+                "sampleRate": result.get("sample_rate", 44100),
+                "channels": result.get("channels", 1),
+                "duration": result.get("duration", 0.0),
+                "fullAudio": _b64.b64encode(full_wav).decode("ascii"),
+                "segments": out_segments,
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"failed to encode timestamped TTS response: {e}"
+            ) from e
+        return JSONResponse(content=payload)
 
     # Serialized concurrent queue
     async with _tts_lock:

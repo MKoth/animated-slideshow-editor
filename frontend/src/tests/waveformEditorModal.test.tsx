@@ -176,12 +176,10 @@ describe('Waveform Editor — #265', () => {
       length: 8000,
       getChannelData: () => new Float32Array(8000).fill(0.3),
     } as unknown as AudioBuffer
-    const Ctor = vi
-      .fn()
-      .mockImplementation(() => ({
-        decodeAudioData: vi.fn().mockResolvedValue(mockBuffer),
-        close: vi.fn().mockResolvedValue(undefined),
-      }))
+    const Ctor = vi.fn().mockImplementation(() => ({
+      decodeAudioData: vi.fn().mockResolvedValue(mockBuffer),
+      close: vi.fn().mockResolvedValue(undefined),
+    }))
     vi.stubGlobal('AudioContext', Ctor as unknown as typeof AudioContext)
     ;(window as unknown as { AudioContext?: unknown }).AudioContext =
       Ctor as unknown as typeof AudioContext
@@ -487,5 +485,56 @@ describe('Waveform Editor — #265', () => {
     expect(first.sourceStart).toBeCloseTo(3)
     const second = clips.find((c) => c.id !== clipId)!
     expect(second.timelineStart).toBeCloseTo(8)
+  })
+
+  it('Fade in/out applies via button in ms; Cancel resets the draft; undo restores', async () => {
+    const { engine, readOnly, dispatcher, undo, slideId, clipId } = makeEngineWithClip({
+      assetDuration: 10,
+      sourceStart: 0,
+      sourceEnd: 10,
+      timelineStart: 2,
+    })
+    const dispatch = (cmd: Parameters<CommandDispatcher['dispatch']>[0]) => dispatcher.dispatch(cmd)
+    render(
+      <EngineContext.Provider
+        value={{
+          engine: readOnly,
+          dispatch: dispatch as never,
+          undoStack: undo,
+          persistence: noopPersistence,
+        }}
+      >
+        <WaveformEditorModal slideId={slideId} clipId={clipId} onClose={vi.fn()} />
+      </EngineContext.Provider>,
+    )
+    const fadeIn = screen.getByTestId('waveform-fade-in-ms') as HTMLInputElement
+    const fadeOut = screen.getByTestId('waveform-fade-out-ms') as HTMLInputElement
+    const apply = screen.getByTestId('waveform-fade-apply') as HTMLButtonElement
+    const cancel = screen.getByTestId('waveform-fade-cancel') as HTMLButtonElement
+    expect(fadeIn.value).toBe('0')
+    expect(fadeOut.value).toBe('0')
+    expect(apply.disabled).toBe(true)
+    expect(cancel.disabled).toBe(true)
+    // Draft 50ms in + 100ms out on this specific block's clip
+    fireEvent.change(fadeIn, { target: { value: '50' } })
+    fireEvent.change(fadeOut, { target: { value: '100' } })
+    expect(apply.disabled).toBe(false)
+    expect(cancel.disabled).toBe(false)
+    fireEvent.click(apply)
+    const updated = engine.getSlide(slideId).audio.clips.find((c) => c.id === clipId)!
+    expect(updated.fadeIn).toBeCloseTo(0.05)
+    expect(updated.fadeOut).toBeCloseTo(0.1)
+    // Draft now matches saved → Apply/Cancel disabled again
+    expect((screen.getByTestId('waveform-fade-apply') as HTMLButtonElement).disabled).toBe(true)
+    // Change then Cancel resets to saved values
+    fireEvent.change(screen.getByTestId('waveform-fade-in-ms'), { target: { value: '200' } })
+    expect((screen.getByTestId('waveform-fade-apply') as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(screen.getByTestId('waveform-fade-cancel'))
+    expect((screen.getByTestId('waveform-fade-in-ms') as HTMLInputElement).value).toBe('50')
+    // Undo restores no fades
+    dispatcher.undo()
+    const afterUndo = engine.getSlide(slideId).audio.clips.find((c) => c.id === clipId)!
+    expect(afterUndo.fadeIn).toBeUndefined()
+    expect(afterUndo.fadeOut).toBeUndefined()
   })
 })

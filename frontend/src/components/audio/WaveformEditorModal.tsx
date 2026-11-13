@@ -5,6 +5,7 @@ import {
   CreateAudioClipCommand,
   TransactionCommand,
   SetAudioClipEffectsCommand,
+  SetAudioClipFadeCommand,
   UpdatePrompterPartCommand,
   UpdatePrompterPartWithShiftCommand,
 } from '../../engine/commands'
@@ -137,6 +138,9 @@ export function WaveformEditorModal({
   const [editPitch, setEditPitch] = useState(clip?.pitchSemitones ?? 0)
   const [editNoise, setEditNoise] = useState(clip?.noiseReduction ?? 0)
   const [editRate, setEditRate] = useState(clip?.playbackRate ?? 1)
+  // Fades — non-destructive linear fades in source seconds; edited in ms for precision
+  const [editFadeInMs, setEditFadeInMs] = useState(Math.round((clip?.fadeIn ?? 0) * 1000))
+  const [editFadeOutMs, setEditFadeOutMs] = useState(Math.round((clip?.fadeOut ?? 0) * 1000))
   // Derived: playbackRate to convert source seconds to timeline seconds
   const rate = editRate
   // Mismatch dialog state
@@ -282,12 +286,16 @@ export function WaveformEditorModal({
     setEditPitch(clip.pitchSemitones ?? 0)
     setEditNoise(clip.noiseReduction ?? 0)
     setEditRate(clip.playbackRate ?? 1)
+    setEditFadeInMs(Math.round((clip.fadeIn ?? 0) * 1000))
+    setEditFadeOutMs(Math.round((clip.fadeOut ?? 0) * 1000))
   }, [
     clip?.sourceStart,
     clip?.sourceEnd,
     clip?.pitchSemitones,
     clip?.noiseReduction,
     clip?.playbackRate,
+    clip?.fadeIn,
+    clip?.fadeOut,
     isDragging,
     clip,
   ])
@@ -1071,6 +1079,46 @@ export function WaveformEditorModal({
     ],
   )
 
+  // Fades — non-destructive linear fade in/out in source seconds.
+  // Draft in ms for precision; applied immediately (own undo entry), Cancel resets the draft.
+  // fadeSeq forces a re-render after apply so saved values are re-read from the engine
+  // even when the draft already matches (React would otherwise bail out on identical state).
+  const [, setFadeSeq] = useState(0)
+  const fadeKeptMs = Math.max(0, Math.round((editEnd - editStart) * 1000))
+  const savedFadeInMs = Math.round((clip?.fadeIn ?? 0) * 1000)
+  const savedFadeOutMs = Math.round((clip?.fadeOut ?? 0) * 1000)
+  const fadeInMsValid =
+    Number.isFinite(editFadeInMs) && editFadeInMs >= 0 && editFadeInMs <= fadeKeptMs
+  const fadeOutMsValid =
+    Number.isFinite(editFadeOutMs) && editFadeOutMs >= 0 && editFadeOutMs <= fadeKeptMs
+  const fadesChanged =
+    fadeInMsValid &&
+    fadeOutMsValid &&
+    (editFadeInMs !== savedFadeInMs || editFadeOutMs !== savedFadeOutMs)
+  const canApplyFades = !!clip && !libraryRecording && fadesChanged
+
+  const handleFadeApply = () => {
+    if (!clip || libraryRecording || !fadesChanged) return
+    const fadeIn = Number((Math.min(editFadeInMs, fadeKeptMs) / 1000).toFixed(3))
+    const fadeOut = Number((Math.min(editFadeOutMs, fadeKeptMs) / 1000).toFixed(3))
+    const result = dispatch(new SetAudioClipFadeCommand({ slideId, clipId, fadeIn, fadeOut }))
+    if (!result.ok) {
+      useNotificationStore.getState().notify(result.error.message)
+      return
+    }
+    setEditFadeInMs(Math.round(fadeIn * 1000))
+    setEditFadeOutMs(Math.round(fadeOut * 1000))
+    setFadeSeq((n) => n + 1)
+    useNotificationStore
+      .getState()
+      .notify(`Fades applied — in ${fadeIn.toFixed(3)}s, out ${fadeOut.toFixed(3)}s`)
+  }
+
+  const handleFadeCancel = () => {
+    setEditFadeInMs(savedFadeInMs)
+    setEditFadeOutMs(savedFadeOutMs)
+  }
+
   const clippedPeaksForDisplay = useMemo(() => {
     // For performance, we slice peaks to full asset; WaveformCanvas will downsample internally
     // Keep full peaks; overlay highlights kept
@@ -1635,6 +1683,112 @@ export function WaveformEditorModal({
             {(editEnd - editStart).toFixed(2)}s / {editRate.toFixed(2)} ={' '}
             {((editEnd - editStart) / editRate).toFixed(2)}s
           </div>
+        </div>
+        {/* Fades — non-destructive linear fade in/out on this clip */}
+        <div
+          data-testid="waveform-fades"
+          style={{
+            display: 'flex',
+            gap: 16,
+            marginTop: 12,
+            padding: 8,
+            background: '#252538',
+            border: '1px solid #333',
+            borderRadius: 6,
+            flexWrap: 'wrap',
+            fontSize: 11,
+            alignItems: 'flex-end',
+          }}
+        >
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 130 }}>
+            <span style={{ color: '#aaa' }}>Fade in (start), ms</span>
+            <input
+              data-testid="waveform-fade-in-ms"
+              type="number"
+              min={0}
+              max={fadeKeptMs}
+              step={1}
+              value={editFadeInMs}
+              disabled={!!libraryRecording}
+              onChange={(e) => {
+                const v = Math.round(Number(e.target.value))
+                setEditFadeInMs(Number.isFinite(v) ? Math.max(0, v) : 0)
+              }}
+              style={{
+                width: 110,
+                padding: '6px 8px',
+                background: '#1e1e1e',
+                border: '1px solid #444',
+                borderRadius: 4,
+                color: '#e0e0e0',
+              }}
+            />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 130 }}>
+            <span style={{ color: '#aaa' }}>Fade out (end), ms</span>
+            <input
+              data-testid="waveform-fade-out-ms"
+              type="number"
+              min={0}
+              max={fadeKeptMs}
+              step={1}
+              value={editFadeOutMs}
+              disabled={!!libraryRecording}
+              onChange={(e) => {
+                const v = Math.round(Number(e.target.value))
+                setEditFadeOutMs(Number.isFinite(v) ? Math.max(0, v) : 0)
+              }}
+              style={{
+                width: 110,
+                padding: '6px 8px',
+                background: '#1e1e1e',
+                border: '1px solid #444',
+                borderRadius: 4,
+                color: '#e0e0e0',
+              }}
+            />
+          </label>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: '#888' }}
+          >
+            {libraryRecording
+              ? 'Fades unavailable for library recordings here'
+              : `Saved in ${(clip.fadeIn ?? 0).toFixed(3)}s / out ${(clip.fadeOut ?? 0).toFixed(3)}s • linear, clamped to kept ${(editEnd - editStart).toFixed(2)}s`}
+          </div>
+          <span style={{ flex: 1 }} />
+          <button
+            data-testid="waveform-fade-cancel"
+            onClick={handleFadeCancel}
+            disabled={!!libraryRecording || !fadesChanged}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 4,
+              border: '1px solid #444',
+              background: fadesChanged && !libraryRecording ? '#2a2a3a' : '#1a1a1a',
+              color: fadesChanged && !libraryRecording ? '#e0e0e0' : '#666',
+              cursor: fadesChanged && !libraryRecording ? 'pointer' : 'not-allowed',
+              fontSize: 11,
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            data-testid="waveform-fade-apply"
+            onClick={handleFadeApply}
+            disabled={!canApplyFades}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 4,
+              border: `1px solid ${canApplyFades ? '#7c5cff' : '#444'}`,
+              background: canApplyFades ? '#7c5cff' : '#2a2a2a',
+              color: canApplyFades ? '#fff' : '#777',
+              cursor: canApplyFades ? 'pointer' : 'not-allowed',
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+          >
+            Apply fades
+          </button>
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
           <button
