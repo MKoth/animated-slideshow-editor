@@ -196,6 +196,35 @@ def test_script_focus_does_not_truncate_current_editor_source() -> None:
     assert "CURRENT_DRAFT_END" in text
 
 
+def test_script_focus_sends_all_prompt_blocks_without_early_cutoff() -> None:
+    count = 80
+    duration = 107.0
+    blocks = [
+        {
+            "id": f"part-{index}",
+            "start": index * duration / count,
+            "end": (index + 1) * duration / count,
+            "text": f"narration {index}",
+        }
+        for index in range(count)
+    ]
+    text = context_to_text(
+        {
+            "scriptFocus": {
+                "slideId": "slide-1",
+                "slideName": "Long",
+                "duration": duration,
+                "source": 'script "Long" from 0',
+                "promptBlocks": blocks,
+                "diagnostics": [],
+            }
+        }
+    )
+    assert text.count("part-") == count
+    assert "part-79" in text
+    assert "narration 79" in text
+
+
 def test_script_scene_renders_camera_frame_geometry_and_shader_links() -> None:
     text = context_to_text(
         {

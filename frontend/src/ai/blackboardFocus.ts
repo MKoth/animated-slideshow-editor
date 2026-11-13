@@ -50,10 +50,6 @@ interface FocusPart {
   readonly endTime: number
 }
 
-const MAX_BLOCK_TEXT = 500
-const MAX_BLOCKS = 50
-const MAX_ACTIONS = 100
-
 const EFFECT_RE = /\b(reveal|carry|wipe|mark)\s*\(\s*([A-Za-z0-9_]+)/g
 const OVER_RE = /\bover\s*:\s*([0-9]+(?:\.[0-9]+)?)/
 
@@ -66,12 +62,13 @@ function readPromptBlocks(slide: FocusSlide): BlackboardPromptBlock[] {
   const sorted = [...parts]
     .filter((p) => p && typeof p.id === 'string' && p.id.trim() !== '')
     .sort((a, b) => toFinite(a.startTime, 0) - toFinite(b.startTime, 0))
-    .slice(0, MAX_BLOCKS)
+  // No caps: send every block with its full text so the assistant never
+  // reads a truncated tail as the end of the voice track.
   return sorted.map((part) => ({
     id: part.id,
     start: toFinite(part.startTime, 0),
     end: toFinite((part as { endTime?: unknown }).endTime, 0),
-    text: typeof part.text === 'string' ? part.text.slice(0, MAX_BLOCK_TEXT) : '',
+    text: typeof part.text === 'string' ? part.text : '',
   }))
 }
 
@@ -115,7 +112,7 @@ function parseEffectOvers(source: string): { action: string; over: number }[] {
       action: `${verb}(${alias})`,
       over: Number.isFinite(over) && over >= 0 ? over : 0,
     })
-    if (out.length >= MAX_ACTIONS) break
+    // No cap: every board effect rides the context.
   }
   return out
 }

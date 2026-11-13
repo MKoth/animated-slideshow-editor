@@ -64,8 +64,11 @@ export function buildScriptFocus(
     slideName: slide.name,
     duration: slide.duration,
     source: draft,
-    promptBlocks: promptBlocks.slice(0, 50),
-    diagnostics: diagnostics.slice(0, 20).map((diagnostic) => ({
+    // No block cap: the assistant must see the full narration span, otherwise
+    // a long prompter reads as ending early (e.g. 45.8s on a 107s slide).
+    promptBlocks,
+    // No cap: every check diagnostic rides the context.
+    diagnostics: diagnostics.map((diagnostic) => ({
       severity: diagnostic.severity,
       line: diagnostic.line,
       column: diagnostic.column,
@@ -76,10 +79,15 @@ export function buildScriptFocus(
 
 /** Canned "improve timing" request: narration-fit editing of the draft. */
 export const IMPROVE_SCRIPT_PROMPT =
-  'Improve this script so the visuals fit the narration better: ' +
+  'Improve this script so the visuals fit the narration better — timing only: retime reveals, wipes, ' +
+  'marks, waits, and effect at/over placements; ' +
+  'preserve the existing staging exactly: keep the script header `from`, any `setCamera(...)`, and ' +
+  'every background/board `create` line (asset, position, scale) unchanged; do not add, remove, or ' +
+  'retune camera or background/board transforms; ' +
   'no visual appears before the narrator mentions it; labels appear when their text is pronounced; ' +
   'tables are drawn on a general mention and each cell fills as its text is spoken; ' +
-  'make tables as large as the current board layout safely allows: estimate available space from ' +
+  'make tables as large as the current board layout safely allows without moving or resizing the ' +
+  'background/board or changing the camera: estimate available space from ' +
   'the current setting and surrounding content, then enlarge the table and its text together so it ' +
   'is easy to read without clipping or obscuring important visuals; increase table font sizes too ' +
   'when they fit; ' +
@@ -103,9 +111,7 @@ export const IMPROVE_SCRIPT_PROMPT =
 export function formatScriptErrorPrompt(
   errors: readonly { message: string; line: number; column: number }[],
 ): string {
-  const lines = errors
-    .slice(0, 20)
-    .map((error) => `Line ${error.line}, Col ${error.column}: ${error.message}`)
+  const lines = errors.map((error) => `Line ${error.line}, Col ${error.column}: ${error.message}`)
   return (
     'Fix these script errors, keeping everything else the same:\n' +
     lines.map((line) => `- ${line}`).join('\n')

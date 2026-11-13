@@ -83,7 +83,7 @@ def _blackboard_focus_to_text(focus: object) -> str:
     blocks = focus.get("promptBlocks")
     if isinstance(blocks, list) and blocks:
         rendered: list[str] = []
-        for entry in blocks[:50]:
+        for entry in blocks:
             if not isinstance(entry, dict):
                 continue
             block_id = entry.get("id")
@@ -94,7 +94,7 @@ def _blackboard_focus_to_text(focus: object) -> str:
             window = f" [{start:g}-{end:g}s]" if start is not None and end is not None else ""
             text = entry.get("text")
             snippet = (
-                str(text).strip().replace("\n", " ")[:200]
+                str(text).strip().replace("\n", " ")
                 if isinstance(text, str) and str(text).strip()
                 else ""
             )
@@ -108,7 +108,7 @@ def _blackboard_focus_to_text(focus: object) -> str:
     actions = focus.get("actions")
     if isinstance(actions, list) and actions:
         rendered_actions: list[str] = []
-        for entry in actions[:100]:
+        for entry in actions:
             if not isinstance(entry, dict):
                 continue
             action = entry.get("action")
@@ -159,7 +159,7 @@ def _script_focus_to_text(focus: object) -> str:
     blocks = focus.get("promptBlocks")
     if isinstance(blocks, list) and blocks:
         rendered: list[str] = []
-        for entry in blocks[:50]:
+        for entry in blocks:
             if not isinstance(entry, dict):
                 continue
             block_id = entry.get("id")
@@ -170,7 +170,7 @@ def _script_focus_to_text(focus: object) -> str:
             window = f" [{start:g}-{end:g}s]" if start is not None and end is not None else ""
             text = entry.get("text")
             snippet = (
-                str(text).strip().replace("\n", " ")[:200]
+                str(text).strip().replace("\n", " ")
                 if isinstance(text, str) and str(text).strip()
                 else ""
             )
@@ -184,7 +184,7 @@ def _script_focus_to_text(focus: object) -> str:
     diagnostics = focus.get("diagnostics")
     if isinstance(diagnostics, list) and diagnostics:
         rendered_diags: list[str] = []
-        for entry in diagnostics[:20]:
+        for entry in diagnostics:
             if not isinstance(entry, dict):
                 continue
             message = entry.get("message")
@@ -199,7 +199,7 @@ def _script_focus_to_text(focus: object) -> str:
             elif isinstance(line, int):
                 where = f"line {line}: "
             prefix = f"{severity}: " if isinstance(severity, str) and severity.strip() else ""
-            rendered_diags.append(f"{prefix}{where}{message.strip()[:300]}")
+            rendered_diags.append(f"{prefix}{where}{message.strip()}")
         if rendered_diags:
             lines.append("check diagnostics: " + " | ".join(rendered_diags))
     return "\n".join(lines)

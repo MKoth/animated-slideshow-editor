@@ -61,6 +61,28 @@ describe('buildScriptFocus', () => {
     })
   })
 
+  it('sends every prompt block so long narrations never read as ending early', () => {
+    const { engine, dispatcher, slideId } = setupSlide()
+    const count = 80
+    const duration = 107
+    act(() => {
+      for (let index = 0; index < count; index += 1) {
+        dispatcher.dispatch(
+          new CreatePrompterPartCommand({
+            slideId,
+            text: `narration ${index}`,
+            duration: duration / count,
+          }),
+        )
+      }
+    })
+
+    const focus = buildScriptFocus(toReadOnly(engine), slideId, 'script "Intro" from 0', [])
+
+    expect(focus?.promptBlocks).toHaveLength(count)
+    expect(focus?.promptBlocks[count - 1]?.end).toBeCloseTo(duration, 6)
+  })
+
   it('maps check diagnostics and returns null for unknown slides', () => {
     const { engine, slideId } = setupSlide()
     const focus = buildScriptFocus(toReadOnly(engine), slideId, 'script "Intro" from 0', [
@@ -85,6 +107,10 @@ describe('script assistant prompts', () => {
       'make tables as large as the current board layout safely allows',
     )
     expect(IMPROVE_SCRIPT_PROMPT).toContain('increase table font sizes too')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('timing only')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('setCamera')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('background/board')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('do not add, remove, or retune camera')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('purposeful variety of distinct, coordinated colors')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('choice buttons')
   })

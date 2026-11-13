@@ -33,9 +33,7 @@ export function checkScriptDraft(
 export function formatScriptDraftErrors(
   errors: readonly { message: string; line: number; column: number }[],
 ): string {
-  const lines = errors
-    .slice(0, 20)
-    .map((error) => `Line ${error.line}, Col ${error.column}: ${error.message}`)
+  const lines = errors.map((error) => `Line ${error.line}, Col ${error.column}: ${error.message}`)
   return (
     'The drafted script failed validation — reply with the corrected full script:\n' +
     lines.map((line) => `- ${line}`).join('\n')
