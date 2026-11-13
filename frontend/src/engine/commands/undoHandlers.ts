@@ -1593,33 +1593,40 @@ export function applyUndo(
     case 'MergePrompterParts': {
       const slideId = inv.slideId as string
       const mergedId = inv.mergedId as string
-      const oldParts = inv.oldParts as readonly {
-        id: string
-        text: string
-        duration: number
-        startTime: number
-        endTime: number
-      }[]
+      const oldParts = inv.oldParts as readonly Record<string, unknown>[]
+      const shiftedParts = inv.shiftedParts as
+        readonly { id: string; oldStartTime: number; oldEndTime: number }[] | undefined
+      const shiftedClips = inv.shiftedClips as
+        readonly { id: string; oldTimelineStart: number }[] | undefined
       const rightPartId = inv.rightPartId as string | undefined
-      // Delete merged (which is left) and recreate both?
-      // For simplicity, restore oldParts by deleting merged and recreating right
+      // Restore the two pre-merge blocks in place and shift downstream
+      // parts/clips back. No reflow: gaps must survive the round-trip.
       const slide = engine.getSlide(slideId)
       const mergedIndex = slide.prompter?.parts.findIndex((p) => p.id === mergedId) ?? -1
       if (mergedIndex !== -1) {
         // Remove merged
         slide.prompter!.parts.splice(mergedIndex, 1)
-        // Insert old parts
+        // Insert old parts (full snapshots when available; legacy history
+        // only has the id/text/duration/start/end subset).
         for (let i = 0; i < oldParts.length; i++) {
-          const op = oldParts[i]
-          slide.prompter!.parts.splice(mergedIndex + i, 0, {
-            id: op.id,
-            text: op.text,
-            duration: op.duration,
-            startTime: op.startTime,
-            endTime: op.endTime,
-          })
+          const op = JSON.parse(JSON.stringify(oldParts[i])) as import('../prompter').PrompterPart
+          slide.prompter!.parts.splice(mergedIndex + i, 0, op)
         }
-        reflowPrompter(slide.prompter!)
+        if (shiftedParts) {
+          for (const sp of shiftedParts) {
+            const p = slide.prompter!.parts.find((x) => x.id === sp.id)
+            if (p) {
+              p.startTime = sp.oldStartTime
+              p.endTime = sp.oldEndTime
+            }
+          }
+        }
+        if (shiftedClips) {
+          for (const sc of shiftedClips) {
+            const clip = slide.audio.clips.find((c) => c.id === sc.id)
+            if (clip) clip.timelineStart = sc.oldTimelineStart
+          }
+        }
       }
       void rightPartId
       return

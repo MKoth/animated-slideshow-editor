@@ -940,7 +940,9 @@ export class Engine {
     rightPartId?: string,
   ): {
     mergedId: string
-    oldParts: { id: string; text: string; duration: number; startTime: number; endTime: number }[]
+    oldParts: import('./prompter').PrompterPart[]
+    shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[]
+    shiftedClips: { id: string; oldTimelineStart: number }[]
   } {
     const slide = this.getSlide(slideId)
     if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
@@ -957,26 +959,45 @@ export class Engine {
     }
     const left = slide.prompter.parts[leftIndex]
     const right = slide.prompter.parts[rightIndex]
-    const oldParts = [
-      {
-        id: left.id,
-        text: left.text,
-        duration: left.duration,
-        startTime: left.startTime,
-        endTime: left.endTime,
-      },
-      {
-        id: right.id,
-        text: right.text,
-        duration: right.duration,
-        startTime: right.startTime,
-        endTime: right.endTime,
-      },
+    // Full snapshots for undo (preserves audio links, tts, segments, status).
+    const oldParts: import('./prompter').PrompterPart[] = [
+      JSON.parse(JSON.stringify(left)),
+      JSON.parse(JSON.stringify(right)),
     ]
     const newText = mergePrompterPartTexts(left.text, right.text)
+    // United block duration is the plain time sum of the two blocks.
+    // Never re-estimate from character count here.
     const newDuration = left.duration + right.duration
+    const mergedStart = left.startTime
+    const mergedEnd = mergedStart + newDuration
+    const rightEnd = right.endTime
+    // Gap between the two blocks that collapses into the merged block.
+    // Positive = gap closed (downstream shifts left), negative = overlap
+    // removed (downstream shifts right), zero = gap-free (no shift).
+    const delta = rightEnd - mergedEnd
+    // Capture downstream parts/clips BEFORE mutation so gaps are preserved
+    // (shift, never gap-free reflow) and downstream audio stays glued to
+    // its prompter block.
+    const shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[] = []
+    for (let i = rightIndex + 1; i < slide.prompter.parts.length; i++) {
+      const p = slide.prompter.parts[i]
+      shiftedParts.push({ id: p.id, oldStartTime: p.startTime, oldEndTime: p.endTime })
+    }
+    const shiftedClips: { id: string; oldTimelineStart: number }[] = []
+    if (Math.abs(delta) > 1e-9) {
+      // Voice-only: SFX/music stay glued to board visuals (see
+      // deletePrompterPart / updatePrompterPart shift paths).
+      for (const clip of slide.audio.clips) {
+        if (clip.trackId !== 'voice') continue
+        if (clip.timelineStart >= rightEnd - 1e-6) {
+          shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
+        }
+      }
+    }
     left.text = newText
     left.duration = newDuration
+    left.endTime = mergedEnd
+    // startTime unchanged — merged block stays where the left block was.
     // Merge status: if either was stale, result is stale? Preserve if either had audio? We clear stale only when no audio; but merging with audio? Keep left's audio linkage if present? If right had audio, we drop it (v1 only 0..1). Clear status on merged unless still linked.
     // For simplicity, if left had audio, keep it; otherwise if right had audio, transfer? But spec says 0..1 per part, so merging two with audio is edge; we keep left's.
     // Status: if resulting part has audio, and text changed via merge (which is edit), then it should become stale per update semantics? But merge is intentional; we should maybe clear stale? For now, if left had audio, mark stale because text changed.
@@ -988,16 +1009,47 @@ export class Engine {
       left.audioAssetId = right.audioAssetId
       left.promptId = right.promptId
       left.status = 'stale'
+      // Keep the transferred clip glued to the merged block start.
+      if (left.audioClipId) {
+        const transferred = slide.audio.clips.find((c) => c.id === left.audioClipId)
+        if (transferred && Math.abs(transferred.timelineStart - mergedStart) > 1e-9) {
+          shiftedClips.push({
+            id: transferred.id,
+            oldTimelineStart: transferred.timelineStart,
+          })
+          transferred.timelineStart = mergedStart
+        }
+      }
     } else {
-      left.status = undefined
+      delete (left as unknown as { status?: unknown }).status
     }
     slide.prompter.parts.splice(rightIndex, 1)
-    if (slide.prompter) reflowPrompter(slide.prompter)
+    // Preserve gaps: shift downstream parts/clips by the collapsed gap instead
+    // of reflowing the whole lane gap-free (which would misplace every
+    // downstream block relative to its audio).
+    if (Math.abs(delta) > 1e-9) {
+      for (const sp of shiftedParts) {
+        const p = slide.prompter.parts.find((x) => x.id === sp.id)
+        if (p) {
+          p.startTime = sp.oldStartTime - delta
+          p.endTime = sp.oldEndTime - delta
+        }
+      }
+      for (const sc of shiftedClips) {
+        // Transferred clip already moved to mergedStart; skip it here.
+        if (left.audioClipId && sc.id === left.audioClipId) continue
+        const clip = slide.audio.clips.find((c) => c.id === sc.id)
+        if (clip) clip.timelineStart = sc.oldTimelineStart - delta
+      }
+    }
     this.#bus.emit({
       type: 'PrompterChanged',
       slideId,
     } as unknown as import('./events').EngineEvent)
-    return { mergedId: left.id, oldParts }
+    if (shiftedClips.length > 0) {
+      this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    }
+    return { mergedId: left.id, oldParts, shiftedParts, shiftedClips }
   }
 
   mergePrompterParts(
@@ -1006,7 +1058,9 @@ export class Engine {
     rightPartId?: string,
   ): {
     mergedId: string
-    oldParts: { id: string; text: string; duration: number; startTime: number; endTime: number }[]
+    oldParts: import('./prompter').PrompterPart[]
+    shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[]
+    shiftedClips: { id: string; oldTimelineStart: number }[]
   } {
     return this.unitePrompterParts(slideId, leftPartId, rightPartId)
   }

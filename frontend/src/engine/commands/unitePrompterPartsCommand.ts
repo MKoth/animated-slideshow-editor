@@ -10,14 +10,10 @@ export interface UnitePrompterPartsParameters {
 export interface UnitePrompterPartsInverse {
   readonly slideId: string
   readonly mergedId: string
-  readonly oldParts: readonly {
-    id: string
-    text: string
-    duration: number
-    startTime: number
-    endTime: number
-  }[]
+  readonly oldParts: readonly import('../prompter').PrompterPart[]
   readonly rightPartId: string
+  readonly shiftedParts?: readonly { id: string; oldStartTime: number; oldEndTime: number }[]
+  readonly shiftedClips?: readonly { id: string; oldTimelineStart: number }[]
 }
 
 export class UnitePrompterPartsCommand implements Command<UnitePrompterPartsInverse> {
@@ -64,6 +60,8 @@ export class UnitePrompterPartsCommand implements Command<UnitePrompterPartsInve
       mergedId: result.mergedId,
       oldParts: result.oldParts,
       rightPartId: rightId,
+      shiftedParts: result.shiftedParts,
+      shiftedClips: result.shiftedClips,
     }
   }
 
