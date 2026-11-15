@@ -121,6 +121,11 @@ describe('script assistant prompts', () => {
     // Camera is authoritative by default — no camera-geometry questions.
     expect(IMPROVE_SCRIPT_PROMPT).toContain('trust the active camera')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('never emit camera-geometry questions')
+    // Board must stay alive with full informative phrases, never fragments.
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('Never leave the blackboard empty')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('full informative phrase')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('never keywords or fragments')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('Never split a studied-language phrase')
   })
 
   it('error fix prompt lists each error with its position', () => {

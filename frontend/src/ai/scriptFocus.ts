@@ -105,8 +105,15 @@ export const IMPROVE_SCRIPT_PROMPT =
   'wobbleX/wobbleY/wobbleSpeed/direction (they are compile errors) and its visual is optional: omit ' +
   'visual for a quiet built-in marker underline that avoids on-screen clutter, pass `visual: chalkHand, ' +
   'visualScale: 4, visualAnchor: "top-center", sound: writeSfx` only when a paw performer is wanted; ' +
-  'for long spoken stretches with no visual, add one short phrase that appears at the stretch start ' +
-  'and leaves at its end. Prompter blocks can overlap: when a later block overlaps and its end is ' +
+  'Never leave the blackboard empty while the narrator speaks: if no visual is ' +
+  'scheduled for a spoken stretch, show a full informative phrase taken from that narration — a complete ' +
+  'clause or sentence, never keywords or fragments — that appears at the stretch start and leaves at its end. ' +
+  'The on-screen phrase must be self-contained: a viewer reading only the board can tell which narration point ' +
+  'it supports. Even when the board already holds content but the narration moves to something unrelated, keep ' +
+  'the board alive with full transient phrases appearing and disappearing in sync with the spoken words — one ' +
+  'complete idea at a time, wiped or faded before the next, never piling up or obscuring important visuals. ' +
+  'Never split a studied-language phrase: when the narrator pronounces a phrase in the studied language, show that ' +
+  'whole phrase intact, never only part of it. Prompter blocks can overlap: when a later block overlaps and its end is ' +
   "later than the current block's end, the current block effectively ends at the later block's start; " +
   'the farther-ending block then has priority, until another overlapping block ends even later. ' +
   'A later block with an earlier end does not take priority. Respect these effective handoffs when ' +

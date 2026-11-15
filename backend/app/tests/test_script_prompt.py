@@ -161,6 +161,15 @@ def test_script_prompt_uses_live_chalk_material_and_camera_measurements() -> Non
     assert "never emit camera-geometry clarifying questions" in lowered
 
 
+def test_script_prompt_keeps_blackboard_alive_during_narration() -> None:
+    prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "script")
+    lowered = prompt.lower()
+    assert "never leave the blackboard empty while the narrator speaks" in lowered
+    assert "full informative phrase" in lowered
+    assert "never keywords or fragments" in lowered
+    assert "never split a studied-language phrase" in lowered
+
+
 def test_script_prompt_teaches_table_row_heights() -> None:
     prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "script")
     lowered = prompt.lower()
