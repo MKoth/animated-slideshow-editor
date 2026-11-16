@@ -2,6 +2,11 @@ import { Children, isValidElement, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import {
+  isolateScenarioBoardLines,
+  SCENARIO_REUSE_COMMENT_RE,
+  unwrapScenarioMarkdownFence,
+} from '../engine/scenarioBlocks'
 import { useUiStore } from '../stores/uiStore'
 
 const SUPPORTED = new Set([
@@ -123,45 +128,6 @@ function isVisualLine(children: ReactNode): boolean {
   return typeof className === 'string' && className.split(' ').includes('scenario-visual')
 }
 
-const REUSE_COMMENT_RE = /^<!--\s*reuse:\s*(.+?)\s*-->$/gim
-
-// Board lines that must stand alone: the model often writes them glued to
-// surrounding paragraphs (no blank lines), which markdown then merges into
-// one paragraph so no chip renders. Isolation inserts the blank lines;
-// fenced code blocks are left untouched. Table rows must never match.
-const BOARD_LINE_RE =
-  /^\s*(\[place:|\[reveal:|\[remove:|\[wipe\]|!\[|> Brief:|> Label:|<!-- reuse:)/i
-
-function isolateBoardLines(content: string): string {
-  const lines = content.split('\n')
-  const out: string[] = []
-  let fenced = false
-  lines.forEach((line, index) => {
-    if (/^\s*```/.test(line)) fenced = !fenced
-    const marker = !fenced && BOARD_LINE_RE.test(line)
-    if (marker && out.length > 0 && out[out.length - 1]!.trim() !== '') out.push('')
-    out.push(line)
-    if (marker) {
-      const next = lines[index + 1]
-      if (next !== undefined && next.trim() !== '') out.push('')
-    }
-  })
-  return out.join('\n')
-}
-
-/** Unwrap chat responses that fence the entire scenario as `markdown` code. */
-function unwrapScenarioMarkdownFence(content: string): string {
-  const lines = content.trim().split('\n')
-  if (
-    lines.length >= 3 &&
-    /^\s*```(?:markdown|md)?\s*$/i.test(lines[0] ?? '') &&
-    /^\s*```\s*$/.test(lines[lines.length - 1] ?? '')
-  ) {
-    return lines.slice(1, -1).join('\n')
-  }
-  return content
-}
-
 /** Reveal targets are bookkeeping ids (`text1`); chips show the kind only. */
 function revealKind(target: string): string {
   const kind = target.replace(/\d+$/g, '').trim() || target.trim()
@@ -229,8 +195,8 @@ export function ScenarioDocMarkdown({ content }: { content: string }) {
   // Board lines are isolated so glued markers still render as their own blocks.
   const prepared = useMemo(
     () =>
-      isolateBoardLines(
-        unwrapScenarioMarkdownFence(content).replace(REUSE_COMMENT_RE, '> Reuse: $1'),
+      isolateScenarioBoardLines(
+        unwrapScenarioMarkdownFence(content).replace(SCENARIO_REUSE_COMMENT_RE, '> Reuse: $1'),
       ),
     [content],
   )

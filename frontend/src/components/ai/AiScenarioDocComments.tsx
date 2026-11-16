@@ -163,8 +163,16 @@ interface AiScenarioDocCommentsProps {
   comments: ScenarioDocComment[]
   onCommentsChange: (next: ScenarioDocComment[]) => void
   preserveCommentsOnMarkdownChange?: boolean
-  onEditBlock?: (blockIndex: number, text: string) => Promise<void> | void
+  onEditBlock?: (blockIndex: number, text: string, expectedSource?: string) => Promise<void> | void
   onDeleteBlock?: (blockIndex: number) => Promise<void> | void
+  /**
+   * Original markdown source per rendered top-level block, in document order
+   * (see `splitScenarioDocBlocks`). The edit box starts from this source —
+   * never from the rendered text, which drops markdown syntax — and every
+   * block action is validated against its length so a stale index can never
+   * touch the wrong block.
+   */
+  blockSources?: readonly string[]
 }
 
 let commentSeq = 0
@@ -203,6 +211,7 @@ export function AiScenarioDocComments({
   preserveCommentsOnMarkdownChange = false,
   onEditBlock,
   onDeleteBlock,
+  blockSources,
 }: AiScenarioDocCommentsProps): JSX.Element {
   const docRef = useRef<HTMLDivElement | null>(null)
   const [float, setFloat] = useState<PendingAnchor | null>(null)
@@ -223,13 +232,30 @@ export function AiScenarioDocComments({
   const [blockEditError, setBlockEditError] = useState<string | null>(null)
   const streaming = useAiStore((s) => s.status) === 'streaming'
 
+  /**
+   * The rendered block index is only a valid source-block index when the
+   * source split still matches the live DOM (same length, index in range).
+   * Anything else means the doc changed under the click — never guess.
+   */
+  const resolveSourceBlock = (blockIndex: number): string | null => {
+    if (!blockSources) return null
+    const doc = docRef.current
+    const md = doc ? markdownRoot(doc) : null
+    const renderedTotal = md
+      ? Array.from(md.children).filter((child) => child instanceof HTMLElement).length
+      : -1
+    if (blockSources.length !== renderedTotal) return null
+    if (blockIndex < 0 || blockIndex >= blockSources.length) return null
+    return blockSources[blockIndex] ?? null
+  }
+
   const saveEditingBlock = async (): Promise<void> => {
     if (!editingBlock || editingBlock.text === editingBlock.original || !editingBlock.text.trim())
       return
     setSavingBlock(true)
     setBlockEditError(null)
     try {
-      await onEditBlock?.(editingBlock.index, editingBlock.text)
+      await onEditBlock?.(editingBlock.index, editingBlock.text, editingBlock.original)
       setEditingBlock(null)
     } catch (error) {
       setBlockEditError(error instanceof Error ? error.message : 'Could not save this block.')
@@ -517,7 +543,14 @@ export function AiScenarioDocComments({
       const scope = deleteBtn.closest('[data-comment-block]')
       const md = docRef.current ? markdownRoot(docRef.current) : null
       const blockIndex = scope && md ? Array.from(md.children).indexOf(scope) : -1
-      if (blockIndex >= 0 && window.confirm('Delete this scenario block?')) {
+      if (blockIndex < 0) return
+      // Never act on a stale index: the source split must still match the
+      // live DOM, or the wrong block would be deleted.
+      if (blockSources && resolveSourceBlock(blockIndex) === null) {
+        window.alert('This block moved while the doc changed — reopen it and try again.')
+        return
+      }
+      if (window.confirm('Delete this scenario block?')) {
         void onDeleteBlock?.(blockIndex)
       }
       return
@@ -528,10 +561,20 @@ export function AiScenarioDocComments({
       const md = docRef.current ? markdownRoot(docRef.current) : null
       const blockIndex = scope && md ? Array.from(md.children).indexOf(scope) : -1
       if (blockIndex >= 0 && scope instanceof HTMLElement) {
+        // Start the editor from the block's markdown source so markers,
+        // image references, and reuse comments survive the round-trip.
+        // Rendered text (innerText) drops that syntax — `> Brief:` becomes
+        // `Brief: ...`, chips lose their `asset:` slugs, and step headings
+        // lose their `##`.
+        const source = resolveSourceBlock(blockIndex)
+        if (blockSources && source === null) {
+          setBlockEditError('This block moved while the doc changed — reopen it and try again.')
+          return
+        }
         // textContent drops the visual line breaks produced by Markdown hard
         // breaks (<br>) and can turn adjacent narrator lines into one string.
         // Start the editor from the displayed text, including those breaks.
-        const text = scope.innerText ?? scope.textContent ?? ''
+        const text = source ?? scope.innerText ?? scope.textContent ?? ''
         const doc = docRef.current
         const rootRect = doc?.getBoundingClientRect()
         // The document is its own scroll container. Absolute positioning uses

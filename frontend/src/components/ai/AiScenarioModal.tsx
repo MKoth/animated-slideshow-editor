@@ -22,6 +22,7 @@ import {
   encodeScenarioPortableZip,
 } from '../../engine/scenarioPortableZip'
 import { normalizeAssetKey, parseScenarioMarkdown } from '../../engine/scenarioMarkdown'
+import { splitScenarioDocBlocks } from '../../engine/scenarioBlocks'
 import { planScenarioDraft } from '../../ai/scenarioPlanner'
 import { resolveForeignWords } from '../../ai/scenarioPromptSplit'
 import {
@@ -338,6 +339,11 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   const scenario = engine?.project?.scenario
   const scenarioDocRev = useAiStore((s) => s.scenarioDocRevByProject[projectId] ?? 0)
   const markdown = scenario?.currentMarkdown ?? ''
+  // One ORIGINAL-source chunk per rendered top-level block, in document
+  // order. Glued board lines render as several blocks, so indexing a naive
+  // blank-line split by the rendered block index deletes/edits the wrong
+  // block — this split mirrors the renderer instead.
+  const scenarioBlocks = useMemo(() => splitScenarioDocBlocks(markdown), [markdown])
   const bindings = scenario?.bindings ?? {}
   const lastHtml = scenario?.lastHtml
   const generatedFromVersionId = scenario?.generatedFromVersionId ?? null
@@ -1747,11 +1753,19 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                     markdown={markdown}
                     comments={docComments}
                     onCommentsChange={setDocComments}
-                    onEditBlock={async (blockIndex, text) => {
+                    onEditBlock={async (blockIndex, text, expectedSource) => {
                       if (!conversationId || !text.trim()) return
-                      const blocks = markdown.split(/\n{2,}/)
+                      const blocks = [...scenarioBlocks]
                       if (blockIndex < 0 || blockIndex >= blocks.length) {
                         throw new Error('Could not locate this block in the scenario source.')
+                      }
+                      // The editor stays open while typing, so the doc may have
+                      // changed underneath. Never write typed text over a block
+                      // that is no longer the one the user opened.
+                      if (expectedSource !== undefined && blocks[blockIndex] !== expectedSource) {
+                        throw new Error(
+                          'This block changed while editing — reopen it and try again.',
+                        )
                       }
                       blocks[blockIndex] = text.trim()
                       const content = blocks.join('\n\n')
@@ -1772,7 +1786,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                     }}
                     onDeleteBlock={async (blockIndex) => {
                       if (!conversationId) return
-                      const blocks = markdown.split(/\n{2,}/)
+                      const blocks = [...scenarioBlocks]
                       if (blockIndex < 0 || blockIndex >= blocks.length) return
                       blocks.splice(blockIndex, 1)
                       const content = blocks.join('\n\n')
@@ -1795,6 +1809,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                       preserveCommentVersionId !== null &&
                       activeMarkdownVersionId === preserveCommentVersionId
                     }
+                    blockSources={scenarioBlocks}
                   />
                 </div>
                 {editingMarkdown && (

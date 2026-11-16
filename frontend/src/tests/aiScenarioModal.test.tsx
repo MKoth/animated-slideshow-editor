@@ -684,3 +684,137 @@ describe('AiScenarioModal doc-first blocking checklist (issue #463)', () => {
     )
   })
 })
+
+describe('AiScenarioModal scenario block delete/edit with glued board lines', () => {
+  // Board lines glued to their neighbors (no blank lines) render as several
+  // blocks while a naive blank-line split sees one chunk — block actions must
+  // follow the rendered blocks, not the naive split.
+  const GLUED = [
+    '## Step 1 — Who you are',
+    '',
+    '**Narrator:** Ser is for who you are.',
+    '[reveal: text1]',
+    'You say soy.',
+    '[wipe]',
+    '',
+  ].join('\n')
+
+  function mockVersionPost(saved: { content: string | null }) {
+    vi.mocked(fetch).mockImplementation(async (url: unknown, init?: RequestInit) => {
+      const path = String(url)
+      if (path.endsWith('/api/ai/scenarios/markdown/versions') && init?.method === 'POST') {
+        const body = JSON.parse(String((init as RequestInit).body)) as { content: string }
+        saved.content = body.content
+        return new Response(JSON.stringify({ id: 'v-2', ...body }), { status: 201 })
+      }
+      return new Response(JSON.stringify([]), { status: 200 })
+    })
+  }
+
+  function renderedDeleteButtons(container: HTMLElement): HTMLElement[] {
+    return Array.from(container.querySelectorAll('[data-delete-block-btn]')).filter(
+      (el): el is HTMLElement => el instanceof HTMLElement,
+    )
+  }
+
+  function renderedEditButtons(container: HTMLElement): HTMLElement[] {
+    return Array.from(container.querySelectorAll('[data-edit-block-btn]')).filter(
+      (el): el is HTMLElement => el instanceof HTMLElement,
+    )
+  }
+
+  it('deletes exactly the clicked block when board lines are glued', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const saved = { content: null as string | null }
+    mockVersionPost(saved)
+    const { value } = setupEngine(GLUED)
+    useAiStore.setState({ scenarioModalOpen: true })
+    const { container } = renderModal(value)
+    await screen.findByTestId('ai-scenario-modal-doc')
+    // Heading, narrator, reveal action, text, wipe action.
+    expect(renderedDeleteButtons(container)).toHaveLength(5)
+    // Delete the narrator block: only that line goes; the glued reveal/text
+    // lines stay as their own blocks.
+    await user.click(renderedDeleteButtons(container)[1]!)
+    await vi.waitFor(() => expect(saved.content).not.toBeNull())
+    expect(saved.content).toBe(
+      ['## Step 1 — Who you are', '', '[reveal: text1]', '', 'You say soy.', '', '[wipe]'].join(
+        '\n',
+      ),
+    )
+  })
+
+  it('deletes the last rendered block instead of silently keeping it', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const saved = { content: null as string | null }
+    mockVersionPost(saved)
+    const { value } = setupEngine(GLUED)
+    useAiStore.setState({ scenarioModalOpen: true })
+    const { container } = renderModal(value)
+    await screen.findByTestId('ai-scenario-modal-doc')
+    const deleteBtns = renderedDeleteButtons(container)
+    expect(deleteBtns).toHaveLength(5)
+    await user.click(deleteBtns[4]!)
+    await vi.waitFor(() => expect(saved.content).not.toBeNull())
+    expect(saved.content).toBe(
+      [
+        '## Step 1 — Who you are',
+        '',
+        '**Narrator:** Ser is for who you are.',
+        '',
+        '[reveal: text1]',
+        '',
+        'You say soy.',
+      ].join('\n'),
+    )
+    expect(saved.content).not.toContain('[wipe]')
+  })
+
+  it('starts the block editor from markdown source, not rendered chip text', async () => {
+    const user = userEvent.setup()
+    const { value } = setupEngine(GLUED)
+    useAiStore.setState({ scenarioModalOpen: true })
+    const { container } = renderModal(value)
+    await screen.findByTestId('ai-scenario-modal-doc')
+    const editBtns = renderedEditButtons(container)
+    expect(editBtns).toHaveLength(5)
+    // The reveal block renders as a "Reveal / Text1" chip; editing must start
+    // from `[reveal: text1]` so saving keeps valid board syntax.
+    await user.click(editBtns[2]!)
+    expect(await screen.findByTestId('ai-scenario-block-editor-input')).toHaveValue(
+      '[reveal: text1]',
+    )
+  })
+
+  it('refuses to save typed edits over a block that changed underneath', async () => {
+    const user = userEvent.setup()
+    const saved = { content: null as string | null }
+    mockVersionPost(saved)
+    const { value } = setupEngine(GLUED)
+    useAiStore.setState({ scenarioModalOpen: true })
+    const view = renderModal(value)
+    await screen.findByTestId('ai-scenario-modal-doc')
+    const editBtns = renderedEditButtons(view.container)
+    expect(editBtns).toHaveLength(5)
+    await user.click(editBtns[2]!)
+    const editor = await screen.findByTestId('ai-scenario-block-editor-input')
+    expect(editor).toHaveValue('[reveal: text1]')
+    await user.type(editor, ' (note)')
+    // A new version lands while the editor is open: the reveal block moves
+    // from index 2 to index 3 and the old index now points at the narrator.
+    const shifted = `# Lesson Title\n\n${GLUED}`
+    const shiftedValue = setupEngine(shifted).value
+    view.rerender(
+      <EngineContext.Provider value={shiftedValue}>
+        <AiScenarioModal projectId="p-1" conversationId="c-1" />
+      </EngineContext.Provider>,
+    )
+    await user.click(screen.getByTestId('ai-scenario-block-done'))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This block changed while editing — reopen it and try again.',
+    )
+    expect(saved.content).toBeNull()
+  })
+})
