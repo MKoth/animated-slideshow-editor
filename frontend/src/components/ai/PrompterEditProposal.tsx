@@ -101,30 +101,51 @@ function mapBlocksToLiveSources(
     sourceCursor = end
   }
 
+  let outputCursor = 0
+  const outputRanges = proposal.blocks.map((block) => {
+    const wordCount = spokenWords(block.text).length
+    const end = outputCursor + wordCount
+    const range = { start: outputCursor, end }
+    outputCursor = end
+    return range
+  })
+
   // Punctuation-only source parts (for example a detached closing quote) have
-  // no spoken-word range. Keep them attributable by attaching each to the next
-  // spoken source part, or to the previous one when it trails the slide.
-  const attributedRanges = sourceRanges.map((range, index) => {
-    if (range.start !== range.end) return range
-    const next = sourceRanges
-      .slice(index + 1)
-      .find((candidate) => candidate.start !== candidate.end)
+  // no spoken-word range. Attach each to exactly one output block: the first
+  // block for the following spoken part, or the last block for a trailing one.
+  // Assigning it to every block that overlaps the anchor would repeat its ID
+  // when one source sentence is split across multiple output blocks.
+  const emptySourceBlockTarget = new Map<string, number>()
+  sourceRanges.forEach((range, index) => {
+    if (range.start !== range.end) return
+    const next = sourceRanges.find(
+      (candidate, candidateIndex) => candidateIndex > index && candidate.start !== candidate.end,
+    )
     const previous = sourceRanges
       .slice(0, index)
       .reverse()
       .find((candidate) => candidate.start !== candidate.end)
     const anchor = next ?? previous
-    return anchor ? { ...range, start: anchor.start, end: anchor.end } : range
+    if (!anchor) {
+      emptySourceBlockTarget.set(range.id, 0)
+      return
+    }
+    const matchingBlocks = outputRanges
+      .map((outputRange, blockIndex) => ({ outputRange, blockIndex }))
+      .filter(({ outputRange }) => outputRange.start < anchor.end && outputRange.end > anchor.start)
+    const target = next ? matchingBlocks[0] : matchingBlocks[matchingBlocks.length - 1]
+    if (target) emptySourceBlockTarget.set(range.id, target.blockIndex)
   })
 
-  let outputCursor = 0
-  const blocks = proposal.blocks.map((block) => {
-    const wordCount = spokenWords(block.text).length
-    const end = outputCursor + wordCount
-    const sourcePartIds = attributedRanges
-      .filter((range) => range.start < end && range.end > outputCursor)
+  const blocks = proposal.blocks.map((block, blockIndex) => {
+    const { start, end } = outputRanges[blockIndex]!
+    const sourcePartIds = sourceRanges
+      .filter(
+        (range) =>
+          (range.start < end && range.end > start) ||
+          (range.start === range.end && emptySourceBlockTarget.get(range.id) === blockIndex),
+      )
       .map((range) => range.id)
-    outputCursor = end
     return { ...block, sourcePartIds }
   })
   return { ...proposal, sourcePartIds: liveParts.map((part) => part.id), blocks }

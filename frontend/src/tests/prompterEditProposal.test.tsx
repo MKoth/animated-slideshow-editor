@@ -99,6 +99,80 @@ describe('Prompter edit proposal local dry-run', () => {
     expect(screen.queryByTestId('prompter-edit-dry-run-errors')).not.toBeInTheDocument()
   })
 
+  it('attributes a trailing quote-only source block to the previous spoken block', async () => {
+    const response = JSON.parse(
+      editResponse(['part-1']).match(/```prompter-edit\s*([\s\S]*?)```/)![1],
+    )
+    renderProposal(`\`\`\`prompter-edit\n${JSON.stringify(response)}\n\`\`\``, vi.fn(), [
+      { id: 'part-1', text: 'Hello' },
+      { id: 'part-2', text: 'mundo' },
+      { id: 'closing-quote', text: '"' },
+    ])
+    const user = userEvent.setup()
+
+    await user.click(screen.getByTestId('prompter-edit-dry-run'))
+
+    expect(screen.getByRole('status')).toHaveTextContent('Dry-run passed')
+    expect(screen.queryByTestId('prompter-edit-dry-run-errors')).not.toBeInTheDocument()
+  })
+
+  it('dry-runs the saved Step 5 proposal against its actual source block sequence', async () => {
+    const sourceTexts = [
+      'The imperfect subjunctive appears after past-tense expressions of wishes, emotions, requests, and doubts',
+      'The main clause is in the past, so the subjunctive clause shifts to the imperfect subjunctive',
+      'Read the examples in order',
+      'Quería que vinieras',
+      'means "I wanted you to come',
+      'Esperaba que estuvieras bien',
+      'means "I hoped you were well',
+      'Dudaba que fuera verdad',
+      'means "I doubted that it was true',
+      'Me alegraba de que estuvieras aquí',
+      'means "I was glad that you were here',
+      '"',
+      'The main clause tells the feeling or wish, and the subjunctive clause after que gives the content',
+      'The past tense in the main clause triggers the imperfect subjunctive',
+    ]
+    const proposalBlocks = [
+      [
+        'The imperfect subjunctive appears after past-tense expressions of wishes, emotions, requests, and doubts.',
+        'en',
+      ],
+      [
+        'The main clause is in the past, so the subjunctive clause shifts to the imperfect subjunctive.',
+        'en',
+      ],
+      ['Read the examples in order.', 'en'],
+      ['Quería que vinieras.', 'es'],
+      ['means "I wanted you to come."', 'en'],
+      ['Esperaba que estuvieras bien.', 'es'],
+      ['means "I hoped you were well."', 'en'],
+      ['Dudaba que fuera verdad.', 'es'],
+      ['means "I doubted that it was true."', 'en'],
+      ['Me alegraba de que estuvieras aquí.', 'es'],
+      ['means "I was glad that you were here."', 'en'],
+      ['The main clause tells the feeling or wish, and the subjunctive clause after', 'en'],
+      ['"que"', 'es'],
+      ['gives the content.', 'en'],
+      ['The past tense in the main clause triggers the imperfect subjunctive.', 'en'],
+    ] as const
+    const content = `\`\`\`prompter-edit\n${JSON.stringify({
+      slideId: 'slide-1',
+      blocks: proposalBlocks.map(([text, language]) => ({ text, language })),
+    })}\n\`\`\``
+    renderProposal(
+      content,
+      vi.fn(),
+      sourceTexts.map((text, index) => ({ id: `step-5-part-${index}`, text })),
+    )
+    const user = userEvent.setup()
+
+    await user.click(screen.getByTestId('prompter-edit-dry-run'))
+
+    expect(screen.getByRole('status')).toHaveTextContent('Dry-run passed')
+    expect(screen.queryByTestId('prompter-edit-dry-run-errors')).not.toBeInTheDocument()
+  })
+
   it('rejects a truncated proposal that omits spoken words', async () => {
     const response = JSON.parse(
       editResponse(['part-1']).match(/```prompter-edit\s*([\s\S]*?)```/)![1],
