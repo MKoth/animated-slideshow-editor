@@ -112,6 +112,10 @@ export const IMPROVE_SCRIPT_PROMPT =
   'it supports. Even when the board already holds content but the narration moves to something unrelated, keep ' +
   'the board alive with full transient phrases appearing and disappearing in sync with the spoken words — one ' +
   'complete idea at a time, wiped or faded before the next, never piling up or obscuring important visuals. ' +
+  'Size every such on-screen phrase large and readable: create it with a large fontSize (at least 32, larger ' +
+  'when the available board space allows, e.g. up to 40 for short phrases), centered alignment, and keep it ' +
+  'inside the camera visible area without clipping or covering important visuals — never emit tiny ' +
+  'hard-to-read text. ' +
   'Never split a studied-language phrase: when the narrator pronounces a phrase in the studied language, show that ' +
   'whole phrase intact, never only part of it. Prompter blocks can overlap: when a later block overlaps and its end is ' +
   "later than the current block's end, the current block effectively ends at the later block's start; " +

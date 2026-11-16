@@ -126,6 +126,9 @@ describe('script assistant prompts', () => {
     expect(IMPROVE_SCRIPT_PROMPT).toContain('full informative phrase')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('never keywords or fragments')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('Never split a studied-language phrase')
+    // Transient filler phrases must stay large and readable, never tiny.
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('at least 32')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('never emit tiny')
   })
 
   it('error fix prompt lists each error with its position', () => {

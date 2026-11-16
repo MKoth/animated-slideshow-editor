@@ -168,6 +168,9 @@ def test_script_prompt_keeps_blackboard_alive_during_narration() -> None:
     assert "full informative phrase" in lowered
     assert "never keywords or fragments" in lowered
     assert "never split a studied-language phrase" in lowered
+    # Transient filler phrases must stay large and readable, never tiny.
+    assert "at least 32" in lowered
+    assert "never emit tiny" in lowered
 
 
 def test_script_prompt_teaches_table_row_heights() -> None:
