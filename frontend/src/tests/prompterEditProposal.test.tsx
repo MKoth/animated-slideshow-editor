@@ -6,11 +6,17 @@ import { EngineContext, type EngineContextValue } from '../app/engineContext'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 
-function renderProposal(content: string, onFix = vi.fn()) {
+function renderProposal(
+  content: string,
+  onFix = vi.fn(),
+  parts: Array<{ id: string; text: string }> = [{ id: 'part-1', text: 'Hello mundo' }],
+) {
   const engine = createEngineInternal()
   engine.createProject({ name: 'TTS test' })
   const slide = engine.createSlide('Intro')
-  engine.createPrompterPart(slide.id, { id: 'part-1', text: 'Hello mundo', duration: 1.1 })
+  for (const part of parts) {
+    engine.createPrompterPart(slide.id, { ...part, duration: 1.1 })
+  }
   const undoStack = new UndoStack()
   const dispatcher = new CommandDispatcher(engine, undoStack, () => undefined)
   const value: EngineContextValue = {
@@ -74,6 +80,23 @@ describe('Prompter edit proposal local dry-run', () => {
 
     expect(screen.getByTestId('prompter-edit-dry-run')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Dry-run passed')
+  })
+
+  it('keeps punctuation-only source blocks in order during dry-run attribution', async () => {
+    const response = JSON.parse(
+      editResponse(['part-1']).match(/```prompter-edit\s*([\s\S]*?)```/)![1],
+    )
+    renderProposal(`\`\`\`prompter-edit\n${JSON.stringify(response)}\n\`\`\``, vi.fn(), [
+      { id: 'part-1', text: 'Hello' },
+      { id: 'part-quote', text: '"' },
+      { id: 'part-2', text: 'mundo' },
+    ])
+    const user = userEvent.setup()
+
+    await user.click(screen.getByTestId('prompter-edit-dry-run'))
+
+    expect(screen.getByRole('status')).toHaveTextContent('Dry-run passed')
+    expect(screen.queryByTestId('prompter-edit-dry-run-errors')).not.toBeInTheDocument()
   })
 
   it('rejects a truncated proposal that omits spoken words', async () => {

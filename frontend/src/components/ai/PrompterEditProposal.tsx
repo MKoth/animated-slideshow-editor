@@ -94,17 +94,34 @@ function mapBlocksToLiveSources(
 ): Proposal {
   const sourceRanges: Array<{ id: string; start: number; end: number }> = []
   let sourceCursor = 0
-  for (const part of liveParts) {
+  for (let index = 0; index < liveParts.length; index += 1) {
+    const part = liveParts[index]!
     const end = sourceCursor + spokenWords(part.text).length
     sourceRanges.push({ id: part.id, start: sourceCursor, end })
     sourceCursor = end
   }
 
+  // Punctuation-only source parts (for example a detached closing quote) have
+  // no spoken-word range. Keep them attributable by attaching each to the next
+  // spoken source part, or to the previous one when it trails the slide.
+  const attributedRanges = sourceRanges.map((range, index) => {
+    if (range.start !== range.end) return range
+    const next = sourceRanges
+      .slice(index + 1)
+      .find((candidate) => candidate.start !== candidate.end)
+    const previous = sourceRanges
+      .slice(0, index)
+      .reverse()
+      .find((candidate) => candidate.start !== candidate.end)
+    const anchor = next ?? previous
+    return anchor ? { ...range, start: anchor.start, end: anchor.end } : range
+  })
+
   let outputCursor = 0
   const blocks = proposal.blocks.map((block) => {
     const wordCount = spokenWords(block.text).length
     const end = outputCursor + wordCount
-    const sourcePartIds = sourceRanges
+    const sourcePartIds = attributedRanges
       .filter((range) => range.start < end && range.end > outputCursor)
       .map((range) => range.id)
     outputCursor = end
