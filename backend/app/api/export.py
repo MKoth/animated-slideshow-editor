@@ -251,6 +251,19 @@ EXPECTED_CONCAT = "concat demuxer"
 _ATRIM_END_RE = re.compile(r"atrim\s*=\s*end\s*=\s*([0-9]+(?:\.[0-9]+)?)")
 
 
+def _fmt_sec(value: float) -> str:
+    """Format seconds for FFmpeg duration options.
+
+    FFmpeg's duration parser rejects scientific notation, but Python's
+    ``str(float)`` emits it for tiny values (e.g. ``str(2.26e-05)`` gives
+    ``'2.26e-05'``). That happens for ``room = slide_duration -
+    timeline_start`` when a clip starts ~microseconds before the slide end,
+    producing ``atrim=end=2.26e-05`` and ``ffmpeg failed (234)``. Fixed-point
+    never uses exponents; 6 decimals is 1us, sample-accurate at 48 kHz.
+    """
+    return f"{max(0.0, float(value)):.6f}"
+
+
 def _has_matching_atrim(text: str | None, duration: float) -> bool:
     """Numeric atrim check: accepts `35` and `35.0` as equal."""
     if not text:
@@ -653,7 +666,7 @@ def _clip_audio_filter(
     source_end = float(clip.get("sourceEnd", source_start) or source_start)
     timeline_start = float(clip.get("timelineStart", 0) or 0)
     parts = [
-        f"atrim=start={source_start}:end={source_end}",
+        f"atrim=start={_fmt_sec(source_start)}:end={_fmt_sec(source_end)}",
         "asetpts=PTS-STARTPTS",
         "aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000",
     ]
@@ -691,7 +704,7 @@ def _clip_audio_filter(
         # Stored fades are source seconds (preview divides by playbackRate);
         # the chain below already applied tempo, so convert to playback seconds.
         fade_in_pb = fade_in / rate if rate else fade_in
-        parts.append(f"afade=t=in:st=0:d={fade_in_pb}")
+        parts.append(f"afade=t=in:st=0:d={_fmt_sec(fade_in_pb)}")
     if isinstance(fade_out, (int, float)) and fade_out / (rate or 1.0) > 1e-6:
         fade_out_pb = fade_out / rate if rate else fade_out
         src_dur = max(0.0, source_end - source_start)
@@ -699,7 +712,7 @@ def _clip_audio_filter(
         room = max(0.0, slide_duration - timeline_start)
         trimmed_pb = min(playback_dur, room)
         st_out = max(0.0, trimmed_pb - fade_out_pb)
-        parts.append(f"afade=t=out:st={st_out}:d={fade_out_pb}")
+        parts.append(f"afade=t=out:st={_fmt_sec(st_out)}:d={_fmt_sec(fade_out_pb)}")
     delay_ms = max(0, round(timeline_start * 1000))
     # Trim the clip to what fits before the slide end (no bleed tails),
     # measured in playback seconds after tempo. This must happen BEFORE
@@ -711,7 +724,7 @@ def _clip_audio_filter(
     # segment that the mix stage pads to silence (matches preview, which
     # skips zero-length clips).
     room = max(0.0, slide_duration - timeline_start)
-    parts.append(f"atrim=end={room}")
+    parts.append(f"atrim=end={_fmt_sec(room)}")
     parts.append(f"adelay={delay_ms}|{delay_ms}")
     return ",".join(parts), True
 
@@ -772,14 +785,14 @@ def _build_slide_audio(
         labels = "[sil]" + "".join(f"[c{idx}]" for idx in range(len(clips)))
         filter_parts.append(
             f"{labels}amix=inputs={len(clips) + 1}:duration=longest:dropout_transition=0:normalize=0,"
-            f"atrim=end={duration},apad=whole_dur={duration},asetpts=PTS-STARTPTS[mix]"
+            f"atrim=end={_fmt_sec(duration)},apad=whole_dur={_fmt_sec(duration)},asetpts=PTS-STARTPTS[mix]"
         )
         filter_parts.append(
             "[mix]aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=stereo[out]"
         )
     else:
         filter_parts.append(
-            f"[0:a]{chains[0]},apad=whole_dur={duration},"
+            f"[0:a]{chains[0]},apad=whole_dur={_fmt_sec(duration)},"
             "aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=stereo[out]"
         )
     _run_ffmpeg(

@@ -469,8 +469,8 @@ def test_fade_out_starts_at_clip_end() -> None:
     chain, _ = export_module._clip_audio_filter(clip, 4.0, False)
     # Regression: st=0 muted everything past the fade duration in export
     # while the editor preview faded only at the end.
-    assert "afade=t=out:st=1.5:d=0.5" in chain
-    assert "afade=t=out:st=0:" not in chain
+    assert "afade=t=out:st=1.500000:d=0.500000" in chain
+    assert "afade=t=out:st=0.000000:" not in chain
 
 
 def test_ignores_sub_microsecond_fades_ffmpeg_cannot_represent() -> None:
