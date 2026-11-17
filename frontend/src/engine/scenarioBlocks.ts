@@ -167,3 +167,62 @@ export function splitScenarioDocBlocks(markdown: string): string[] {
     })
     .filter((block) => block.trim() !== '')
 }
+
+const STEP_HEADING_BLOCK_RE = /^\s*##\s+Step\b/i
+const VISUAL_IMAGE_BLOCK_RE = /!\[[^\]]*\]\(\s*asset:[^)\s]+\s*\)/i
+const VISUAL_META_BLOCK_RE = /^\s*(>\s*Brief:|>\s*Label:|<!--\s*reuse:|>\s*Reuse:)/i
+const PLACE_BLOCK_RE = /^\s*\[place:\s*(.+?)\s*\]\s*$/i
+
+function normalizeBlockKey(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase().replace(/ /g, '-')
+}
+
+/**
+ * Deletion range for one rendered block index (inclusive start/end).
+ *
+ * Single-block deletes are exact except for two semantic units that never
+ * survive alone:
+ * - a `## Step N` heading deletes the whole step (heading through the last
+ *   block before the next step heading), otherwise the orphaned body merges
+ *   into the previous step on the next parse and the section "comes back".
+ * - a visual image `![alt](asset:slug)` deletes its attached meta lines
+ *   (`> Brief:` / `> Label:` / reuse) plus an immediately following
+ *   `[place: slug]` for the same slug, otherwise the visual (or a dangling
+ *   place) survives the delete and reappears in HTML/script prompt blocks.
+ */
+export function getScenarioBlockDeletionRange(
+  blocks: readonly string[],
+  blockIndex: number,
+): { readonly start: number; readonly end: number } {
+  if (blockIndex < 0 || blockIndex >= blocks.length) return { start: blockIndex, end: blockIndex }
+  const head = (blocks[blockIndex] ?? '').trim()
+  if (STEP_HEADING_BLOCK_RE.test(head)) {
+    let end = blockIndex
+    for (let i = blockIndex + 1; i < blocks.length; i += 1) {
+      if (STEP_HEADING_BLOCK_RE.test((blocks[i] ?? '').trim())) break
+      end = i
+    }
+    return { start: blockIndex, end }
+  }
+  const visualMatch = VISUAL_IMAGE_BLOCK_RE.exec(blocks[blockIndex] ?? '')
+  if (visualMatch) {
+    const slugMatch = /\(\s*asset:([^)\s]+)\s*\)/i.exec(blocks[blockIndex] ?? '')
+    const visualKey = normalizeBlockKey(slugMatch?.[1] ?? '')
+    let end = blockIndex
+    for (let i = blockIndex + 1; i < blocks.length; i += 1) {
+      const next = (blocks[i] ?? '').trim()
+      if (VISUAL_META_BLOCK_RE.test(next)) {
+        end = i
+        continue
+      }
+      const placeMatch = PLACE_BLOCK_RE.exec(next)
+      if (placeMatch && visualKey !== '' && normalizeBlockKey(placeMatch[1] ?? '') === visualKey) {
+        end = i
+        continue
+      }
+      break
+    }
+    return { start: blockIndex, end }
+  }
+  return { start: blockIndex, end: blockIndex }
+}

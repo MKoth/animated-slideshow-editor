@@ -22,7 +22,7 @@ import {
   encodeScenarioPortableZip,
 } from '../../engine/scenarioPortableZip'
 import { normalizeAssetKey, parseScenarioMarkdown } from '../../engine/scenarioMarkdown'
-import { splitScenarioDocBlocks } from '../../engine/scenarioBlocks'
+import { getScenarioBlockDeletionRange, splitScenarioDocBlocks } from '../../engine/scenarioBlocks'
 import { planScenarioDraft } from '../../ai/scenarioPlanner'
 import { resolveForeignWords } from '../../ai/scenarioPromptSplit'
 import {
@@ -819,8 +819,22 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
     explicitAcceptedVersionId !== null
       ? versionsForState.find((v) => v.id === explicitAcceptedVersionId)?.content
       : undefined
+  // Default must track the latest draft (the active server version), never a
+  // portable-only Generate snapshot: portable snapshots sort after server
+  // versions in the combined list, so `combined[combined.length - 1]` can be
+  // an older render source shadowing a newer draft delete. Active first, then
+  // latest server, then last combined (portable-only offline case).
+  const activeDraftContent =
+    activeMarkdownVersionId !== null
+      ? versionsForState.find((v) => v.id === activeMarkdownVersionId)?.content
+      : undefined
+  const latestServerVersion =
+    markdownVersions.length > 0 ? markdownVersions[markdownVersions.length - 1] : undefined
   const latestFallback =
-    versionsForState.length > 0 ? versionsForState[versionsForState.length - 1] : undefined
+    activeDraftContent !== undefined && activeMarkdownVersionId !== null
+      ? { id: activeMarkdownVersionId, content: activeDraftContent }
+      : (latestServerVersion ??
+        (versionsForState.length > 0 ? versionsForState[versionsForState.length - 1] : undefined))
   // Dangling explicit pins never fall back: a pinned id that no longer resolves
   // keeps blocking Generate and marks the preview stale instead of silently
   // switching source under the user.
@@ -840,6 +854,21 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
   )
   const scriptUnboundCount = getScenarioUnboundCount(acceptedRows)
   const scriptGenerateBlocked = hasAcceptedSnapshot && isScenarioGenerateBlocked(acceptedRows)
+
+  // Draft-vs-accepted divergence: manual block/section deletes create new draft
+  // versions but never move the pinned accepted snapshot, so the script keeps
+  // planning the deleted content until the draft is accepted. Surface it next
+  // to Generate Script instead of silently restoring deletions in prompt blocks.
+  const latestDraftContent =
+    activeDraftContent ?? latestServerVersion?.content ?? (markdown !== '' ? markdown : undefined)
+  const latestDraftVersionId =
+    activeMarkdownVersionId ?? latestServerVersion?.id ?? latestFallback?.id ?? null
+  const draftDivergedFromAccepted =
+    explicitAcceptedVersionId !== null &&
+    hasAcceptedSnapshot &&
+    latestDraftContent !== undefined &&
+    acceptedContent !== undefined &&
+    latestDraftContent !== acceptedContent
 
   // Live plan inputs: a stored workflow is only reused while these still
   // match (reading speed, split chars, bindings). An accepted-version change
@@ -1572,6 +1601,20 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
             </button>
           </div>
         )}
+        {draftDivergedFromAccepted && (
+          <div data-testid="ai-scenario-script-draft-diverged-hint">
+            Doc has newer edits (including deletions) not in accepted{' '}
+            {explicitAcceptedVersionId!.slice(0, 8)} — script still uses the accepted snapshot.
+            Accept latest {latestDraftVersionId ? latestDraftVersionId.slice(0, 8) : ''} in History,
+            then Regenerate Script, or deletions will keep coming back as prompt blocks.
+            <button
+              data-testid="ai-scenario-script-open-history-diverged"
+              onClick={() => store.setScenarioTab('history')}
+            >
+              Open History
+            </button>
+          </div>
+        )}
         <div data-testid="ai-scenario-modal-tabs">
           <button
             data-testid="ai-scenario-modal-tab-doc"
@@ -1788,8 +1831,15 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
                       if (!conversationId) return
                       const blocks = [...scenarioBlocks]
                       if (blockIndex < 0 || blockIndex >= blocks.length) return
-                      blocks.splice(blockIndex, 1)
-                      const content = blocks.join('\n\n')
+                      // Semantic delete: a Step heading removes its whole step and
+                      // a visual removes its brief/label/reuse (+ matching place),
+                      // otherwise the orphaned remainder reparses and "comes back".
+                      const range = getScenarioBlockDeletionRange(blocks, blockIndex)
+                      blocks.splice(range.start, range.end - range.start + 1)
+                      const content =
+                        blocks.length > 0
+                          ? blocks.join('\n\n')
+                          : '# Lesson\n\n## Step 1 — Empty\n\n**Narrator:** Placeholder.'
                       const touchedSteps = [...content.matchAll(/^##\s+Step\s+(\d+)/gim)]
                         .map((match) => Number.parseInt(match[1] ?? '', 10))
                         .filter(Number.isFinite)
@@ -1896,6 +1946,7 @@ export function AiScenarioModal({ projectId, conversationId, context }: AiScenar
               </div>
               <AiScenarioChecklist
                 projectId={projectId}
+                conversationId={conversationId}
                 onMutated={() => setScenarioRev((n) => n + 1)}
               />
             </div>

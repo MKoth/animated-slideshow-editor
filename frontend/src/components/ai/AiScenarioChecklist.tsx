@@ -9,12 +9,14 @@ import {
   updateScenarioBrief,
   type ScenarioChecklistRow,
 } from '../../engine/scenarioChecklist'
+import { parseScenarioMarkdown } from '../../engine/scenarioMarkdown'
 import { withScenarioBindings, withScenarioMarkdown } from '../../engine/scenarioSection'
 import { useAiStore } from '../../stores/aiStore'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 
 interface AiScenarioChecklistProps {
   projectId: string
+  conversationId?: string | null
   onMutated?: () => void
 }
 
@@ -26,7 +28,11 @@ interface AiScenarioChecklistProps {
  * unblocks. Each row resolves in one click: bind select, file upload, or
  * brief save all write via plain `project.setScenario` (no engine history).
  */
-export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklistProps) {
+export function AiScenarioChecklist({
+  projectId,
+  conversationId,
+  onMutated,
+}: AiScenarioChecklistProps) {
   const engine = useContext(EngineContext)?.engine
   const persistence = useContext(EngineContext)?.persistence
   const missingOnly = useAiStore((s) => s.scenarioMissingOnly ?? false)
@@ -168,10 +174,47 @@ export function AiScenarioChecklist({ projectId, onMutated }: AiScenarioChecklis
     const draft = briefDrafts[row.key] ?? row.brief ?? ''
     const current = engine.project.scenario
     const nextMarkdown = updateScenarioBrief(current.currentMarkdown, row.key, draft)
+    if (nextMarkdown === current.currentMarkdown) return
+    // Optimistic portable update keeps the Doc/HTML live (existing behaviour).
     engine.project.setScenario(withScenarioMarkdown(current, nextMarkdown))
     refreshChecklist((n) => n + 1)
     onMutated?.()
     persistScenario()
+    // Persist as a server version so the edit propagates to History and to
+    // Generate Script (which reads server versions, never the portable-only
+    // markdown). Without this the brief shows in HTML but the script keeps
+    // planning the old text, and the next server sync wipes the portable edit.
+    if (!conversationId) return
+    const state = useAiStore.getState()
+    if (state.markdownBusy) return
+    const touched = (() => {
+      try {
+        const parsed = parseScenarioMarkdown(nextMarkdown)
+        const steps = parsed.steps
+          .filter((s) => s.visuals.some((v) => v.key === row.key))
+          .map((s) => s.index)
+        if (steps.length > 0) return steps
+        return parsed.steps.map((s) => s.index)
+      } catch {
+        return [] as number[]
+      }
+    })()
+    void (async () => {
+      try {
+        await state.api.createMarkdownVersion({
+          projectId,
+          conversationId,
+          content: nextMarkdown,
+          summary: 'Manual brief edit',
+          touchedSteps: touched,
+          baseVersionId: state.activeMarkdownVersionIdByProject[projectId] ?? null,
+        })
+        await state.loadMarkdownVersions(projectId, conversationId)
+        state.bumpScenarioDocRev(projectId)
+      } catch {
+        // Portable edit stays visible; the version retry happens on the next save.
+      }
+    })()
   }
 
   const handleCopyPrompt = async (row: ScenarioChecklistRow) => {
