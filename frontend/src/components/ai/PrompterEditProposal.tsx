@@ -328,7 +328,7 @@ export function PrompterEditProposal({
     try {
       const commands = buildCommands()
       const snapshot = toLessonJSON(engine.project!, engine.clips, engine.clipCollections)
-      const result = validateAndApplyInOrder(snapshot, commands)
+      const result = validateAndApplyInOrder(snapshot, commands, engine)
       if (!result.ok) {
         setDryRunErrors([
           `Command ${result.failure.failedStep + 1} (${result.failure.phase}): ${result.failure.message}`,

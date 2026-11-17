@@ -110,7 +110,12 @@ export function AiAnimationAssetPreview({
           previews.push({ id: previewId, name: operation.clip.name, parentNodeId })
         }
       }
-      return { engine: createIsolatedPreviewEngine(candidate), previews, error: null, revision }
+      return {
+        engine: createIsolatedPreviewEngine(candidate, engine),
+        previews,
+        error: null,
+        revision,
+      }
     } catch (error) {
       return {
         engine: null,

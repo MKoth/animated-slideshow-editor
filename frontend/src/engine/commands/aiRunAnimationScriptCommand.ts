@@ -37,13 +37,13 @@ export class AiRunAnimationScriptCommand implements Command<AiRunAnimationScript
   }
 
   validate(engine: Engine): void {
-    this.#buildCandidate(engine.toJSON())
+    this.#buildCandidate(engine.toJSON(), engine)
   }
 
   execute(engine: Engine): AiRunAnimationScriptInverse {
     const before = structuredClone(engine.toJSON())
     const activeSlideId = engine.activeSlideId
-    const after = this.#buildCandidate(before)
+    const after = this.#buildCandidate(before, engine)
     engine.applyLessonSnapshot(after, activeSlideId)
     return { before, after, activeSlideId }
   }
@@ -52,9 +52,41 @@ export class AiRunAnimationScriptCommand implements Command<AiRunAnimationScript
     return { type: this.type, ...this.parameters }
   }
 
-  #buildCandidate(source: LessonJSON): LessonJSON {
+  #buildCandidate(
+    source: LessonJSON,
+    library?: {
+      readonly assetDefinitions: readonly { readonly id: string; readonly name: string }[]
+      readonly materialDefinitions: readonly {
+        readonly id: string
+        readonly name: string
+        readonly parameters?: readonly unknown[]
+        readonly shaderId?: string | null
+      }[]
+    },
+  ): LessonJSON {
     const preview = createEngineInternal()
     preview.restoreFromJSON(structuredClone(source))
+    if (library) {
+      for (const definition of library.assetDefinitions) {
+        try {
+          preview.registerAssetDefinition(definition.id, definition.name)
+        } catch {
+          // Tolerate a malformed mirror entry; the compile will report it.
+        }
+      }
+      for (const definition of library.materialDefinitions) {
+        try {
+          preview.registerMaterialDefinition(
+            definition.id,
+            definition.name,
+            (definition.parameters ?? []) as never,
+            definition.shaderId ?? null,
+          )
+        } catch {
+          // Same tolerance as assets above.
+        }
+      }
+    }
     const undoStack = new UndoStack()
     const dispatcher = new CommandDispatcher(preview, undoStack, () => undefined)
     const dispatchRun = ((command: Command<unknown>) =>

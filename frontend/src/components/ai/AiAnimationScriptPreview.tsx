@@ -49,7 +49,7 @@ function buildFrames(
   revision: string,
 ): { frames: SceneFrame[]; error: string | null; revision: string } {
   try {
-    const built = createAnimationScriptPreview(sourceEngine.toJSON(), slideId, source)
+    const built = createAnimationScriptPreview(sourceEngine.toJSON(), slideId, source, sourceEngine)
     if (!built.engine) {
       return { frames: [], error: built.error ?? 'Could not build the scene preview.', revision }
     }

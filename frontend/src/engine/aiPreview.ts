@@ -3,11 +3,56 @@ import type { LessonJSON } from './json'
 import { AiRunAnimationScriptCommand } from './commands/aiRunAnimationScriptCommand'
 import type { Command } from './commands/command'
 import { createEngineInternal, toReadOnly } from './internal'
+import type { Engine } from './internal'
+
+/** Library name mirror a scratch engine needs to resolve `create asset` / `material()`. */
+export interface LibraryMirror {
+  readonly assetDefinitions: readonly { readonly id: string; readonly name: string }[]
+  readonly materialDefinitions: readonly {
+    readonly id: string
+    readonly name: string
+    readonly parameters?: readonly unknown[]
+    readonly shaderId?: string | null
+  }[]
+}
+
+/** Copy the live library name mirror into a scratch engine seeded from LessonJSON. */
+export function seedLibraryMirror(target: Engine, source: EnginePublic | LibraryMirror): void {
+  for (const definition of source.assetDefinitions) {
+    try {
+      target.registerAssetDefinition(definition.id, definition.name)
+    } catch {
+      // A malformed mirror entry must never block a dry-run.
+    }
+  }
+  for (const definition of source.materialDefinitions) {
+    try {
+      const ref = definition as {
+        readonly id: string
+        readonly name: string
+        readonly parameters?: readonly unknown[]
+        readonly shaderId?: string | null
+      }
+      target.registerMaterialDefinition(
+        ref.id,
+        ref.name,
+        (ref.parameters ?? []) as never,
+        ref.shaderId ?? null,
+      )
+    } catch {
+      // Same tolerance as assets above.
+    }
+  }
+}
 
 /** Create a disposable, read-only engine for visualizing a candidate LessonJSON. */
-export function createIsolatedPreviewEngine(snapshot: LessonJSON): EnginePublic {
+export function createIsolatedPreviewEngine(
+  snapshot: LessonJSON,
+  library?: EnginePublic | LibraryMirror,
+): EnginePublic {
   const engine = createEngineInternal()
   engine.restoreFromJSON(structuredClone(snapshot))
+  if (library) seedLibraryMirror(engine, library)
   return toReadOnly(engine)
 }
 
@@ -27,9 +72,11 @@ export interface ScratchDryRunFailure {
 export function validateAndApplyInOrder(
   snapshot: LessonJSON,
   commands: readonly Command<unknown>[],
+  library?: EnginePublic | LibraryMirror,
 ): { ok: true } | { ok: false; failure: ScratchDryRunFailure } {
   const engine = createEngineInternal()
   engine.restoreFromJSON(structuredClone(snapshot))
+  if (library) seedLibraryMirror(engine, library)
   for (let step = 0; step < commands.length; step++) {
     const command = commands[step]!
     try {
@@ -65,10 +112,12 @@ export function createAnimationScriptPreview(
   snapshot: LessonJSON,
   slideId: string,
   source: string,
+  library?: EnginePublic | LibraryMirror,
 ): { engine: EnginePublic | null; error: string | null } {
   try {
     const engine = createEngineInternal()
     engine.restoreFromJSON(structuredClone(snapshot))
+    if (library) seedLibraryMirror(engine, library)
     new AiRunAnimationScriptCommand({ slideId, source }).execute(engine)
     return { engine: toReadOnly(engine), error: null }
   } catch (error) {

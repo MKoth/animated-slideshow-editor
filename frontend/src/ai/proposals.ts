@@ -867,6 +867,7 @@ export function dryRunValidate(
     const result = validateAndApplyInOrder(
       structuredClone(engine.toJSON()) as LessonJSON,
       built.map((entry) => entry.command),
+      engine,
     )
     if (!result.ok) {
       const failed = built[result.failure.failedStep]!

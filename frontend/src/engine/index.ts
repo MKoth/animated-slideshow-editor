@@ -7,7 +7,7 @@ export {
   createAnimationScriptPreview,
   validateAndApplyInOrder,
 } from './aiPreview'
-export type { ScratchDryRunFailure } from './aiPreview'
+export type { ScratchDryRunFailure, LibraryMirror } from './aiPreview'
 export type { EnginePublic, BlankProjectResult }
 export type { EngineEvent } from './events'
 export type { SlideActivated } from './events'
