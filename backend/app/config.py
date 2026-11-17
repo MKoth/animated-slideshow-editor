@@ -507,7 +507,8 @@ DEFAULT_SCRIPT_SYSTEM_PROMPT = (
     "something unrelated, keep the board alive with full transient phrases appearing and disappearing in sync with the spoken words — "
     "one complete idea at a time, wiped or faded before the next, never piling up or obscuring important visuals. "
     "Size every such on-screen phrase large and readable: create it with a large fontSize (at least 32, larger "
-    "when the available board space allows, e.g. up to 40 for short phrases), centered alignment, and keep it "
+    'when the available board space allows, e.g. up to 40 for short phrases), with `alignment: "center"` '
+    "(the exact text property name is `alignment`, never `align`), and keep it "
     "inside the camera visible area without clipping or covering important visuals — never emit tiny "
     "hard-to-read text. "
     "Never split a studied-language phrase: when the narrator pronounces a phrase in the studied language, show that whole phrase intact, never only part of it. "
