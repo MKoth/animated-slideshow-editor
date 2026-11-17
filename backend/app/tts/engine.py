@@ -7,6 +7,7 @@ import math
 import struct
 import threading
 import wave
+from pathlib import Path
 from typing import Any, Protocol
 
 # ---------------------------------------------------------------------------
@@ -372,6 +373,7 @@ class CartesiaTtsEngine:
         instruction: str | None = None,
         params: dict[str, object] | None = None,
         locale: str | None = None,
+        history_dir: Path | None = None,
     ) -> dict[str, object]:
         """One continuous Cartesia SSE generation split into per-block WAVs.
 
@@ -409,6 +411,7 @@ class CartesiaTtsEngine:
             emotion=emotion,
             speed=speed,
             volume=volume,
+            history_dir=history_dir,
         )
         boundaries: list[BlockBoundary] = []
         for s in segments:

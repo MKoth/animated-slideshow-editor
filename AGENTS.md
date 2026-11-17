@@ -25,3 +25,7 @@ When presenting design choices or multiple-option decisions to the user, always 
 Run only related tests during development (e.g. `npm run test --prefix frontend -- <pattern> --run`). The `husky` pre-commit hook runs `lint-staged` → `vitest run` / `pytest` over the staged files, so it does not exercise the whole suite; avoid running the entire suite locally unless needed.
 
 The full frontend suite has a known OOM: `frontend/src/tests/meshGenerationSection.test.tsx` exhausts its vitest worker, so the tail of its tests never run and the run exits 1 with `Worker exited unexpectedly`. It reproduces on `main` and in isolation (a larger heap only delays it) — judge a full-suite run by its failures, not its exit code. The tally survives the crash: `npm run test --prefix frontend -- --run --reporter=json --outputFile=/tmp/vitest.json`, green when `numFailedTests` is 0.
+
+### Cartesia TTS history
+
+When diagnosing or changing Cartesia timestamped TTS, read `backend/app/tts/alignment_log.py`, `backend/app/tts/cartesia.py`, and the related tests in `backend/app/tests/test_tts_timestamps.py`. Every Cartesia SSE attempt must persist the exact request text and non-audio response JSON (including word timestamps), on both success and failure, to the rotating `<DATA_DIR>/tts_cartesia_history.jsonl`; audio payloads must not be persisted. Inspect this history before asking the user to repeat a paid request. Keep alignment-failure diagnostics in the same data directory and regression-test the saved request/response details.

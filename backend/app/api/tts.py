@@ -1182,12 +1182,24 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
                 ],
             )
         except (TimestampMappingError, ValueError) as e:
+            if isinstance(e, TimestampMappingError) and e.diagnostic:
+                from app.tts.alignment_log import log_alignment_failure
+
+                settings = getattr(request.app.state, "settings", None)
+                data_dir = getattr(settings, "data_dir", None)
+                if isinstance(data_dir, (str, Path)):
+                    log_alignment_failure(Path(data_dir), error=str(e), diagnostic=e.diagnostic)
             raise HTTPException(status_code=422, detail=str(e)) from e
         if not hasattr(engine, "generate_with_timestamps"):
             raise HTTPException(
                 status_code=422,
                 detail="timestamp-based segmentation is supported only for Cartesia",
             )
+        history_dir = getattr(settings, "data_dir", None)
+        if not isinstance(history_dir, (str, Path)):
+            from app.config import DEFAULT_DATA_DIR
+
+            history_dir = DEFAULT_DATA_DIR
         async with _tts_lock:
             await asyncio.sleep(0.01)
             try:
@@ -1200,6 +1212,7 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
                     effective_instruction,
                     effective_params,
                     effective_locale,
+                    Path(history_dir),
                 )
             except HTTPException:
                 raise
@@ -1213,6 +1226,14 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
                 if isinstance(exc, CartesiaError):
                     raise HTTPException(status_code=503, detail=str(exc)) from exc
                 if isinstance(exc, TimestampMappingError):
+                    from app.tts.alignment_log import log_alignment_failure
+
+                    settings = getattr(request.app.state, "settings", None)
+                    data_dir = getattr(settings, "data_dir", None)
+                    if isinstance(data_dir, (str, Path)):
+                        log_alignment_failure(
+                            Path(data_dir), error=str(exc), diagnostic=exc.diagnostic
+                        )
                     raise HTTPException(status_code=422, detail=str(exc)) from exc
                 if isinstance(exc, TimestampStreamError):
                     raise HTTPException(status_code=500, detail=str(exc)) from exc

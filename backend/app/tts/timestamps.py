@@ -34,16 +34,24 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import math
 import re
 import struct
 import unicodedata
 import wave
 from dataclasses import dataclass
+from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class TimestampMappingError(ValueError):
     """Word timestamps could not be confidently mapped to blocks."""
+
+    def __init__(self, message: str, *, diagnostic: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.diagnostic = diagnostic or {}
 
 
 class TimestampStreamError(RuntimeError):
@@ -92,7 +100,7 @@ ZERO_CROSSING_SEC = 0.002
 FADE_IN_SEC = 0.008
 FADE_OUT_SEC = 0.015
 
-_WORD_RE = re.compile(r"[^\W_]+(?:['’\-][^\W_]+)*", re.UNICODE)
+_WORD_RE = re.compile(r"[^\W_]+(?:['’\-/][^\W_]+)*", re.UNICODE)
 
 
 def normalize_word(word: str) -> str:
@@ -259,33 +267,135 @@ def map_words_to_blocks(
     sample ranges derived from word timestamps.
     """
     expected: list[str] = []
-    counts: list[int] = []
+    segment_tokens: list[list[str]] = []
+    raw_actual = [event.word for event in word_events]
+    actual_norm = [normalize_word(token) for token in raw_actual]
     for seg in segments:
-        toks = tokenize_words(seg.text)
-        if not toks:
-            raise TimestampMappingError(
-                f"segment {seg.id}: no mappable words (empty or punctuation-only)"
+        tokens = tokenize_words(seg.text)
+        segment_tokens.append(tokens)
+        expected.extend(tokens)
+
+    comparison_method = (
+        "tokenize_words(segment text), normalize_word(Cartesia token), ordered comparison; "
+        "slash compounds may match one token or slash-separated parts; punctuation-only "
+        "segments match their own punctuation timestamp"
+    )
+    counts: list[int] = []
+    actual_cursor = 0
+    mismatch: tuple[int, str, str, str] | None = None
+    for segment, tokens in zip(segments, segment_tokens):
+        segment_count = 0
+        if not tokens:
+            # A punctuation-only block (for example a sentence delimiter split
+            # into its own PrompterPart) maps to Cartesia's standalone punctuation
+            # event rather than being misclassified as an empty word block.
+            target_punctuation = unicodedata.normalize("NFKC", segment.text).strip()
+            while actual_cursor < len(word_events) and not actual_norm[actual_cursor]:
+                actual_punctuation = unicodedata.normalize(
+                    "NFKC", word_events[actual_cursor].word
+                ).strip()
+                segment_count += 1
+                if actual_punctuation == target_punctuation:
+                    actual_cursor += 1
+                    break
+                actual_cursor += 1
+            else:
+                mismatch = (actual_cursor, target_punctuation, "", "punctuation")
+            if segment_count == 0:
+                mismatch = (actual_cursor, target_punctuation, "", "punctuation")
+            counts.append(segment_count)
+            if mismatch:
+                break
+            continue
+
+        for expected_token in tokens:
+            # Cartesia can timestamp standalone punctuation between words. Keep
+            # those samples in the current block instead of shifting word mapping.
+            while actual_cursor < len(word_events) and not actual_norm[actual_cursor]:
+                segment_count += 1
+                actual_cursor += 1
+            if actual_cursor >= len(word_events):
+                mismatch = (actual_cursor, expected_token, "", "word")
+                break
+            actual_token = actual_norm[actual_cursor]
+            if expected_token == actual_token:
+                actual_cursor += 1
+                segment_count += 1
+            elif "/" in expected_token:
+                parts = [part for part in expected_token.split("/") if part]
+                if parts and actual_norm[actual_cursor : actual_cursor + len(parts)] == parts:
+                    actual_cursor += len(parts)
+                    segment_count += len(parts)
+                else:
+                    mismatch = (actual_cursor, expected_token, actual_token, "word")
+                    break
+            else:
+                mismatch = (actual_cursor, expected_token, actual_token, "word")
+                break
+        counts.append(segment_count)
+        if mismatch:
+            break
+
+    if mismatch is None and actual_cursor < len(word_events):
+        if all(not token for token in actual_norm[actual_cursor:]):
+            counts[-1] += len(word_events) - actual_cursor
+            actual_cursor = len(word_events)
+        else:
+            mismatch = (actual_cursor, "", actual_norm[actual_cursor], "word")
+
+    if mismatch:
+        index, expected_token, actual_token, mismatch_kind = mismatch
+        raw_token = raw_actual[index] if index < len(raw_actual) else "<missing>"
+        if mismatch_kind == "punctuation":
+            message = (
+                f"segment {segments[len(counts) - 1].id}: no matching Cartesia "
+                "punctuation timestamp"
             )
-        counts.append(len(toks))
-        expected.extend(toks)
-
-    actual_norm = [normalize_word(w.word) for w in word_events]
-    # Drop empty normalized Cartesia tokens (should not happen, but fail loudly).
-    if any(not t for t in actual_norm):
-        raise TimestampMappingError("Cartesia returned an empty word token")
-
-    if len(expected) != len(actual_norm):
-        raise TimestampMappingError(
-            f"word count mismatch: text has {len(expected)} words but Cartesia "
-            f"returned {len(actual_norm)} — cannot confidently map blocks"
+            comparison: dict[str, object] = {
+                "result": "punctuation_timestamp_mismatch",
+                "segmentId": segments[len(counts) - 1].id,
+                "expectedPunctuation": expected_token,
+                "cartesiaRawToken": raw_token,
+            }
+        elif not expected_token or not actual_token:
+            lexical_cartesia_count = sum(bool(token) for token in actual_norm)
+            message = (
+                f"word count mismatch: text has {len(expected)} words but Cartesia "
+                f"returned {lexical_cartesia_count} — cannot confidently map blocks"
+            )
+            comparison = {
+                "result": "word_count_mismatch",
+                "expectedCount": len(expected),
+                "cartesiaCount": lexical_cartesia_count,
+            }
+        else:
+            message = (
+                f"word {index} mismatch: text has {expected_token!r} but Cartesia "
+                f"returned {raw_token!r} — cannot confidently map blocks"
+            )
+            comparison = {
+                "result": "token_mismatch",
+                "firstMismatchIndex": index,
+                "expectedToken": expected_token,
+                "cartesiaNormalizedToken": actual_token,
+                "cartesiaRawToken": raw_token,
+            }
+        diagnostic = {
+            "comparisonMethod": comparison_method,
+            "expectedTextTokens": expected,
+            "cartesiaRawTokens": raw_actual,
+            "cartesiaNormalizedTokens": actual_norm,
+            "comparison": comparison,
+        }
+        logger.warning(
+            "Cartesia timestamp alignment mismatch: %s; expected_tokens=%r "
+            "cartesia_raw_tokens=%r cartesia_normalized_tokens=%r",
+            comparison,
+            expected,
+            raw_actual,
+            actual_norm,
         )
-    for i, (exp, act) in enumerate(zip(expected, actual_norm)):
-        if exp != act:
-            cartesia_raw = word_events[i].word
-            raise TimestampMappingError(
-                f"word {i} mismatch: text has {exp!r} but Cartesia returned "
-                f"{cartesia_raw!r} — cannot confidently map blocks"
-            )
+        raise TimestampMappingError(message, diagnostic=diagnostic)
 
     out: list[BlockSegmentPcmRange] = []
     cursor = 0

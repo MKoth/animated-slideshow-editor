@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 CARTESIA_API_BASE = "https://api.cartesia.ai"
@@ -304,6 +305,7 @@ def synthesize_cartesia_sse_with_timestamps(
     speed: float | None = None,
     volume: float | None = None,
     sample_rate: int = 44100,
+    history_dir: Path | None = None,
 ) -> tuple[bytes, list[dict[str, Any]], int]:
     """One continuous generation via POST /tts/sse with word timestamps.
 
@@ -337,6 +339,13 @@ def synthesize_cartesia_sse_with_timestamps(
     )
     import httpx
 
+    from app.tts.alignment_log import log_cartesia_response
+
+    if history_dir is None:
+        from app.config import DEFAULT_DATA_DIR
+
+        history_dir = Path(os.getenv("DATA_DIR", str(DEFAULT_DATA_DIR)))
+
     try:
         resp = httpx.post(
             f"{CARTESIA_API_BASE}/tts/sse",
@@ -347,7 +356,25 @@ def synthesize_cartesia_sse_with_timestamps(
     except CartesiaRequestError:
         raise
     except Exception as e:
+        log_cartesia_response(
+            history_dir,
+            request_text=content,
+            model=model_id,
+            http_status=None,
+            request_error=str(e),
+        )
         raise CartesiaError(f"Cartesia TTS SSE request failed: {e}") from e
+    response_body = resp.content if isinstance(resp.content, bytes) else b""
+    if not response_body and isinstance(resp.text, str):
+        response_body = resp.text.encode("utf-8")
+    log_cartesia_response(
+        history_dir,
+        request_text=content,
+        model=model_id,
+        http_status=resp.status_code,
+        content_type=resp.headers.get("content-type", "") if hasattr(resp, "headers") else "",
+        response_body=response_body,
+    )
     if resp.status_code in (401, 403):
         raise CartesiaError("Cartesia rejected the API key (401/403) — check CARTESIA_API_KEY")
     if resp.status_code == 400:
@@ -358,7 +385,7 @@ def synthesize_cartesia_sse_with_timestamps(
         raise CartesiaRequestError(f"Cartesia validation error (422): {detail}")
     if resp.status_code >= 400:
         raise CartesiaError(f"Cartesia TTS SSE failed: HTTP {resp.status_code}: {resp.text[:300]}")
-    raw = resp.content if isinstance(resp.content, bytes) else b""
+    raw = response_body
     if not raw:
         # httpx streaming edge: fall back to text
         raw = resp.text.encode("utf-8") if isinstance(resp.text, str) else b""
