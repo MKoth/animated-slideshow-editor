@@ -88,6 +88,8 @@ export const IMPROVE_SCRIPT_PROMPT =
   'whether to trust the camera versus board dimensions and never emit camera-geometry questions; ' +
   'no visual appears before the narrator mentions it; labels appear when their text is pronounced; ' +
   'tables are drawn on a general mention and each cell fills as its text is spoken; ' +
+  'a table cell may contain multiple independently named text nodes: create each with `create text ... inside table.cell(r, c)`, position them independently with `at (x, y)` or transform calls, and time their reveals separately; ' +
+  'do not use a backslash-n (`\\n`) escape or literal line breaks inside a text string to wrap cell content — that does not reliably create separate visible lines here; instead split long cell content into multiple text nodes inside that SAME cell, place each on its own line with its own x/y position, and reveal them sequentially at their narration times with a natural stagger — never reveal all the lines simultaneously; when the sentence leaves, remove or fade the lines sequentially in reverse order of appearance, not all at once; split at complete, meaningful phrase boundaries and keep each text node readable; never split one logical cell into multiple table cells as a text-layout workaround; ' +
   'make tables as large as the current board layout safely allows without moving or resizing the ' +
   'background/board or changing the camera: estimate available space from ' +
   'the current setting and surrounding content, then enlarge the table and its text together so it ' +
@@ -112,11 +114,15 @@ export const IMPROVE_SCRIPT_PROMPT =
   'it supports. Even when the board already holds content but the narration moves to something unrelated, keep ' +
   'the board alive with full transient phrases appearing and disappearing in sync with the spoken words — one ' +
   'complete idea at a time, wiped or faded before the next, never piling up or obscuring important visuals. ' +
-  'Size every such on-screen phrase large and readable: create it with a large fontSize (at least 32, larger ' +
-  'when the available board space allows, e.g. up to 40 for short phrases), with `alignment: "center"` ' +
+  'Use large, readable fontSize values throughout the blackboard, especially inside tables: 40px or larger is ' +
+  'preferred; use 50px and 60px or larger whenever the available space allows. Make text larger rather than ' +
+  'shrinking it to squeeze too much into one cell: split long content into multiple independently positioned ' +
+  'text nodes in the same cell, give the row enough height, and use concise line-sized phrases. Only reduce ' +
+  'below 40px when genuinely necessary to fit the camera-visible area without clipping; never emit tiny, ' +
+  'hard-to-read text. For standalone transient phrases, use the largest readable size that fits, with ' +
+  '`alignment: "center"` ' +
   '(the exact text property name is `alignment`, never `align`), and keep it ' +
-  'inside the camera visible area without clipping or covering important visuals — never emit tiny ' +
-  'hard-to-read text. ' +
+  'inside the camera visible area without clipping or covering important visuals. ' +
   'Never split a studied-language phrase: when the narrator pronounces a phrase in the studied language, show that ' +
   'whole phrase intact, never only part of it. Prompter blocks can overlap: when a later block overlaps and its end is ' +
   "later than the current block's end, the current block effectively ends at the later block's start; " +
@@ -142,6 +148,9 @@ export function formatScriptRepairPrompt(source: string, errors: string): string
   return (
     'Repair the failed animation script below. Use the validation errors to fix it, preserve ' +
     'its intended behavior, and return the complete corrected script in the required script block. ' +
+    'A table cell may contain multiple independently named text nodes; create them inside the same ' +
+    'table.cell(r, c), position each independently, and do not split one logical cell into multiple ' +
+    'table cells to work around text layout. ' +
     'Do not reply with only an explanation or a list of changes.\n\n' +
     `Validation errors:\n${errors}\n\n` +
     `Complete failed script:\n<failed-script>\n${source}\n</failed-script>`

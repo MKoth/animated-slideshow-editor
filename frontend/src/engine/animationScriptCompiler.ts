@@ -5898,10 +5898,24 @@ class Compiler {
       bindingKind: (expression) =>
         expression.kind === 'identifier' ? this.#lookupBinding(expression.name)?.kind : undefined,
       isVisible: (nodeId, time) => {
-        const readId = readNodeId(nodeId)
-        const initial = this.#createdInitial.get(nodeId)
-        if (readId === nodeId && initial?.opacity === 0) return false
-        return this.#context.isVisible(readId, time)
+        // A prospective create replaces its prior-run counterpart. The old
+        // node is useful for renderer measurements, but its visibility may
+        // reflect the old script's reveal/fade schedule and must not make a
+        // fresh node fail validation. Check the prospective ancestor chain:
+        // same-script nodes use their declared initial opacity; existing
+        // ancestors still use the live scene state.
+        const nodesById = new Map(this.#allNodes().map((node) => [node.id, node] as const))
+        let currentId: string | undefined = nodeId
+        while (currentId !== undefined) {
+          const initial = this.#createdInitial.get(currentId)
+          if (initial !== undefined) {
+            if (initial.opacity <= 0) return false
+          } else if (!this.#context.isVisible(currentId, time)) {
+            return false
+          }
+          currentId = nodesById.get(currentId)?.parentId
+        }
+        return true
       },
       nodeBounds: (nodeId, time) => {
         const measured = this.#context.reads.nodeBounds(readNodeId(nodeId), time)

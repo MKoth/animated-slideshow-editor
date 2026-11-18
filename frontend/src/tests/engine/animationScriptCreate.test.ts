@@ -384,6 +384,58 @@ describe('Animation Script create — text, table, asset, data, chart', () => {
     expect(note).toBeDefined()
   })
 
+  it('allows multiple independently positioned text nodes inside one table cell', () => {
+    const { system, slideId } = setup()
+    const source = [
+      'script "Builder" from 0',
+      'create table "Grid" as grid { columns: [160], rows: [[""]] }',
+      'create text "First line" as first inside grid.cell(0, 0) { content: "First", fontSize: 20 }',
+      'create text "Second line" as second inside grid.cell(0, 0) { content: "Second", fontSize: 20 }',
+      'first.set({ x: 4, y: 2 })',
+      'second.set({ x: 4, y: 28 })',
+      'reveal(first, over: 0.3, visual: none)',
+      'reveal(second, over: 0.3, visual: none)',
+    ].join('\n')
+    const checked = checkAnimationScript(system.engine, slideId, source)
+    expect(checked.diagnostics.filter((diagnostic) => diagnostic.severity === 'error')).toEqual([])
+    expect(checked.runnable).toBe(true)
+
+    runOk(system, slideId, source)
+
+    const cell = nodeNamed(system, slideId, 'Grid').children[0].children[0]
+    const textNodes = cell.children.filter((child) => child.components.text !== undefined)
+    expect(textNodes.map((node) => node.components.text?.content)).toEqual(['', 'First', 'Second'])
+    expect(positionX(system, textNodes[1].id)).toEqual([4])
+    expect(
+      system.engine.getKeyframes(textNodes[1].id, 'positionY').map((key) => key.value),
+    ).toEqual([2])
+    expect(
+      system.engine.getKeyframes(textNodes[2].id, 'positionY').map((key) => key.value),
+    ).toEqual([28])
+  })
+
+  it('validates a fresh cell text reveal regardless of the prior run’s hidden same-named node', () => {
+    const { system, slideId } = setup()
+    const previousRun = [
+      'script "Builder" from 0',
+      'create table "Grid" as grid { columns: [160], rows: [[""]] }',
+      'create text "Cell line" as line inside grid.cell(0, 0) { content: "Old", fontSize: 20 }',
+      'line.set({ opacity: 0 })',
+    ].join('\n')
+    runOk(system, slideId, previousRun)
+
+    const replacement = [
+      'script "Builder" from 0',
+      'create table "Grid" as grid { columns: [160], rows: [[""]] }',
+      'create text "Cell line" as line inside grid.cell(0, 0) { content: "New", fontSize: 20 }',
+      'reveal(line, at: 1, over: 0.3, visual: none)',
+    ].join('\n')
+
+    const checked = checkAnimationScript(system.engine, slideId, replacement)
+    expect(checked.diagnostics.filter((diagnostic) => diagnostic.severity === 'error')).toEqual([])
+    expect(checked.runnable).toBe(true)
+  })
+
   it('creates an asset instance from the registered library and animates it', () => {
     const { system, slideId } = setup()
     system.assetLibrarySync.apply([{ id: 'asset-cat', name: 'Cat' }])

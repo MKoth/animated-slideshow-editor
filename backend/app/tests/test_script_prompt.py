@@ -137,6 +137,12 @@ def test_script_prompt_requires_varied_text_colors_and_end_cleanup() -> None:
     prompt = _system_prompt_for_mode(DEFAULT_SYSTEM_PROMPT, "script")
     lowered = prompt.lower()
     assert "visibly different colors for text labels and table cells" in lowered
+    assert (
+        "a table cell is a container and may hold multiple independently named text nodes"
+        in lowered
+    )
+    assert "create text ... inside table.cell(r, c)" in lowered
+    assert "do not split one logical cell into multiple table cells" in lowered
     assert "do not tint every label or cell the same color" in lowered
     assert "single-color board is a defect" in lowered
     assert "clear temporary content by the slide's final second" in lowered

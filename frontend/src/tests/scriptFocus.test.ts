@@ -107,6 +107,17 @@ describe('script assistant prompts', () => {
       'make tables as large as the current board layout safely allows',
     )
     expect(IMPROVE_SCRIPT_PROMPT).toContain('increase table font sizes too')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('multiple independently named text nodes')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain(
+      'never split one logical cell into multiple table cells',
+    )
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('backslash-n (`\\n`) escape')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain(
+      'split long cell content into multiple text nodes inside that SAME cell',
+    )
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('reveal them sequentially at their narration times')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('never reveal all the lines simultaneously')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('reverse order of appearance')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('timing only')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('setCamera')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('background/board')
@@ -127,7 +138,9 @@ describe('script assistant prompts', () => {
     expect(IMPROVE_SCRIPT_PROMPT).toContain('never keywords or fragments')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('Never split a studied-language phrase')
     // Transient filler phrases must stay large and readable, never tiny.
-    expect(IMPROVE_SCRIPT_PROMPT).toContain('at least 32')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('40px or larger is')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('use 50px and 60px or larger')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('give the row enough height')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('never emit tiny')
   })
 
@@ -151,5 +164,6 @@ describe('script assistant prompts', () => {
       '<failed-script>\nscript "Intro" from 0\nreveal(ghost)\n</failed-script>',
     )
     expect(prompt).toContain('return the complete corrected script')
+    expect(prompt).toContain('multiple independently named text nodes')
   })
 })
