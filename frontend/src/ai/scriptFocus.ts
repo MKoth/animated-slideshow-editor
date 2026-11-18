@@ -109,11 +109,17 @@ export const IMPROVE_SCRIPT_PROMPT =
   'visualScale: 4, visualAnchor: "top-center", sound: writeSfx` only when a paw performer is wanted; ' +
   'Never leave the blackboard empty while the narrator speaks: if no visual is ' +
   'scheduled for a spoken stretch, show a full informative phrase taken from that narration — a complete ' +
-  'clause or sentence, never keywords or fragments — that appears at the stretch start and leaves at its end. ' +
-  'The on-screen phrase must be self-contained: a viewer reading only the board can tell which narration point ' +
-  'it supports. Even when the board already holds content but the narration moves to something unrelated, keep ' +
-  'the board alive with full transient phrases appearing and disappearing in sync with the spoken words — one ' +
-  'complete idea at a time, wiped or faded before the next, never piling up or obscuring important visuals. ' +
+  'clause or sentence, never keywords or fragments — timed to the spoken idea. The on-screen phrase must be ' +
+  'self-contained: a viewer reading only the board can tell which narration point it supports. Distinguish ' +
+  'temporary spoken support from important key ideas, definitions, and translations: do not automatically erase ' +
+  'an important phrase as soon as it has been spoken. When it remains relevant and space permits, keep it on ' +
+  'the board while the narration continues; add related explanations or translations around it (above, below, ' +
+  'left, or right) so the board can build into an organized cumulative summary. Keep these ideas visible until ' +
+  'the topic changes, a new table/image/phrase replaces them, they are no longer relevant, or the board would ' +
+  'become crowded. Temporary filler may still clear at its natural handoff. Choose deliberately what persists ' +
+  'and what leaves; do not use an automatic appear-then-immediately-disappear pattern for every phrase. ' +
+  'When removing content, clear it in a natural sequence (including reverse-order removal for split lines) and ' +
+  'keep narration timing intact. ' +
   'Use large, readable fontSize values throughout the blackboard, especially inside tables: 40px or larger is ' +
   'preferred; use 50px and 60px or larger whenever the available space allows. Make text larger rather than ' +
   'shrinking it to squeeze too much into one cell: split long content into multiple independently positioned ' +

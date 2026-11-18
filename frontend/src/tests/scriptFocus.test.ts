@@ -136,6 +136,9 @@ describe('script assistant prompts', () => {
     expect(IMPROVE_SCRIPT_PROMPT).toContain('Never leave the blackboard empty')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('full informative phrase')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('never keywords or fragments')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('do not automatically erase an important phrase')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('organized cumulative summary')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('Choose deliberately what persists and what leaves')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('Never split a studied-language phrase')
     // Transient filler phrases must stay large and readable, never tiny.
     expect(IMPROVE_SCRIPT_PROMPT).toContain('40px or larger is')
