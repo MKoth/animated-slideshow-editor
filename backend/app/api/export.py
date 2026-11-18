@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -293,7 +294,10 @@ def _validate_descriptor(job: ExportJobRequest) -> None:
     if not job.slides:
         raise HTTPException(status_code=422, detail="slides must be non-empty")
     for slide in job.slides:
-        expected_n = round(slide.duration * job.settings.fps)
+        # Match JavaScript Math.round used by the browser descriptor builder.
+        # Python's round uses ties-to-even, so exact half-frame durations can
+        # otherwise produce a different frame count (e.g. 1516.5 -> 1516).
+        expected_n = math.floor(slide.duration * job.settings.fps + 0.5)
         if slide.frameCount != expected_n:
             raise HTTPException(
                 status_code=422,
@@ -426,8 +430,6 @@ def _validate_descriptor(job: ExportJobRequest) -> None:
                             detail=f"clip {clip.id} with pitch !=0 must have rubberbandPitch",
                         )
                     # pitchScale = 2^(semitones/12)
-                    import math
-
                     expected_pitch = math.pow(2, pitch_semitones / 12.0)
                     if abs(clip.rubberbandPitch - expected_pitch) > 1e-4:
                         raise HTTPException(

@@ -1,5 +1,6 @@
 import base64
 import json
+import math
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -43,7 +44,8 @@ def _make_descriptor(fps: float = 30, durations: list[float] | None = None) -> d
     slides: list[Any] = []
     for idx, dur in enumerate(durations):
         slide_id = f"slide-{idx}"
-        frame_count = round(dur * fps)
+        # Match frontend Math.round semantics (Python round is ties-to-even).
+        frame_count = math.floor(dur * fps + 0.5)
         timestamps = [i / fps for i in range(frame_count)]
         # one clip on voice lane, maybe with playbackRate 1.2 for first slide
         clips = []
@@ -265,6 +267,18 @@ def test_export_create_and_get_roundtrip(client: TestClient) -> None:
     r3 = client.get("/api/export/jobs")
     assert r3.status_code == 200
     assert len(r3.json()) >= 1
+
+
+def test_export_accepts_half_frame_count_using_javascript_rounding(client: TestClient) -> None:
+    _clear_jobs_for_test()
+    # 50.55 seconds × 30 fps = 1516.5. The frontend uses Math.round -> 1517;
+    # Python's built-in round would use ties-to-even and incorrectly expect 1516.
+    desc = _make_descriptor(fps=30, durations=[50.55])
+
+    response = client.post("/api/export/jobs", json=desc)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["expectedFrameCount"] == 1517
 
 
 def test_export_descriptor_shape_validation_video_plus_3_audio_inputs(client: TestClient) -> None:

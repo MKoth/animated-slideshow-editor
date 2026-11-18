@@ -78,6 +78,7 @@ export function ExportVideoDialog({
   const [blocked, setBlocked] = useState<string | null>(null)
   const [progress, setProgress] = useState({ received: 0, expected: 0, status: '' })
   const [error, setError] = useState<string | null>(null)
+  const [diagnosticCopied, setDiagnosticCopied] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
   const [exportRoot, setExportRoot] = useState('')
   const [projectExports, setProjectExports] = useState<{
@@ -684,9 +685,27 @@ export function ExportVideoDialog({
           </p>
         )}
         {error && (
-          <p data-testid="export-error" style={{ fontSize: 12, color: '#ff8a80' }}>
-            {error}
-          </p>
+          <div data-testid="export-error" style={{ fontSize: 12, color: '#ff8a80' }}>
+            <p style={{ whiteSpace: 'pre-wrap' }}>{error}</p>
+            <button
+              type="button"
+              data-testid="export-copy-diagnostic"
+              onClick={() => {
+                const selectedNames = orderedSelected.map((slide) => slide.name).join(', ')
+                const diagnostic = [
+                  'Video export diagnostic',
+                  `Project: ${project?.name ?? 'unknown'}`,
+                  `Slides: ${selectedNames || 'none'}`,
+                  `Error: ${error}`,
+                ].join('\n')
+                void navigator.clipboard?.writeText(diagnostic).then(() => {
+                  setDiagnosticCopied(true)
+                })
+              }}
+            >
+              {diagnosticCopied ? 'Copied diagnostic' : 'Copy diagnostic'}
+            </button>
+          </div>
         )}
 
         <details style={{ marginTop: 12, fontSize: 11, color: '#aaa' }}>

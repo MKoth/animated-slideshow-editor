@@ -104,7 +104,7 @@ export class ApiClient {
         `API ${init.method ?? 'GET'} ${path} returned ${response.status}${detail ? `: ${detail}` : ''}`,
       )
       throw new ApiError(
-        `Request to ${path} failed with status ${response.status}`,
+        `Request to ${path} failed with status ${response.status}${detail ? `: ${detail}` : ''}`,
         response.status,
         path,
         detail,
@@ -120,6 +120,7 @@ async function errorDetail(response: Response): Promise<string | null> {
     if (typeof body !== 'object' || body === null) return null
     const detail = (body as { detail?: unknown }).detail
     if (typeof detail === 'string') return detail
+    if (Array.isArray(detail)) return JSON.stringify(detail, null, 2)
     // Structured FastAPI detail, e.g. {code, message, logId} from AI endpoints.
     if (typeof detail === 'object' && detail !== null) {
       const { message, code, logId } = detail as {
@@ -132,6 +133,7 @@ async function errorDetail(response: Response): Promise<string | null> {
         const suffix = typeof logId === 'string' && logId ? ` (log ${logId})` : ''
         return `${prefix}${message}${suffix}`
       }
+      return JSON.stringify(detail, null, 2)
     }
   } catch {
     // the body is not JSON; keep the generic status message
