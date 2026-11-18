@@ -144,6 +144,14 @@ describe('script assistant prompts', () => {
     expect(IMPROVE_SCRIPT_PROMPT).toContain('40px or larger is')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('use 50px and 60px or larger')
     expect(IMPROVE_SCRIPT_PROMPT).toContain('give the row enough height')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain(
+      'A regular standalone Text Node is centered on its transform position',
+    )
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('Table-cell text has a special offset')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain('Keep every text bound fully inside the active camera')
+    expect(IMPROVE_SCRIPT_PROMPT).toContain(
+      'do not reuse coordinates calculated for a smaller font',
+    )
     expect(IMPROVE_SCRIPT_PROMPT).toContain('never emit tiny')
   })
 

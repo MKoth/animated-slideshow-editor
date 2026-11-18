@@ -129,6 +129,16 @@ export const IMPROVE_SCRIPT_PROMPT =
   '`alignment: "center"` ' +
   '(the exact text property name is `alignment`, never `align`), and keep it ' +
   'inside the camera visible area without clipping or covering important visuals. ' +
+  'Calculate text placement from its rendered width and height at the chosen fontSize, and recalculate after ' +
+  'every size or content change. A regular standalone Text Node is centered on its transform position: its ' +
+  'bounds extend roughly half its rendered width/height on each side, so to place its left/top edge at (L, T), ' +
+  'set its center to approximately (L + width/2, T + height/2). Table-cell text has a special offset: its ' +
+  '`at (x, y)` is effectively an inset from the cell’s padded top-left, so increasing fontSize or text length ' +
+  'grows the text to the right and down from that inset. Account for the full resulting bounds, padding, and ' +
+  'cell dimensions; do not reuse coordinates calculated for a smaller font or assume the text fits because its ' +
+  'center/inset is inside the frame. Keep every text bound fully inside the active camera’s visible-world ' +
+  'rectangle and its table cell where applicable, with a deliberate safety margin; if it does not fit, reposition, ' +
+  'split into sequential text nodes, resize the row, or choose a different layout before reducing font size. ' +
   'Never split a studied-language phrase: when the narrator pronounces a phrase in the studied language, show that ' +
   'whole phrase intact, never only part of it. Prompter blocks can overlap: when a later block overlaps and its end is ' +
   "later than the current block's end, the current block effectively ends at the later block's start; " +
