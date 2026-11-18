@@ -4512,7 +4512,11 @@ class Compiler {
     ])
     const props = this.#createNodeProps(statement)
     if (props === null) return
-    const content = this.#optionalEntryString(statement, 'content', 'the text content') ?? 'Text'
+    // A useful resource name is often the only authored copy of the phrase.
+    // Use it as visible content when `content` is omitted; an explicit content
+    // field still takes precedence.
+    const content =
+      this.#optionalEntryString(statement, 'content', 'the text content') ?? statement.resourceName
     const fontSize = this.#optionalEntryNumber(statement, 'fontSize', 'a font size') ?? 24
     const alignment =
       this.#optionalEntryString(statement, 'alignment', 'a text alignment') ?? 'left'

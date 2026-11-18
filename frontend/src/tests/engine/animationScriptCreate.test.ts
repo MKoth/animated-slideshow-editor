@@ -97,6 +97,22 @@ const TEXT_SCRIPT = [
 ].join('\n')
 
 describe('Animation Script create — text, table, asset, data, chart', () => {
+  it('uses a created text node name as visible content when content is omitted', () => {
+    const { system, slideId } = setup()
+    const source = [
+      'script "Builder" from 0',
+      'create text "The right column uses," as ruleA at (690, 721) { fontSize: 52, alignment: "center" }',
+      'create text "haber," as ruleB at (690, 783) { fontSize: 52, alignment: "center" }',
+    ].join('\n')
+
+    runOk(system, slideId, source)
+
+    expect(nodeNamed(system, slideId, 'The right column uses,').components.text?.content).toBe(
+      'The right column uses,',
+    )
+    expect(nodeNamed(system, slideId, 'haber,').components.text?.content).toBe('haber,')
+  })
+
   it('creates and text-animates a text node in one Transaction', () => {
     const { system, slideId } = setup()
     const result = runOk(system, slideId, TEXT_SCRIPT)
