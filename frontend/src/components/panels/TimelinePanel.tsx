@@ -374,6 +374,45 @@ export function TimelinePanel({ height }: { height: number }) {
       )
   }
 
+  const closeGapsBetweenPrompterBlocks = () => {
+    if (!slide || prompterParts.length < 2) return
+    const sorted = [...prompterParts].sort((a, b) => a.startTime - b.startTime)
+    const targets = new Map<string, number>()
+    let cursor = sorted[0].startTime
+    for (const part of sorted) {
+      targets.set(part.id, cursor)
+      cursor += part.duration
+    }
+    const moves = sorted.filter(
+      (part) => Math.abs((targets.get(part.id) ?? part.startTime) - part.startTime) > 1e-6,
+    )
+    if (moves.length === 0) {
+      useNotificationStore.getState().notify('Prompter blocks are already packed together.')
+      return
+    }
+    const result = dispatch(
+      new TransactionCommand(
+        moves.map(
+          (part) =>
+            new MovePrompterPartCommand({
+              slideId: slide.id,
+              partId: part.id,
+              newStartTime: targets.get(part.id) ?? part.startTime,
+            }),
+        ),
+      ),
+    )
+    if (!result.ok) {
+      useNotificationStore.getState().notify(result.error.message)
+      return
+    }
+    useNotificationStore
+      .getState()
+      .notify(
+        `Closed gaps between ${moves.length} block${moves.length === 1 ? '' : 's'} — audio moved with its block.`,
+      )
+  }
+
   return (
     <div
       className={`timeline-panel${isClipEdit ? ' timeline-panel--clip-edit' : ''}`}
@@ -485,6 +524,15 @@ export function TimelinePanel({ height }: { height: number }) {
                 onClick={unoverlapSlidePrompterBlocks}
               >
                 Unoverlap all blocks
+              </button>
+              <button
+                type="button"
+                data-testid="prompter-close-gaps"
+                disabled={prompterParts.length < 2 || ttsBatchProgress !== null}
+                title="Pack prompter blocks consecutively from the first block; linked audio moves with its block"
+                onClick={closeGapsBetweenPrompterBlocks}
+              >
+                Close gaps
               </button>
               <button
                 className="popular-audio-open-button"
