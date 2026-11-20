@@ -79,6 +79,7 @@ export function ExportVideoDialog({
   const [progress, setProgress] = useState({ received: 0, expected: 0, status: '' })
   const [error, setError] = useState<string | null>(null)
   const [diagnosticCopied, setDiagnosticCopied] = useState(false)
+  const [showGenerateAllChoice, setShowGenerateAllChoice] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
   const [exportRoot, setExportRoot] = useState('')
   const [projectExports, setProjectExports] = useState<{
@@ -404,7 +405,7 @@ export function ExportVideoDialog({
     }
   }
 
-  const handleGenerateSlides = async (slideIds: readonly string[]) => {
+  const handleGenerateSlides = async (slideIds: readonly string[], overwriteConfirmed = false) => {
     if (!project || phase === 'working') return
     const missingCameraSlides = slideIds.filter((id) => cameraMissingIds.has(id))
     if (missingCameraSlides.length) {
@@ -418,6 +419,7 @@ export function ExportVideoDialog({
     const overwritten = slideIds.filter((id) => projectExports?.slides[id])
     if (
       overwritten.length &&
+      !overwriteConfirmed &&
       !globalThis.confirm(
         `${overwritten.length} video(s) already exist. Regenerate and replace them?`,
       )
@@ -451,6 +453,23 @@ export function ExportVideoDialog({
       setPhase('error')
       await refreshProjectExports().catch(() => undefined)
     }
+  }
+
+  const handleGenerateAll = () => {
+    const allSlideIds = selectable.map((slide) => slide.id)
+    if (allSlideIds.some((id) => projectExports?.slides[id])) {
+      setShowGenerateAllChoice(true)
+      return
+    }
+    void handleGenerateSlides(allSlideIds)
+  }
+
+  const chooseGenerateAll = (mode: 'all' | 'missing') => {
+    const slideIds = selectable
+      .filter((slide) => mode === 'all' || !projectExports?.slides[slide.id])
+      .map((slide) => slide.id)
+    setShowGenerateAllChoice(false)
+    if (slideIds.length > 0) void handleGenerateSlides(slideIds, true)
   }
 
   const handleJoinSlides = async () => {
@@ -641,7 +660,7 @@ export function ExportVideoDialog({
           <button
             data-testid="export-generate-all"
             disabled={phase === 'working' || selectable.length === 0}
-            onClick={() => void handleGenerateSlides(selectable.map((slide) => slide.id))}
+            onClick={handleGenerateAll}
           >
             Generate all slides
           </button>
@@ -740,6 +759,39 @@ export function ExportVideoDialog({
         </div>
         {phase === 'done' && (
           <p style={{ fontSize: 11, color: '#9ccc65' }}>{action || 'Export finished'}</p>
+        )}
+        {showGenerateAllChoice && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="generate-all-choice-title"
+            data-testid="generate-all-choice"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              display: 'grid',
+              placeContent: 'center',
+              gap: 10,
+              padding: 24,
+              background: 'rgba(0,0,0,0.82)',
+              zIndex: 2,
+            }}
+          >
+            <h3 id="generate-all-choice-title">Some slide videos already exist</h3>
+            <p>Keep them and generate only missing videos, or replace them all?</p>
+            <button data-testid="generate-all-missing" onClick={() => chooseGenerateAll('missing')}>
+              Generate missing videos only
+            </button>
+            <button data-testid="generate-all-replace" onClick={() => chooseGenerateAll('all')}>
+              Regenerate all slides
+            </button>
+            <button
+              data-testid="generate-all-cancel"
+              onClick={() => setShowGenerateAllChoice(false)}
+            >
+              Cancel
+            </button>
+          </div>
         )}
       </div>
     </div>

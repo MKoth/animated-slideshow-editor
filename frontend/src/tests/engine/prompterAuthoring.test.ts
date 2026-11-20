@@ -79,7 +79,7 @@ describe('Prompter Authoring 15.02', () => {
     expect(getPrompterSecondsPerCharacter({ prompter: { secondsPerCharacter: 0.5 } })).toBe(0.5)
   })
 
-  it('import→gap-free with charCount*SPC and splitChars consecutive collapsed no empty', () => {
+  it('import retains split punctuation and remains gap-free with charCount*SPC', () => {
     // default SPC =0.1
     const raw = 'Hello.  World,;  test\nNext—part..  End'
     const result = dispatchOk(dispatcher, new ImportPrompterCommand({ slideId, rawText: raw }))
@@ -87,6 +87,14 @@ describe('Prompter Authoring 15.02', () => {
     const slide = engine.getSlide(slideId)
     expect(slide.prompter).not.toBeNull()
     const parts = slide.prompter!.parts
+    expect(parts.map((part) => part.text)).toEqual([
+      'Hello.',
+      'World,;',
+      'test',
+      'Next—',
+      'part..',
+      'End',
+    ])
     // consecutive collapsed: ".." should not produce empty, ";" "," collapsed, etc.
     // Our helper splitImportText: raw split on .,;:!?\n— consecutive => expect parts trimmed non-empty
     // For raw: "Hello.  World,;  test\nNext—part..  End" => possible parts: ["Hello.", "World", "test", "Next", "part", "End"] or keep delimiters
@@ -119,14 +127,14 @@ describe('Prompter Authoring 15.02', () => {
     const raw = 'a|b||c'
     dispatchOk(dispatcher, new ImportPrompterCommand({ slideId, rawText: raw }))
     const parts = engine.getSlide(slideId).prompter!.parts
-    expect(parts.map((p) => p.text)).toEqual(['a', 'b', 'c'])
+    expect(parts.map((p) => p.text)).toEqual(['a|', 'b||', 'c'])
     for (const p of parts) {
       expect(p.duration).toBe(p.text.length * 0.5)
     }
     // also test helper directly
-    expect(splitImportText('x..y', ['.'])).toEqual(['x', 'y'])
+    expect(splitImportText('x..y', ['.'])).toEqual(['x..', 'y'])
     // custom split char | consecutive collapsed
-    expect(splitImportText('a||b', ['|'])).toEqual(['a', 'b'])
+    expect(splitImportText('a||b', ['|'])).toEqual(['a||', 'b'])
   })
 
   it('split Left/Right/Out whitespace-aware discarding whitespace-only with proportional redistribution', () => {

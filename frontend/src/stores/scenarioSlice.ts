@@ -141,6 +141,7 @@ type SliceSet = (...args: any[]) => void
 type SliceGet = () => any
 
 export function createScenarioSlice(set: SliceSet, get: SliceGet): ScenarioSliceActions {
+  const markdownVersionLoadSequence = new Map<string, number>()
   return {
     setScenarioRequest: (request) => set({ scenarioRequest: request }),
     setActiveScenario: (id) => set({ activeScenarioId: id }),
@@ -308,9 +309,13 @@ export function createScenarioSlice(set: SliceSet, get: SliceGet): ScenarioSlice
     setScenarioTab: (tab) => set({ scenarioTab: tab }),
 
     loadMarkdownVersions: async (projectId, conversationId) => {
+      const sequence = (markdownVersionLoadSequence.get(projectId) ?? 0) + 1
+      markdownVersionLoadSequence.set(projectId, sequence)
       try {
         const versions = await get().api.listMarkdownVersions(projectId, conversationId)
+        if (markdownVersionLoadSequence.get(projectId) !== sequence) return
         const active = await get().api.getActiveMarkdownVersion(projectId)
+        if (markdownVersionLoadSequence.get(projectId) !== sequence) return
         set((state: ScenarioSliceState) => ({
           markdownVersionsByProject: {
             ...state.markdownVersionsByProject,

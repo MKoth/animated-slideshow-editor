@@ -30,12 +30,12 @@ describe('scenarioPromptSplit', () => {
       SPLIT,
       [],
     )
-    expect(parts).toEqual(['In this lesson you will understand', 'Both mean to be', 'Really'])
+    expect(parts).toEqual(['In this lesson you will understand.', 'Both mean to be!', 'Really?'])
   })
 
   it('isolates foreign words as their own blocks', () => {
     const parts = splitNarratorToPromptParts('Ser is for who you are.', SPLIT, ['Ser'])
-    expect(parts).toEqual(['Ser', 'is for who you are'])
+    expect(parts).toEqual(['Ser', 'is for who you are.'])
   })
 
   it('isolates multi-word foreign phrases as single blocks', () => {
@@ -43,25 +43,25 @@ describe('scenarioPromptSplit', () => {
       'de roble',
       'roble',
     ])
-    expect(parts).toEqual(['The tree', 'de roble', 'stands tall'])
+    expect(parts).toEqual(['The tree', 'de roble', 'stands tall.'])
   })
 
-  it('drops punctuation-only gaps orphaned between foreign phrases', () => {
+  it('keeps punctuation attached to the preceding speech around foreign phrases', () => {
     const parts = splitNarratorToPromptParts(
       'Call it árbol de roble, duradero y sólido today.',
       SPLIT,
       ['árbol de roble', 'duradero y sólido'],
     )
-    expect(parts).toEqual(['Call it', 'árbol de roble', 'duradero y sólido', 'today'])
+    expect(parts).toEqual(['Call it', 'árbol de roble,', 'duradero y sólido', 'today.'])
     expect(parts.some((part) => !/[A-Za-z0-9\u00c0-\u024f]/u.test(part))).toBe(false)
   })
-  it('strips leading commas orphaned next to foreign phrases', () => {
+  it('keeps commas attached to the preceding foreign phrase', () => {
     const parts = splitNarratorToPromptParts(
       'Think of ser, because it lasts.',
       ['.', '!', '?', '\n'],
       ['ser'],
     )
-    expect(parts).toEqual(['Think of', 'ser', 'because it lasts'])
+    expect(parts).toEqual(['Think of', 'ser,', 'because it lasts.'])
   })
 
   it('combines HTML extraction with the stored fallback list', () => {
@@ -102,8 +102,8 @@ describe('planner prompt-block splitting', () => {
       'In this lesson you will understand when to use',
       'ser',
       'and when to use',
-      'estar',
-      'Both mean to be, but you use them for very different reasons, and I will give you a simple way to choose correctly every time you speak about yourself and others',
+      'estar.',
+      'Both mean to be, but you use them for very different reasons, and I will give you a simple way to choose correctly every time you speak about yourself and others.',
     ])
     for (const [index, part] of (slide?.prompterParts ?? []).entries()) {
       expect(part.promptBlockId).toBe(`prompt-1-${index + 1}`)
@@ -137,7 +137,7 @@ describe('planner prompt-block splitting', () => {
     const slide = plan.slides[0]
     expect(slide?.prompterParts).toHaveLength(1)
     expect(slide?.prompterParts[0]?.text).toBe(
-      'You use ser for identity, origin, material, and lasting traits',
+      'You use ser for identity, origin, material, and lasting traits.',
     )
   })
 

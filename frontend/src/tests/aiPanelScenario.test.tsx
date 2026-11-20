@@ -7,6 +7,7 @@ import { CommandDispatcher, UndoStack } from '../engine/commands'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { useAiStore } from '../stores/aiStore'
 import { useBackendStore } from '../stores/backendStore'
+import { createEmptyScenarioSection } from '../engine/scenarioSection'
 
 function renderPanel() {
   const engine = createEngineInternal()
@@ -66,6 +67,70 @@ beforeEach(() => {
 })
 
 describe('AiPanel scenario version links (issue #462)', () => {
+  it('sends the latest saved manual markdown instead of stale project markdown', async () => {
+    const engine = createEngineInternal()
+    engine.createProject({ name: 'Demo' })
+    engine.createSlide('Slide 1')
+    const projectId = engine.project!.id
+    engine.project!.setScenario(createEmptyScenarioSection('OLD markdown before manual edit'))
+    expect(engine.project!.scenario?.currentMarkdown).toBe('OLD markdown before manual edit')
+    const latest = {
+      id: 'v-manual-latest',
+      projectId,
+      conversationId: 'c-scenario',
+      messageId: null,
+      summary: 'Manual scenario edit',
+      touchedSteps: [1],
+      timestamp: new Date().toISOString(),
+      content: 'LATEST manually saved markdown',
+      baseVersionId: null,
+    }
+    useAiStore.setState({
+      markdownVersionsByProject: { [projectId]: [latest] },
+      activeMarkdownVersionIdByProject: { [projectId]: latest.id },
+    })
+    const undoStack = new UndoStack()
+    const dispatcher = new CommandDispatcher(engine, undoStack, () => undefined)
+    render(
+      <EngineContext.Provider
+        value={{
+          engine: toReadOnly(engine),
+          undoStack,
+          dispatch: (command) => dispatcher.dispatch(command),
+          persistence: { save: vi.fn(), onCommandSucceeded: () => undefined, dispose: () => {} },
+        }}
+      >
+        <AiPanel />
+      </EngineContext.Provider>,
+    )
+    expect(engine.project!.scenario?.currentMarkdown).toBe(latest.content)
+    let chatPayload: Record<string, unknown> | undefined
+    vi.mocked(fetch).mockImplementation(async (url: unknown, init?: RequestInit) => {
+      const path = String(url)
+      if (path.includes('/api/ai/conversations?')) return new Response('[]', { status: 200 })
+      if (path.endsWith('/api/ai/conversations') && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({ id: 'c-scenario', projectId, title: 'Scenario', mode: 'scenario' }),
+          { status: 201 },
+        )
+      }
+      if (path.endsWith('/api/ai/chat')) {
+        chatPayload = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return new Response(JSON.stringify({ detail: 'Provider unavailable.' }), { status: 503 })
+      }
+      if (path.endsWith('/messages')) return new Response('[]', { status: 200 })
+      return new Response('[]', { status: 200 })
+    })
+
+    const user = userEvent.setup()
+    await user.type(screen.getByTestId('ai-input'), 'Edit this scenario')
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(chatPayload).toBeDefined())
+
+    expect(chatPayload?.context).toMatchObject({ scenarioMarkdown: latest.content })
+    expect(JSON.stringify(chatPayload?.context)).not.toContain('OLD markdown before manual edit')
+  })
+
   it('creates a scenario conversation when sending the first message', async () => {
     const user = userEvent.setup()
     renderPanel()

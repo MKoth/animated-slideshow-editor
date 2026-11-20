@@ -183,11 +183,13 @@ export function splitImportText(rawText: string, splitChars: readonly string[]):
   while (i < rawText.length) {
     const ch = rawText[i]
     if (splitSet.has(ch)) {
+      // Keep split punctuation attached to the preceding speech so that
+      // splitting followed by uniting does not erase TTS punctuation.
+      if (current.trim().length > 0) current += ch
+      i++
+      while (i < rawText.length && splitSet.has(rawText[i])) current += rawText[i++]
       if (current.trim().length > 0) parts.push(current.trim())
       current = ''
-      // collapse consecutive delimiters
-      i++
-      while (i < rawText.length && splitSet.has(rawText[i])) i++
       continue
     }
     current += ch

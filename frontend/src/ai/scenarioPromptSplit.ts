@@ -77,10 +77,7 @@ export function splitNarratorToPromptParts(
   foreignWords: readonly string[],
 ): string[] {
   const hasSpeech = (text: string): boolean => /[\p{L}\p{N}]/u.test(text)
-  // A comma orphaned next to a foreign phrase (`, because ...`) stays inside
-  // its sentence chunk now that commas don't split — but a block must never
-  // *start* with it. Trailing commas are kept (natural TTS pause cue).
-  const cleanEdge = (text: string): string => text.replace(/^[,;:—–-]+/, '').trim()
+  const normalize = (text: string): string => text.replace(/\s+/g, ' ').trim()
   const source = typeof narrator === 'string' ? narrator : ''
   if (source.trim() === '') return []
   const sentences = splitImportText(source, splitChars)
@@ -96,14 +93,26 @@ export function splitNarratorToPromptParts(
     let cursor = 0
     for (const span of spans) {
       if (span.start < cursor) continue
-      const gap = cleanEdge(sentence.slice(cursor, span.start).replace(/\s+/g, ' ').trim())
+      let gap = normalize(sentence.slice(cursor, span.start))
+      const leadingPunctuation = gap.match(/^([,;:—–-]+)\s*/)?.[1]
+      if (leadingPunctuation && out.length > 0) {
+        out[out.length - 1] = `${out[out.length - 1]}${leadingPunctuation}`
+        gap = gap.slice(leadingPunctuation.length).trimStart()
+      }
       if (gap !== '' && hasSpeech(gap)) out.push(gap)
+      else if (gap !== '' && out.length > 0) out[out.length - 1] += gap
       const foreign = sentence.slice(span.start, span.end).replace(/\s+/g, ' ').trim()
       if (foreign !== '') out.push(foreign)
       cursor = span.end
     }
-    const tail = cleanEdge(sentence.slice(cursor).replace(/\s+/g, ' ').trim())
+    let tail = normalize(sentence.slice(cursor))
+    const tailPunctuation = tail.match(/^([,;:—–-]+)\s*/)?.[1]
+    if (tailPunctuation && out.length > 0) {
+      out[out.length - 1] = `${out[out.length - 1]}${tailPunctuation}`
+      tail = tail.slice(tailPunctuation.length).trimStart()
+    }
     if (tail !== '' && hasSpeech(tail)) out.push(tail)
+    else if (tail !== '' && out.length > 0) out[out.length - 1] += tail
   }
   if (out.length === 0) {
     const fallback = source.replace(/\s+/g, ' ').trim()

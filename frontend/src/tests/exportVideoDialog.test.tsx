@@ -148,6 +148,40 @@ beforeEach(() => {
 })
 
 describe('ExportVideoDialog', () => {
+  it('offers to generate only missing slide videos or regenerate all', async () => {
+    const { internal, readonly } = makeEngineWithSlides()
+    for (const slide of internal.project!.slides) animateCamera(internal, slide.id)
+    const [first, second] = internal.project!.slides
+    const api = makeApi({
+      getProjectExports: vi.fn().mockResolvedValue({
+        projectId: internal.project!.id,
+        directory: '/tmp/video-exports/project',
+        slides: {
+          [first!.id]: { file: 's1.mp4', name: first!.name, duration: first!.duration },
+        },
+        joinedReady: false,
+        joinedOutdated: true,
+        subtitlesReady: false,
+      }),
+    } as unknown as Partial<ExportApi>)
+    render(
+      <ExportVideoDialog
+        engine={readonly}
+        exportApi={api}
+        onClose={() => {}}
+        captureFrame={async () => 'data:image/png;base64,AAA'}
+      />,
+    )
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('export-generate-all'))
+    await user.click(await screen.findByTestId('generate-all-missing'))
+    await waitFor(() => expect(api.createJob).toHaveBeenCalledTimes(1))
+    expect(api.createJob).toHaveBeenCalledWith(
+      expect.objectContaining({ slides: [expect.objectContaining({ slideId: second!.id })] }),
+      expect.any(Object),
+    )
+  })
+
   it('exports one slide to the project-local store instead of downloading the whole project', async () => {
     const { internal, readonly } = makeEngineWithSlides()
     animateCamera(internal, internal.project!.slides[0]!.id)
