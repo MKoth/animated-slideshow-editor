@@ -4298,7 +4298,8 @@ button:disabled {
   width: min(760px, 92vw) !important;
   max-height: min(760px, 84vh) !important;
   padding: 0 !important;
-  overflow: hidden !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
   border: 1px solid var(--color-border) !important;
   border-radius: 14px !important;
   background: var(--color-bg-panel) !important;
