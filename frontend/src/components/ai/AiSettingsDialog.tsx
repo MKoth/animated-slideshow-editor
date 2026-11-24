@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiClient } from '../../api'
 import { ApiError } from '../../api/apiClient'
 import {
@@ -46,6 +46,7 @@ export function AiSettingsDialog() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const modelRequestId = useRef(0)
 
   useEffect(() => {
     if (!open) return
@@ -92,6 +93,7 @@ export function AiSettingsDialog() {
   if (!open) return null
 
   const handleProviderChange = (provider: AiProvider) => {
+    const requestId = ++modelRequestId.current
     setSettings((s) => ({
       ...s,
       provider,
@@ -106,20 +108,17 @@ export function AiSettingsDialog() {
     }))
     // Clear the key input: keys are stored per provider server-side, so a key
     // typed for the previous provider must not leak into the new one. The
-    // model catalog refreshes after save; until then the dropdown keeps its
-    // current options marked as fallback.
+    // Do not show the previous provider's catalog while the new one loads.
     setApiKey('')
     setNotice(null)
     const cached = getCachedAiModels(provider)
-    if (cached) setModels(cached.models)
-    if (cached?.fresh) {
-      setFallback(false)
-      return
-    }
+    setModels([])
+    setFallback(true)
     setModelsLoading(true)
     void new AiApi(apiClient)
       .listModels(provider)
       .then((modelList) => {
+        if (requestId !== modelRequestId.current) return
         if (!modelList.fallback) cacheAiModels(provider, modelList.models)
         setModels(modelList.models)
         setFallback(modelList.fallback)
@@ -131,10 +130,13 @@ export function AiSettingsDialog() {
         }))
       })
       .catch(() => {
+        if (requestId !== modelRequestId.current) return
         setModels(cached?.models ?? [])
         setFallback(true)
       })
-      .finally(() => setModelsLoading(false))
+      .finally(() => {
+        if (requestId === modelRequestId.current) setModelsLoading(false)
+      })
   }
 
   const visibleModels = models.filter((model) =>
