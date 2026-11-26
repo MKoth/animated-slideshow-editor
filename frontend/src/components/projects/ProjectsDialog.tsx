@@ -17,6 +17,8 @@ import {
   renameLibraryFolder,
   renameLibraryProject,
   requestNewProject,
+  reorderLibraryFolders,
+  reorderLibraryProjects,
 } from '../../app/projectBrowser'
 import type { OpenProjectStage } from '../../app/projectBrowser'
 import { downloadLessonCopy, importLessonFile } from '../../app/lessonTransfer'
@@ -556,6 +558,7 @@ export function ProjectsDialog() {
               {folders.map((folder) => {
                 const isActive = selectedFolder === folder.id
                 const isRenaming = renamingFolderId === folder.id
+                const categoryIndex = folders.findIndex((item) => item.id === folder.id)
                 return (
                   <li key={folder.id} className="projects-dialog__folder-row">
                     {isRenaming ? (
@@ -620,6 +623,36 @@ export function ProjectsDialog() {
                           </span>
                         </button>
                         <div className="projects-dialog__folder-actions">
+                          <button
+                            className="projects-dialog__icon-button"
+                            aria-label={`Move ${folder.name} up`}
+                            disabled={categoryIndex === 0}
+                            onClick={() => {
+                              const next = [...folders]
+                              ;[next[categoryIndex - 1], next[categoryIndex]] = [
+                                next[categoryIndex],
+                                next[categoryIndex - 1],
+                              ]
+                              void reorderLibraryFolders(next.map((item) => item.id))
+                            }}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            className="projects-dialog__icon-button"
+                            aria-label={`Move ${folder.name} down`}
+                            disabled={categoryIndex === folders.length - 1}
+                            onClick={() => {
+                              const next = [...folders]
+                              ;[next[categoryIndex + 1], next[categoryIndex]] = [
+                                next[categoryIndex],
+                                next[categoryIndex + 1],
+                              ]
+                              void reorderLibraryFolders(next.map((item) => item.id))
+                            }}
+                          >
+                            ↓
+                          </button>
                           <button
                             className="projects-dialog__icon-button"
                             aria-label={`Rename folder ${folder.name}`}
@@ -734,6 +767,12 @@ export function ProjectsDialog() {
               <ul className="projects-dialog__list" role="list" aria-label="Projects list">
                 {visibleProjects.map((project) => {
                   const isRenaming = renamingId === project.id
+                  const orderedInCategory = projects.filter(
+                    (item) =>
+                      (item.folder_id ?? null) ===
+                      (selectedFolder === ROOT_FOLDER ? null : selectedFolder),
+                  )
+                  const projectIndex = orderedInCategory.findIndex((item) => item.id === project.id)
                   return (
                     <li
                       key={project.id}
@@ -805,6 +844,46 @@ export function ProjectsDialog() {
                             ) : null}
                           </div>
                           <div className="projects-dialog__row-actions projects-dialog__row-actions--with-folder">
+                            {selectedFolder !== ALL_FOLDERS ? (
+                              <>
+                                <button
+                                  className="projects-dialog__button"
+                                  aria-label={`Move ${project.name} up`}
+                                  disabled={projectIndex <= 0}
+                                  onClick={() => {
+                                    const next = [...orderedInCategory]
+                                    ;[next[projectIndex - 1], next[projectIndex]] = [
+                                      next[projectIndex],
+                                      next[projectIndex - 1],
+                                    ]
+                                    void reorderLibraryProjects(
+                                      selectedFolder === ROOT_FOLDER ? null : selectedFolder,
+                                      next.map((item) => item.id),
+                                    )
+                                  }}
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  className="projects-dialog__button"
+                                  aria-label={`Move ${project.name} down`}
+                                  disabled={projectIndex === orderedInCategory.length - 1}
+                                  onClick={() => {
+                                    const next = [...orderedInCategory]
+                                    ;[next[projectIndex + 1], next[projectIndex]] = [
+                                      next[projectIndex],
+                                      next[projectIndex + 1],
+                                    ]
+                                    void reorderLibraryProjects(
+                                      selectedFolder === ROOT_FOLDER ? null : selectedFolder,
+                                      next.map((item) => item.id),
+                                    )
+                                  }}
+                                >
+                                  ↓
+                                </button>
+                              </>
+                            ) : null}
                             <select
                               className="projects-dialog__select"
                               aria-label={`Move ${project.name} to folder`}

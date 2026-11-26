@@ -67,13 +67,37 @@ def test_list_is_sorted_by_last_modified_newest_first(settings: Settings) -> Non
     assert [row.id for row in library.list()] == ["newest", "middle", "oldest"]
 
 
-def test_list_order_follows_re_upsert(settings: Settings) -> None:
+def test_re_upsert_does_not_change_explicit_project_order(settings: Settings) -> None:
     library = ProjectLibrary(Database(settings.database_url))
     library.upsert(summary("a", "a"), blob="{}", now=naive_utc(2026, 1, 1))
     library.upsert(summary("b", "b"), blob="{}", now=naive_utc(2026, 1, 2))
     library.upsert(summary("a", "a"), blob="{}", now=naive_utc(2026, 1, 3))
 
+    assert [row.id for row in library.list()] == ["b", "a"]
+
+
+def test_projects_can_be_reordered_within_a_category(settings: Settings) -> None:
+    library = ProjectLibrary(Database(settings.database_url))
+    library.upsert(summary("a", "a"), blob="{}", now=naive_utc(2026, 1, 1))
+    library.upsert(summary("b", "b"), blob="{}", now=naive_utc(2026, 1, 2))
+
+    library.reorder_projects(None, ["a", "b"])
+
     assert [row.id for row in library.list()] == ["a", "b"]
+
+
+def test_project_list_groups_by_category_order(settings: Settings) -> None:
+    library = ProjectLibrary(Database(settings.database_url))
+    first_category = library.create_folder("First")
+    second_category = library.create_folder("Second")
+    library.upsert(
+        summary("second-project", "Second project"), "{}", naive_utc(2026, 1, 1), second_category.id
+    )
+    library.upsert(
+        summary("first-project", "First project"), "{}", naive_utc(2026, 1, 2), first_category.id
+    )
+
+    assert [row.id for row in library.list()] == ["first-project", "second-project"]
 
 
 def test_get_returns_stored_blob_verbatim(settings: Settings) -> None:

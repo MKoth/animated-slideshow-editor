@@ -59,6 +59,17 @@ export class ProjectsApi {
     )
   }
 
+  async reorderProjects(folderId: string | null, orderedIds: string[]): Promise<void> {
+    return this.client.put(
+      '/api/projects/order',
+      JSON.stringify({ folder_id: folderId, orderedIds }),
+    )
+  }
+
+  async reorderFolders(orderedIds: string[]): Promise<void> {
+    return this.client.put('/api/project-folders/order', JSON.stringify({ orderedIds }))
+  }
+
   async listFolders(): Promise<ProjectFolder[]> {
     return this.client.get<ProjectFolder[]>('/api/project-folders')
   }

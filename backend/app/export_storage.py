@@ -36,14 +36,70 @@ def save_export_root(data_dir: Path, value: str) -> Path:
     return root
 
 
-def project_export_dir(root: Path, project_id: str) -> Path:
-    # Project ids are opaque, but never allow them to escape the configured root.
+def _folder_part(value: str, limit: int) -> str:
+    safe = re.sub(r"[^\w.-]+", "-", value, flags=re.UNICODE).strip(".-_") or "Untitled"
+    return safe[:limit].rstrip(".-_") or "Untitled"
+
+
+def project_export_dir(
+    root: Path,
+    project_id: str,
+    *,
+    category_order: int = 0,
+    category_name: str = "Uncategorized",
+    project_order: int = 0,
+    project_name: str = "Project",
+) -> Path:
+    # IDs remain the stable identity; names and explicit ordering are display-only.
     safe_id = re.sub(r"[^A-Za-z0-9._-]+", "_", project_id).strip("._") or "project"
-    result = (root / safe_id).resolve()
+    category_prefix = "00" if category_name == "Uncategorized" else f"{category_order + 1:02d}"
+    result = (
+        root
+        / (
+            f"{category_prefix}-{_folder_part(category_name, 70)}__"
+            f"{project_order + 1:02d}-{_folder_part(project_name, 100)}--{safe_id}"
+        )
+    ).resolve()
     if not result.is_relative_to(root.resolve()):
         raise ValueError("Invalid project id")
+    # Adopt the legacy ID-only directory and rename prior derived names by ID.
+    if not result.exists() and root.exists():
+        candidates = [
+            child
+            for child in root.iterdir()
+            if child.is_dir() and (child.name == safe_id or child.name.endswith(f"--{safe_id}"))
+        ]
+        if len(candidates) == 1:
+            candidates[0].replace(result)
     result.mkdir(parents=True, exist_ok=True)
     return result
+
+
+def rename_existing_project_export(
+    root: Path,
+    project_id: str,
+    *,
+    category_order: int,
+    category_name: str,
+    project_order: int,
+    project_name: str,
+) -> Path | None:
+    safe_id = re.sub(r"[^A-Za-z0-9._-]+", "_", project_id).strip("._") or "project"
+    if not root.is_dir():
+        return None
+    if not any(
+        child.is_dir() and (child.name == safe_id or child.name.endswith(f"--{safe_id}"))
+        for child in root.iterdir()
+    ):
+        return None
+    return project_export_dir(
+        root,
+        project_id,
+        category_order=category_order,
+        category_name=category_name,
+        project_order=project_order,
+        project_name=project_name,
+    )
 
 
 def read_manifest(project_dir: Path) -> dict[str, Any]:

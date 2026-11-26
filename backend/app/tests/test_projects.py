@@ -111,8 +111,8 @@ def test_re_posting_an_id_updates_the_row_and_reorders_the_list(
     post_project(client, lesson_blob("p-1", "First, edited"))
 
     listing = client.get("/api/projects").json()
-    assert [item["id"] for item in listing] == ["p-1", "p-2"]
-    assert listing[0]["name"] == "First, edited"
+    assert [item["id"] for item in listing] == ["p-2", "p-1"]
+    assert listing[1]["name"] == "First, edited"
     assert client.get("/api/projects/p-1").text == lesson_blob("p-1", "First, edited")
 
 

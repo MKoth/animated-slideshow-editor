@@ -5,6 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
+from app.export_storage import load_export_root, rename_existing_project_export
 from app.projects.library import (
     UNSET,
     ProjectFolderConflictError,
@@ -14,11 +15,13 @@ from app.projects.library import (
     ProjectNotFoundError,
 )
 from app.projects.schemas import (
+    ProjectCategoryOrderIn,
     ProjectFolderCreate,
     ProjectFolderOut,
     ProjectFolderUpdate,
     ProjectMetadataOut,
     ProjectMoveIn,
+    ProjectOrderIn,
     ProjectSummary,
     folder_to_schema,
     row_to_metadata,
@@ -29,6 +32,27 @@ from app.projects.validation import ProjectValidationError, validate_lesson
 router = APIRouter()
 
 _FILENAME_UNSAFE = re.compile(r"[^\w.-]", flags=re.ASCII)
+
+
+def _sync_export_folder_names(request: Request) -> None:
+    library: ProjectLibrary = request.app.state.project_library
+    root = load_export_root(request.app.state.settings.data_dir)
+    folders = {folder.id: folder for folder in library.list_folders()}
+    for project in library.list():
+        folder = folders.get(project.folder_id) if project.folder_id else None
+        try:
+            rename_existing_project_export(
+                root,
+                project.id,
+                category_order=folder.sort_order if folder else 0,
+                category_name=folder.name if folder else "Uncategorized",
+                project_order=project.sort_order,
+                project_name=project.name,
+            )
+        except OSError:
+            logging.getLogger(__name__).exception(
+                "could not rename export directory for %s", project.id
+            )
 
 
 def _now() -> datetime:
@@ -55,6 +79,7 @@ def _parse_folder_query(folder_id: str | None) -> str | None | object:
 @router.get("/projects", response_model=list[ProjectSummary])
 def list_projects(request: Request) -> list[ProjectSummary]:
     library: ProjectLibrary = request.app.state.project_library
+    _sync_export_folder_names(request)
     return [row_to_summary(row) for row in library.list()]
 
 
@@ -76,6 +101,7 @@ async def upsert_project(
         row = library.upsert(summary, blob=text, now=_now(), folder_id=target)
     except ProjectFolderNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+    _sync_export_folder_names(request)
     return row_to_metadata(row)
 
 
@@ -102,7 +128,26 @@ def move_project(request: Request, project_id: str, body: ProjectMoveIn) -> Proj
         raise _project_not_found(project_id) from exc
     except ProjectFolderNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+    _sync_export_folder_names(request)
     return row_to_metadata(row)
+
+
+@router.put("/projects/order", status_code=204)
+def reorder_projects(request: Request, body: ProjectCategoryOrderIn) -> None:
+    try:
+        request.app.state.project_library.reorder_projects(body.folder_id, body.orderedIds)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _sync_export_folder_names(request)
+
+
+@router.put("/project-folders/order", status_code=204)
+def reorder_project_folders(request: Request, body: ProjectOrderIn) -> None:
+    try:
+        request.app.state.project_library.reorder_folders(body.orderedIds)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _sync_export_folder_names(request)
 
 
 @router.delete("/projects/{project_id}", status_code=204)
@@ -169,6 +214,7 @@ def rename_project_folder(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ProjectFolderValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _sync_export_folder_names(request)
     return folder_to_schema(folder)
 
 
@@ -183,6 +229,7 @@ def delete_project_folder(
         doomed = library.delete_folder(folder_id, delete_projects=(mode == "delete_projects"))
     except ProjectFolderNotFoundError as exc:
         raise _folder_not_found(folder_id) from exc
+    _sync_export_folder_names(request)
     if doomed:
         ai_library = getattr(request.app.state, "ai_library", None)
         if ai_library is not None:

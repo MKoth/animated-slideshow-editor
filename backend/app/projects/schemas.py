@@ -52,6 +52,15 @@ class ProjectMoveIn(BaseModel):
     folder_id: str | None = None
 
 
+class ProjectOrderIn(BaseModel):
+    orderedIds: list[str]
+
+
+class ProjectCategoryOrderIn(BaseModel):
+    folder_id: str | None = None
+    orderedIds: list[str]
+
+
 def row_to_summary(row: ProjectRow) -> ProjectSummary:
     return ProjectSummary(
         id=row.id,

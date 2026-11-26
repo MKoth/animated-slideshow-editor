@@ -32,6 +32,34 @@ router = APIRouter()
 # In-memory job store for current process (tests use separate app instance per fixture)
 _jobs: dict[str, dict[str, Any]] = {}
 
+
+def _named_project_export_dir(request: Request, root: Path, project_id: str) -> Path:
+    library = getattr(request.app.state, "project_library", None)
+    if library is None:
+        return project_export_dir(root, project_id)
+    try:
+        project = library.get(project_id)
+    except KeyError:
+        return project_export_dir(root, project_id)
+    category_name = "Uncategorized"
+    category_order = 0
+    if project.folder_id:
+        folder = next(
+            (item for item in library.list_folders() if item.id == project.folder_id), None
+        )
+        if folder is not None:
+            category_name = folder.name
+            category_order = folder.sort_order
+    return project_export_dir(
+        root,
+        project_id,
+        category_order=category_order,
+        category_name=category_name,
+        project_order=project.sort_order,
+        project_name=project.name,
+    )
+
+
 ACTIVE_STATUSES = {"queued", "rendering", "encoding"}
 TERMINAL_STATUSES = {"done", "failed", "cancelled"}
 
@@ -1055,7 +1083,7 @@ def _run_encoding(record: dict[str, Any]) -> None:
         basename = record.get("basename", "export")
         if record.get("exportSlide") and record.get("projectId"):
             root = Path(str(record["exportRoot"]))
-            project_dir = project_export_dir(root, str(record["projectId"]))
+            project_dir = root / str(record.get("projectDirectory") or record["projectId"])
             slide = record["slides"][0]
             slide_id = str(slide["slideId"])
             safe_slide_id = re.sub(r"[^A-Za-z0-9._-]+", "_", slide_id).strip("._") or "slide"
@@ -1116,7 +1144,7 @@ def create_export_job(job: ExportJobRequest, request: Request) -> ExportJobRespo
         subtitles = {"srt": job.subtitles.srt or "", "vtt": job.subtitles.vtt or ""}
     export_root = load_export_root(request.app.state.settings.data_dir)
     if job.exportSlide and job.projectId:
-        project_dir = project_export_dir(export_root, job.projectId)
+        project_dir = _named_project_export_dir(request, export_root, job.projectId)
         job_dir = project_dir / f".work-{job_id}"
         job_dir.mkdir(parents=True, exist_ok=False)
     else:
@@ -1145,6 +1173,7 @@ def create_export_job(job: ExportJobRequest, request: Request) -> ExportJobRespo
         "projectId": job.projectId,
         "exportSlide": job.exportSlide,
         "exportRoot": str(export_root),
+        "projectDirectory": project_dir.name if job.exportSlide and job.projectId else None,
         "subtitles": subtitles,
         "receivedFrames": 0,
         "artifactReady": False,
@@ -1212,7 +1241,7 @@ def put_export_settings(body: ExportRootRequest, request: Request) -> dict[str, 
 @router.get("/export/projects/{project_id}")
 def get_project_exports(project_id: str, request: Request) -> dict[str, Any]:
     root = load_export_root(request.app.state.settings.data_dir)
-    project_dir = project_export_dir(root, project_id)
+    project_dir = _named_project_export_dir(request, root, project_id)
     manifest = read_manifest(project_dir)
     return {
         "projectId": project_id,
@@ -1230,7 +1259,7 @@ def join_project_exports(
     project_id: str, body: ProjectJoinRequest, request: Request
 ) -> dict[str, Any]:
     root = load_export_root(request.app.state.settings.data_dir)
-    project_dir = project_export_dir(root, project_id)
+    project_dir = _named_project_export_dir(request, root, project_id)
     manifest = read_manifest(project_dir)
     slide_entries = manifest.get("slides", {})
     if not body.slideIds or any(slide_id not in slide_entries for slide_id in body.slideIds):
@@ -1297,7 +1326,7 @@ def save_project_subtitles(
     project_id: str, body: ProjectSubtitlesRequest, request: Request
 ) -> dict[str, Any]:
     root = load_export_root(request.app.state.settings.data_dir)
-    project_dir = project_export_dir(root, project_id)
+    project_dir = _named_project_export_dir(request, root, project_id)
     output = project_dir / "subtitles.srt"
     temporary = project_dir / "subtitles.srt.tmp"
     try:

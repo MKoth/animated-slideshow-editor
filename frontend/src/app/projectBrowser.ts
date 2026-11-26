@@ -78,6 +78,27 @@ export async function refreshProjects(): Promise<void> {
   }
 }
 
+export async function reorderLibraryProjects(
+  folderId: string | null,
+  orderedIds: string[],
+): Promise<void> {
+  try {
+    await projectsApi.reorderProjects(folderId, orderedIds)
+    await refreshProjects()
+  } catch {
+    useNotificationStore.getState().notify('Could not save project order.')
+  }
+}
+
+export async function reorderLibraryFolders(orderedIds: string[]): Promise<void> {
+  try {
+    await projectsApi.reorderFolders(orderedIds)
+    await refreshProjects()
+  } catch {
+    useNotificationStore.getState().notify('Could not save category order.')
+  }
+}
+
 export async function openLibraryProject(
   engine: EnginePublic,
   id: string,

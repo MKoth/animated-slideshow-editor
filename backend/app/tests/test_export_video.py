@@ -594,7 +594,7 @@ def test_export_root_setting_is_saved_and_project_path_is_created(
 
     project = client.get("/api/export/projects/project-123")
     assert project.status_code == 200
-    assert project.json()["directory"] == str(target / "project-123")
+    assert project.json()["directory"] == str(target / "00-Uncategorized__01-Project--project-123")
     assert project.json()["joinedOutdated"] is True
 
 
@@ -645,9 +645,12 @@ def test_single_slide_export_is_persisted_and_marks_join_outdated(
         assert uploaded.status_code == 200
     complete = client.post(f"/api/export/jobs/{job_id}/complete")
     assert complete.json()["status"] == "done"
-    output = root / "project-id" / "slide-slide-0.mp4"
+    from app.export_storage import project_export_dir
+
+    project_dir = project_export_dir(root, "project-id")
+    output = project_dir / "slide-slide-0.mp4"
     assert output.is_file()
-    assert not list((root / "project-id").glob(".work-*"))
+    assert not list(project_dir.glob(".work-*"))
     project = client.get("/api/export/projects/project-id").json()
     assert project["slides"]["slide-0"]["file"] == output.name
     assert project["joinedOutdated"] is True
@@ -661,14 +664,14 @@ def test_single_slide_export_is_persisted_and_marks_join_outdated(
     monkeypatch.setattr(export_module, "_run_ffmpeg", fake_ffmpeg)
     joined = client.post("/api/export/projects/project-id/join", json={"slideIds": ["slide-0"]})
     assert joined.status_code == 200, joined.text
-    assert (root / "project-id" / "joined.mp4").read_bytes() == b"joined"
+    assert (project_dir / "joined.mp4").read_bytes() == b"joined"
     assert client.get("/api/export/projects/project-id").json()["joinedOutdated"] is False
 
     subtitles = client.post(
         "/api/export/projects/project-id/subtitles", json={"srt": "1\ncaption\n"}
     )
     assert subtitles.status_code == 200
-    assert (root / "project-id" / "subtitles.srt").read_text(encoding="utf-8") == "1\ncaption\n"
+    assert (project_dir / "subtitles.srt").read_text(encoding="utf-8") == "1\ncaption\n"
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not available")

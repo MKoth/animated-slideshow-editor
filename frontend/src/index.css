@@ -3770,8 +3770,8 @@ button:disabled {
 }
 
 .projects-dialog--with-folders {
-  width: 860px;
-  max-width: min(920px, calc(100vw - 24px));
+  width: 1120px;
+  max-width: min(1280px, calc(100vw - 32px));
 }
 
 .projects-dialog__body {
@@ -3782,7 +3782,7 @@ button:disabled {
 }
 
 .projects-dialog__folders {
-  flex: 0 0 220px;
+  flex: 0 0 290px;
   display: flex;
   flex-direction: column;
   gap: 8px;
