@@ -65,3 +65,15 @@ def test_init_schema_is_idempotent_on_a_legacy_database(settings: Settings) -> N
     with database.engine.begin() as connection:
         count = len(inspect(connection).get_columns("material_definitions"))
     assert count == 8
+
+
+def test_init_schema_adds_covering_index_for_project_list(settings: Settings) -> None:
+    data_dir = Path(settings.database_url.removeprefix("sqlite:///")).parent
+    data_dir.mkdir(parents=True, exist_ok=True)
+    database = Database(settings.database_url)
+
+    database.init_schema()
+
+    with database.engine.begin() as connection:
+        indexes = {index["name"] for index in inspect(connection).get_indexes("projects")}
+    assert "ix_projects_list_cover" in indexes

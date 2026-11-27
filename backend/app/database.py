@@ -148,6 +148,12 @@ class Database:
                     " ON projects (last_modified)"
                 ),
                 ("CREATE INDEX IF NOT EXISTS ix_projects_folder_id ON projects (folder_id)"),
+                # Cover the project-list metadata query so SQLite need not visit
+                # rows containing potentially very large lesson JSON blobs.
+                (
+                    "CREATE INDEX IF NOT EXISTS ix_projects_list_cover"
+                    " ON projects (folder_id, sort_order, last_modified DESC, id, name)"
+                ),
             ):
                 connection.execute(text(statement))
 
