@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import io
 import json
 import math
@@ -250,6 +251,11 @@ class ProjectJoinRequest(BaseModel):
 
 class ProjectSubtitlesRequest(BaseModel):
     srt: str
+
+
+class ProjectExportMaterialsRequest(BaseModel):
+    scenarioFiles: dict[str, str] = Field(default_factory=dict)
+    chapters: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ExportAudioUploadRequest(BaseModel):
@@ -1340,6 +1346,43 @@ def save_project_subtitles(
     manifest["subtitlesOutdated"] = False
     write_manifest(project_dir, manifest)
     return {"projectId": project_id, "file": str(output)}
+
+
+@router.post("/export/projects/{project_id}/materials")
+def save_project_export_materials(
+    project_id: str, body: ProjectExportMaterialsRequest, request: Request
+) -> dict[str, Any]:
+    root = load_export_root(request.app.state.settings.data_dir)
+    project_dir = _named_project_export_dir(request, root, project_id)
+    files: list[str] = []
+    for name, encoded in body.scenarioFiles.items():
+        relative = Path(name)
+        if (
+            "\\" in name
+            or relative.is_absolute()
+            or any(part in {"", ".", ".."} for part in relative.parts)
+        ):
+            raise HTTPException(status_code=422, detail="Invalid scenario asset path")
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid base64 for {name}") from exc
+        output = project_dir / "scenario" / relative
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = output.with_name(output.name + ".tmp")
+        try:
+            temporary.write_bytes(content)
+            temporary.replace(output)
+        except OSError:
+            temporary.unlink(missing_ok=True)
+            raise
+        files.append(str(output))
+    chapters = project_dir / "chapters.json"
+    chapters.write_text(
+        json.dumps(body.chapters, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    files.append(str(chapters))
+    return {"projectId": project_id, "files": files}
 
 
 @router.get("/export/jobs/{job_id}", response_model=ExportJobStatusResponse)

@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import shutil
@@ -672,6 +673,27 @@ def test_single_slide_export_is_persisted_and_marks_join_outdated(
     )
     assert subtitles.status_code == 200
     assert (project_dir / "subtitles.srt").read_text(encoding="utf-8") == "1\ncaption\n"
+
+    materials = client.post(
+        "/api/export/projects/project-id/materials",
+        json={
+            "scenarioFiles": {
+                "index.html": base64.b64encode(b'<img src="board-tile.png">').decode(),
+                "board-tile.png": base64.b64encode(b"image-bytes").decode(),
+            },
+            "chapters": [{"title": "Opening", "start": 0}],
+        },
+    )
+    assert materials.status_code == 200
+    scenario_dir = project_dir / "scenario"
+    assert (scenario_dir / "index.html").read_text(encoding="utf-8") == '<img src="board-tile.png">'
+    assert (scenario_dir / "board-tile.png").read_bytes() == b"image-bytes"
+    assert (project_dir / "chapters.json").is_file()
+    traversal = client.post(
+        "/api/export/projects/project-id/materials",
+        json={"scenarioFiles": {"../outside": "eA=="}},
+    )
+    assert traversal.status_code == 422
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not available")

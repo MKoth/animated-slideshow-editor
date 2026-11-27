@@ -175,4 +175,14 @@ export class ExportApi {
       JSON.stringify({ srt }),
     )
   }
+
+  async saveProjectMaterials(
+    projectId: string,
+    materials: { scenarioFiles: Record<string, string>; chapters: readonly unknown[] },
+  ): Promise<{ files: string[] }> {
+    return this.client.post(
+      `/api/export/projects/${encodeURIComponent(projectId)}/materials`,
+      JSON.stringify(materials),
+    )
+  }
 }

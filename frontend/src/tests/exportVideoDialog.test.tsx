@@ -58,6 +58,7 @@ function makeApi(overrides: Partial<ExportApi> = [] as unknown as Partial<Export
   api.saveProjectSubtitles = vi
     .fn()
     .mockResolvedValue({ file: '/tmp/video-exports/project/subtitles.srt' })
+  api.saveProjectMaterials = vi.fn().mockResolvedValue({ files: [] })
   api.createJob = vi.fn().mockResolvedValue({
     jobId: 'job-1',
     status: 'queued',
@@ -246,6 +247,36 @@ describe('ExportVideoDialog', () => {
     expect(screen.getByTestId('export-totals')).toHaveTextContent('5.0s')
     expect(screen.getByTestId('export-totals')).toHaveTextContent('150 frames')
     expect(screen.getByTestId('export-start')).not.toBeDisabled()
+  })
+
+  it('saves scenario files and cumulative slide chapter timestamps', async () => {
+    const { readonly } = makeEngineWithSlides()
+    const api = makeApi()
+    render(<ExportVideoDialog engine={readonly} exportApi={api} onClose={() => {}} />)
+
+    await userEvent.setup().click(await screen.findByTestId('export-scenario-files'))
+
+    await waitFor(() =>
+      expect(api.saveProjectMaterials).toHaveBeenCalledWith(readonly.project!.id, {
+        scenarioFiles: {},
+        chapters: [
+          {
+            index: 1,
+            slideId: readonly.project!.slides[0]!.id,
+            title: 'S1',
+            start: 0,
+            duration: 2,
+          },
+          {
+            index: 2,
+            slideId: readonly.project!.slides[1]!.id,
+            title: 'S2',
+            start: 2,
+            duration: 3,
+          },
+        ],
+      }),
+    )
   })
 
   it('zero-duration note, empty selection disables export', async () => {

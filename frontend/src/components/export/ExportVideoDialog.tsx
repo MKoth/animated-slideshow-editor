@@ -24,6 +24,12 @@ import { slidesMissingCameraKeyframes } from '../../export/exportCamera'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useUiStore } from '../../stores/uiStore'
 import { cameraFrameDimensions } from '../../engine/cameraFrameSize'
+import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
+import { buildScenarioImageFiles } from '../../engine/scenarioChalkRender'
+import { buildScenarioPortablePack } from '../../engine/scenarioPortableZip'
+import { parseScenarioMarkdown } from '../../engine/scenarioMarkdown'
+import { getScenarioTheme } from '../../engine/scenarioTheme'
+import { resolveScenarioImageBytes, uint8ArrayToBase64 } from '../../engine/scenarioImageBytes'
 
 export type ExportFrameCapture = (slideId: string, timestamp: number) => Promise<string | null>
 
@@ -62,6 +68,8 @@ export function ExportVideoDialog({
   captureFrame,
 }: ExportVideoDialogProps) {
   const project = engine.project
+  const allAssetDefinitions = useAssetLibraryStore((state) => state.allDefinitions)
+  const assetDefinitions = useAssetLibraryStore((state) => state.definitions)
   const cameraFrameSize = useUiStore((state) => state.cameraFrameSize)
   const frameDimensions = cameraFrameDimensions(cameraFrameSize)
   const selectable = useMemo(
@@ -511,6 +519,111 @@ export function ExportVideoDialog({
     }
   }
 
+  const handleSaveMaterials = async () => {
+    if (!project) return
+    setPhase('working')
+    setError(null)
+    setAction('Saving scenario and chapter timestamps')
+    try {
+      const scenario = project.scenario
+      const markdown = scenario?.currentMarkdown ?? ''
+      const scenarioFiles: Record<string, string> = {}
+      if (markdown.trim()) {
+        const keys = [
+          ...new Set(
+            parseScenarioMarkdown(markdown).steps.flatMap((step) =>
+              step.visuals.map((visual) => visual.key).filter(Boolean),
+            ),
+          ),
+        ]
+        const metadata = new Map<string, { mime?: string; filenameHint?: string }>()
+        const embeddedById = new Map<string, { data: string; mimeType: string; name: string }>()
+        for (const asset of engine.embeddedAssets ?? []) {
+          metadata.set(asset.id, { mime: asset.mimeType, filenameHint: asset.name })
+          embeddedById.set(asset.id, {
+            data: asset.data,
+            mimeType: asset.mimeType,
+            name: asset.name,
+          })
+        }
+        const libraryById = new Map<
+          string,
+          { mime?: string; filenameHint?: string; url?: string }
+        >()
+        for (const definition of [...allAssetDefinitions, ...assetDefinitions]) {
+          if (!metadata.has(definition.id))
+            metadata.set(definition.id, {
+              mime: definition.mimeType,
+              filenameHint: definition.original_filename,
+            })
+          if (!libraryById.has(definition.id))
+            libraryById.set(definition.id, {
+              mime: definition.mimeType,
+              filenameHint: definition.original_filename,
+              url: definition.original_url,
+            })
+        }
+        const imageFiles = buildScenarioImageFiles(keys, (key) => {
+          const binding = scenario?.bindings[key]
+          return binding ? metadata.get(binding) : undefined
+        })
+        const imageBytes = await resolveScenarioImageBytes(
+          keys,
+          scenario?.bindings ?? {},
+          embeddedById,
+          libraryById,
+        )
+        let themeFiles: Record<string, Uint8Array> | undefined
+        try {
+          themeFiles = (await getScenarioTheme()).files
+        } catch {
+          // Keep the theme's baked-in fallback behavior if local theme files are unavailable.
+        }
+        const pack = buildScenarioPortablePack({
+          markdown,
+          imageFiles,
+          imageBytes,
+          title: project.name,
+          foreignWords: scenario?.foreignWords ?? [],
+          themeFiles,
+        })
+        for (const [path, bytes] of Object.entries(pack.files))
+          scenarioFiles[path] = uint8ArrayToBase64(bytes)
+        const boardTile = scenarioFiles['assets/board-tile.png']
+        if (boardTile) {
+          // Put the page's primary background image directly beside index.html.
+          scenarioFiles['board-tile.png'] = boardTile
+          const html = new TextDecoder().decode(pack.files['index.html'])
+          scenarioFiles['index.html'] = uint8ArrayToBase64(
+            new TextEncoder().encode(html.replaceAll('assets/board-tile.png', 'board-tile.png')),
+          )
+        }
+        scenarioFiles['scenario.md'] = uint8ArrayToBase64(new TextEncoder().encode(markdown))
+      }
+      let offset = 0
+      const chapters = selectable.map((slide, index) => {
+        const chapter = {
+          index: index + 1,
+          slideId: slide.id,
+          title: slide.name,
+          start: offset,
+          duration: slide.duration,
+        }
+        offset += slide.duration
+        return chapter
+      })
+      await exportApi.saveProjectMaterials(project.id, {
+        scenarioFiles,
+        chapters,
+      })
+      setAction('Scenario and chapter timestamps saved')
+      setPhase('done')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save scenario files')
+      setPhase('error')
+    }
+  }
+
   return (
     <div
       role="dialog"
@@ -681,6 +794,13 @@ export function ExportVideoDialog({
             onClick={() => void handleGenerateSrt()}
           >
             Generate SRT
+          </button>
+          <button
+            data-testid="export-scenario-files"
+            disabled={phase === 'working' || !project}
+            onClick={() => void handleSaveMaterials()}
+          >
+            Save scenario + chapter timestamps
           </button>
         </div>
 
